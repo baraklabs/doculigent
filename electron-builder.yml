@@ -1,0 +1,23 @@
+appId: com.doculigent.app
+productName: Doculigent
+directories:
+  output: dist
+  buildResources: resources
+files:
+  - out/**/*
+  - package.json
+asarUnpack:
+  - "**/*.node"
+  - node_modules/ffmpeg-static/**
+win:
+  target:
+    - nsis
+mac:
+  target:
+    - dmg
+  category: public.app-category.video
+linux:
+  target:
+    - deb
+    - AppImage
+  category: AudioVideo
