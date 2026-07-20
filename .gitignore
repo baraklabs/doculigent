@@ -3,5 +3,6 @@ out
 dist
 *.log
 .env
+env
 .DS_Store
 dist/

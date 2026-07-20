@@ -74,6 +74,11 @@ body {
   font-size: 11px; color: var(--muted); flex-shrink: 0;
 }
 .footer-status { display: flex; align-items: center; gap: 6px; }
+.footer-version { display: flex; align-items: center; gap: 10px; }
+.update-available {
+  color: #b45309; font-weight: 600; text-decoration: none;
+}
+.update-available:hover { text-decoration: underline; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); flex-shrink: 0; }
 .status-dot.online { background: #1fae64; }
 

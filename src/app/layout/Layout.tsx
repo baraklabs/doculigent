@@ -5,7 +5,16 @@ import { useAuthStore } from "../../store/authStore";
 import { initials } from "../../lib/userDisplay";
 import { useVideos } from "../../hooks/useVideos";
 
-const APP_VERSION = "0.1.0";
+const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL).replace(/\/+$/, "");
+const VERSION_ENDPOINT = `${SUPABASE_URL}/functions/v1/version`;
+const DOWNLOAD_URL = "https://doculigent.com";
+
+function isNewerVersion(latest: string, current: string) {
+  const toParts = (v: string) => v.split(".").map((n) => parseInt(n, 10) || 0);
+  const [la, lb, lc] = toParts(latest);
+  const [ca, cb, cc] = toParts(current);
+  return la !== ca ? la > ca : lb !== cb ? lb > cb : lc > cc;
+}
 
 // Split around the "Edit" tab, which — unlike the others — has no fixed route: it jumps
 // into the Edit page for whichever recording was made/touched most recently (see the
@@ -23,6 +32,7 @@ const TABS_AFTER_EDIT: { to: string; label: string }[] = [
 /** Top bar + tab nav + footer status, ported from the original App.tsx shell. */
 export function Layout() {
   const [coreOnline, setCoreOnline] = useState(false);
+  const [latestVersion, setLatestVersion] = useState<string>();
   const session = useAuthStore((s) => s.session);
   const initAuth = useAuthStore((s) => s.init);
   const location = useLocation();
@@ -32,6 +42,19 @@ export function Layout() {
   useEffect(() => {
     initAuth();
   }, [initAuth]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(VERSION_ENDPOINT)
+      .then((res) => res.json())
+      .then((data: { version?: string }) => {
+        if (!cancelled && data.version) setLatestVersion(data.version);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Sliding highlight behind the active tab — measured off the actual DOM node so it
   // tracks each tab's real width/position (labels aren't uniform width) instead of
@@ -131,7 +154,14 @@ export function Layout() {
           <span className={coreOnline ? "status-dot online" : "status-dot"} />
           {coreOnline ? "Core connected" : "Core not running"}
         </div>
-        <span className="muted">Doculigent v{APP_VERSION}</span>
+        <div className="footer-version">
+          <span className="muted">Doculigent v{__APP_VERSION__}</span>
+          {latestVersion && isNewerVersion(latestVersion, __APP_VERSION__) && (
+            <a href={DOWNLOAD_URL} target="_blank" rel="noreferrer" className="update-available">
+              New version v{latestVersion} available
+            </a>
+          )}
+        </div>
       </footer>
     </div>
   );
