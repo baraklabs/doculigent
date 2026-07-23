@@ -12,9 +12,6 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, "electron/main/index.ts"),
-          // Forked as its own UtilityProcess by whisperWorkerClient.ts (out/main/index.js
-          // loads it at runtime by path) — must build to a standalone entry, not get
-          // bundled into index.js, since utilityProcess.fork() needs a real module path.
           transcriptionWorker: resolve(__dirname, "electron/main/transcription/transcriptionWorker.ts"),
         },
       },
