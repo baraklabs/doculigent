@@ -61,9 +61,6 @@ export function Layout() {
     };
   }, []);
 
-  // Sliding highlight behind the active tab — measured off the actual DOM node so it
-  // tracks each tab's real width/position (labels aren't uniform width) instead of
-  // guessing at fixed offsets.
   const stagesRef = useRef<HTMLElement>(null);
   const [indicator, setIndicator] = useState<{ left: number; width: number } | null>(null);
   useLayoutEffect(() => {
@@ -117,9 +114,6 @@ export function Layout() {
               [
                 "account-btn",
                 isActive && "active",
-                // No account-name span when signed out — collapses the pill's asymmetric
-                // padding down to a uniform ring so the button stays a perfect circle
-                // around just the avatar (see .account-btn-icon).
                 !session && "account-btn-icon",
               ]
                 .filter(Boolean)
@@ -130,9 +124,6 @@ export function Layout() {
               {session ? (
                 initials(session.user.name)
               ) : (
-                // A plain glyph instead of the 👤 emoji — emoji render with their own
-                // built-in color and ignore `color`, so it stayed dark against the accent
-                // circle instead of picking up the white already set on .user-avatar.
                 <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
                   <path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0 1.5c-3.5 0-6.5 1.75-6.5 4v.5a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-.5c0-2.25-3-4-6.5-4Z" />
                 </svg>
@@ -141,8 +132,6 @@ export function Layout() {
             {session && <span className="account-name">{session.user.name}</span>}
           </NavLink>
 
-          {/* The window is frameless (see electron/main/window.ts) — this topbar is the
-              drag handle, so these are the only way to minimize/close. */}
           <div className="window-controls">
             <button
               type="button"

@@ -1,18 +1,3 @@
-/**
- * doculigent.com sign-in: OAuth 2.1 Authorization Code + PKCE (RFC 7636), browser-based per
- * RFC 8252. `login()` opens the system browser and then races three ways to get the
- * authorization code back:
- *  - automatic: the browser redirects to a loopback server this process spins up
- *  - click-through: doculigent.com's result page also offers a doculigent://callback link,
- *    for browsers that block the loopback redirect fetch (see deepLink.ts)
- *  - manual: doculigent.com also shows the code on-page, and the user pastes it into the
- *    Account page, which calls `submitManualCode`
- * Whichever arrives first wins. The access token lives in main-process memory only
- * (tokenCache.ts) and is never sent to a renderer; the refresh token is the only secret
- * that touches disk, via the OS keychain (keyring.ts). The non-secret profile goes in
- * settings.json (settingsStore.ts) so the header can show the user's name without an
- * extra IPC round trip once a session is loaded.
- */
 import { BrowserWindow, shell } from "electron";
 import { Channels } from "@shared/constants/channels";
 import { AUTH_CONFIG } from "@shared/constants/authConfig";
@@ -41,17 +26,10 @@ export async function getSession(): Promise<AuthSession | null> {
   if (!profile) return null;
   if (getAccessToken()) return { user: profile.user, expiresAt: profile.expiresAt };
 
-  // No access token cached in memory (fresh launch, or it expired) — try to mint one from
-  // the keychain-stored refresh token before deciding there's no session.
   try {
     await refreshAccessToken();
     return { user: profile.user, expiresAt: profile.expiresAt };
   } catch (err) {
-    // A definite rejection (no refresh token, or the server said it's expired/revoked) —
-    // genuinely signed out, so drop the stale local profile too. A transient failure
-    // (network down) leaves the profile in place: report "no session" for now without
-    // discarding it, so the next call retries instead of forcing a re-login once
-    // connectivity returns.
     if (err instanceof OAuthTokenError) clearAuthProfile();
     return null;
   }
@@ -107,8 +85,6 @@ export function submitManualCode(code: string): void {
   pending.manualCode.resolve(trimmed);
 }
 
-/** Wired up to the OS-level doculigent://callback handlers in deepLink.ts. A no-op if no
- *  login is currently awaiting a callback (e.g. a stale or replayed link). */
 export function handleDeepLinkCallback(rawUrl: string): void {
   if (!pending?.deepLink) return;
   const { deepLink } = pending;
@@ -140,10 +116,6 @@ export async function logout(): Promise<void> {
   await forceSignOut();
 }
 
-/** Clears every trace of the session — memory access token, keychain refresh token, and
- *  the local profile — without calling the logout endpoint. Used by logout() after (or
- *  instead of, on failure) the server round trip, and by anything that discovers the
- *  refresh token has been revoked. */
 async function forceSignOut(): Promise<void> {
   clearAccessToken();
   await clearRefreshToken();
