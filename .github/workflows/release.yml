@@ -25,12 +25,6 @@ jobs:
 
       - name: Type check
         run: npm run typecheck
-
-      # electron-builder infers the release tag from package.json's version (vX.Y.Z) and
-      # creates/updates that GitHub Release directly — publishing an installer this way
-      # never touches git itself, so the 100MB/2GB git vs. Release-asset limits don't come
-      # up: the .exe only ever exists as a Release asset, never as a tracked or committed
-      # file.
       - name: Build and publish
         run: npm run build -- --publish always
         env:
