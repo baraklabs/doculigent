@@ -25,6 +25,13 @@ jobs:
 
       - name: Type check
         run: npm run typecheck
+      - name: Write production env
+        shell: bash
+        run: |
+          mkdir -p env
+          echo "VITE_SUPABASE_URL=${{ secrets.VITE_SUPABASE_URL }}" > env/.env.production
+          echo "VITE_WEB_URL=${{ secrets.VITE_WEB_URL }}" >> env/.env.production
+
       - name: Build and publish
         run: npm run build -- --publish always
         env:
