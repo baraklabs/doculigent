@@ -1,0 +1,37 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      # electron-builder infers the release tag from package.json's version (vX.Y.Z) and
+      # creates/updates that GitHub Release directly — publishing an installer this way
+      # never touches git itself, so the 100MB/2GB git vs. Release-asset limits don't come
+      # up: the .exe only ever exists as a Release asset, never as a tracked or committed
+      # file.
+      - name: Build and publish
+        run: npm run build -- --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

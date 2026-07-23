@@ -3,6 +3,10 @@ productName: Doculigent
 directories:
   output: dist
   buildResources: resources
+publish:
+  provider: github
+  owner: baraklabs
+  repo: doculigent
 protocols:
   - name: Doculigent
     schemes:

@@ -1,11 +1,4 @@
-/**
- * The "Draw on screen" overlay's controls — embedded directly in the Record page as an
- * always-visible quick-select row (like the cursor-highlight picker above it), not a
- * separate open/close toggle button. Picking "Off" closes the system-wide draw overlay
- * (electron/main/annotationWindow.ts); picking any other tool opens it (if not already
- * open) and arms that tool — the open/close state is implied by which tool is selected,
- * there's no separate "Draw on screen" button anymore.
- */
+
 import { Fragment, useEffect, useState } from "react";
 import { ANNOTATION_COLORS, type AnnotationTool } from "@shared/types/annotation";
 
@@ -44,12 +37,8 @@ export function AnnotationToolbar() {
 
   async function selectTool(next: AnnotationTool): Promise<void> {
     setToolState(next);
-    if (next === "pointer") {
-      if (overlayOpen) await window.api.annotation.close();
-    } else {
-      if (!overlayOpen) await window.api.annotation.open();
-      await window.api.annotation.setTool(next);
-    }
+    if (!overlayOpen) await window.api.annotation.open();
+    await window.api.annotation.setTool(next);
   }
 
   function selectColor(next: string): void {
@@ -57,11 +46,6 @@ export function AnnotationToolbar() {
     window.api.annotation.setColor(next).catch(() => {});
   }
 
-  // Ctrl+Z / Ctrl+Y / Escape — only meaningful while something's actually open, so they
-  // don't shadow normal text-field shortcuts elsewhere in the app. Escape just arms
-  // "pointer" (click-through) directly — unlike clicking the Off button, it deliberately
-  // does NOT close the overlay, so a quick tap gets you back to the app underneath
-  // without losing your strokes or needing to reopen.
   useEffect(() => {
     if (!overlayOpen) return;
     function onKeyDown(e: KeyboardEvent) {
