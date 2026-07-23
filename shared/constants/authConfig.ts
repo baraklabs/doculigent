@@ -5,7 +5,6 @@ export const AUTH_CONFIG = {
   authorizeUrl: `${baseUrl}/oauth/authorize`,
   tokenUrl: `${baseUrl}/oauth/token`,
   userInfoUrl: `${functionsBaseUrl}/auth-user`,
-  logoutUrl: `${baseUrl}/oauth/logout`,
   clientId: "doculigent-desktop",
   scope: "openid profile email offline_access",
   loopbackHost: "127.0.0.1",
