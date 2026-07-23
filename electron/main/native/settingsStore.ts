@@ -1,5 +1,4 @@
-/** LLM model profiles + app settings, persisted as JSON in the app's userData dir (see
- *  paths.ts). API keys are NOT stored here — see keyring.ts. */
+
 import fs from "node:fs";
 import path from "node:path";
 import type { LlmModelProfile, MicConfig, OverlayConfig } from "@shared/types/models";
@@ -16,24 +15,12 @@ interface StoredSettings {
   recordOverlay?: OverlayConfig;
   recordTargetId?: string | null;
   recordMic?: MicConfig;
-  /** Last-used Meeting tab settings — same restore-on-reopen idea as recordOverlay/
-   *  recordTargetId/recordMic above, just for the Meeting tab's own fields. Title isn't
-   *  included, matching the Record tab (title always starts fresh, everything else
-   *  sticks). */
   meetingLanguage?: string;
   meetingMicEnabled?: boolean;
   meetingMicDeviceId?: string | null;
   meetingSystemAudioEnabled?: boolean;
   meetingSystemAudioSourceId?: string | null;
-  /** Which local Whisper model size to transcribe with (see whisper.ts) — bigger sizes
-   *  are more accurate, especially for non-English languages, at the cost of a larger
-   *  download and slower per-chunk inference. */
   whisperModel?: WhisperModelSize;
-  /** Set right before systemCursor.ts swaps the real OS cursor, cleared once it's put
-   *  back — a marker so a crash mid-recording can still be cleaned up on next launch
-   *  (see systemCursor.ts's restorePendingCursorOverride). Just a boolean: restoring
-   *  always means the same thing (reload the real scheme from registry), so there's
-   *  nothing else worth remembering about what was overridden. */
   cursorOverride?: boolean;
 }
 
@@ -53,9 +40,6 @@ function writeStored(settings: StoredSettings): void {
 
 export function listLlmProfiles(): LlmModelProfile[] {
   const profiles = readStored().llmProfiles ?? [];
-  // Profiles saved before LlmCapability existed (see shared/types/models.ts) have no
-  // `capabilities` field in settings.json at all — every profile was implicitly chat-only
-  // back then, so that's the correct default for old data read from disk.
   return profiles.map((p) => (p.capabilities ? p : { ...p, capabilities: ["chat"] }));
 }
 
@@ -98,9 +82,6 @@ export function setActiveLlmProfile(id: string): void {
   writeStored({ ...readStored(), activeLlmProfileId: id });
 }
 
-/** The doculigent.com account profile — non-secret, so it lives alongside other settings
- *  rather than in the OS keychain (see keyring.ts's refresh-token functions, and
- *  auth/tokenCache.ts for the in-memory-only access token). */
 export function getAuthProfile(): { user: AuthUser; expiresAt: string | null } | null {
   const stored = readStored();
   return stored.authUser ? { user: stored.authUser, expiresAt: stored.authExpiresAt ?? null } : null;
@@ -115,8 +96,6 @@ export function clearAuthProfile(): void {
   writeStored(rest);
 }
 
-/** Last-used Record tab settings (camera overlay + capture source), restored on next
- *  open so the user doesn't have to re-pick them every session. */
 export function getRecordSettings(): {
   overlay: OverlayConfig | null;
   targetId: string | null;

@@ -5,8 +5,6 @@ import type { AuthSession, LoginStatus } from "@shared/types/auth";
 import type { AnnotationCommand, AnnotationState } from "@shared/types/annotation";
 import type { Video } from "@shared/types/models";
 
-/** The only place the renderer's `window.api` shape is wired to real IPC calls — see
- *  shared/types/api.ts for the full contract this must satisfy. */
 const api: DoculigentApi = {
   system: {
     platform: process.platform,
