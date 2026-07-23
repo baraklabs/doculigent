@@ -1,8 +1,15 @@
 
 import { BrowserWindow, screen, type Display } from "electron";
 import path from "node:path";
+import type { AnnotationTool } from "@shared/types/annotation";
 
 const drawWindows = new Map<number, BrowserWindow>();
+
+let mainWindowRef: BrowserWindow | null = null;
+
+export function setMainWindowForAnnotation(win: BrowserWindow): void {
+  mainWindowRef = win;
+}
 
 function loadRoute(win: BrowserWindow, hash: string): void {
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -31,6 +38,7 @@ function createDrawWindow(display: Display): BrowserWindow {
       nodeIntegration: false,
     },
   });
+  
   win.setBounds(display.bounds);
   win.setAlwaysOnTop(true, "screen-saver");
   // Starts click-through (tool defaults to "pointer") so opening the overlay doesn't
@@ -90,11 +98,59 @@ export function closeAnnotationOverlay(): void {
   const wasOpen = drawWindows.size > 0;
   for (const win of drawWindows.values()) win.close();
   drawWindows.clear();
+  stopCursorPoll();
+  lastAppliedClickThrough = null;
+  strokeActive = false;
   if (wasOpen) broadcastToOtherWindows("annotation:overlayOpenChanged", false);
 }
 
-export function setAnnotationClickThrough(ignore: boolean): void {
+let lastAppliedClickThrough: boolean | null = null;
+
+function applyClickThroughIfChanged(ignore: boolean): void {
+  if (lastAppliedClickThrough === ignore) return;
+  lastAppliedClickThrough = ignore;
   for (const win of drawWindows.values()) win.setIgnoreMouseEvents(ignore, { forward: true });
+}
+
+let cursorPollTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopCursorPoll(): void {
+  if (cursorPollTimer) {
+    clearInterval(cursorPollTimer);
+    cursorPollTimer = null;
+  }
+}
+
+let strokeActive = false;
+
+export function setStrokeActive(active: boolean): void {
+  strokeActive = active;
+}
+
+
+function pollCursorAgainstMainWindow(): void {
+  if (strokeActive) return;
+  if (!mainWindowRef || mainWindowRef.isDestroyed()) {
+    applyClickThroughIfChanged(false);
+    return;
+  }
+  const cursor = screen.getCursorScreenPoint();
+  const b = mainWindowRef.getBounds();
+  const overMainWindow = cursor.x >= b.x && cursor.x < b.x + b.width && cursor.y >= b.y && cursor.y < b.y + b.height;
+  applyClickThroughIfChanged(overMainWindow);
+}
+
+
+export function updateClickThroughForTool(tool: AnnotationTool): void {
+  if (tool === "pointer") {
+    stopCursorPoll();
+    applyClickThroughIfChanged(true);
+    return;
+  }
+  if (!cursorPollTimer) {
+    pollCursorAgainstMainWindow();
+    cursorPollTimer = setInterval(pollCursorAgainstMainWindow, 33);
+  }
 }
 
 /** Every draw window (needs it to know how/what to draw) and the main window's embedded

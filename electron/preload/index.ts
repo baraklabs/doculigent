@@ -19,7 +19,6 @@ const api: DoculigentApi = {
   },
   annotation: {
     open: () => ipcRenderer.invoke(Channels.annotation.open),
-    close: () => ipcRenderer.invoke(Channels.annotation.close),
     isOpen: () => ipcRenderer.invoke(Channels.annotation.isOpen),
     getState: () => ipcRenderer.invoke(Channels.annotation.getState),
     setTool: (tool) => ipcRenderer.invoke(Channels.annotation.setTool, tool),
@@ -29,6 +28,7 @@ const api: DoculigentApi = {
     clear: () => ipcRenderer.invoke(Channels.annotation.clear),
     reportHistoryState: (canUndo, canRedo) =>
       ipcRenderer.invoke(Channels.annotation.reportHistoryState, canUndo, canRedo),
+    setStrokeActive: (active) => ipcRenderer.invoke(Channels.annotation.setStrokeActive, active),
     onStateChanged: (callback) => {
       const listener = (_event: unknown, state: AnnotationState) => callback(state);
       ipcRenderer.on(Channels.annotation.stateChanged, listener);

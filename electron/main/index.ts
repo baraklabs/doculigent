@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Menu } from "electron";
 import { createMainWindow } from "./window";
-import { closeAnnotationOverlay } from "./annotationWindow";
+import { closeAnnotationOverlay, setMainWindowForAnnotation } from "./annotationWindow";
 import { registerIpcHandlers } from "./ipc";
 import { registerMediaScheme, registerMediaHandler } from "./mediaProtocol";
 import { restorePendingCursorOverride, restoreCursor } from "./native/systemCursor";
@@ -25,6 +25,7 @@ if (!gotSingleInstanceLock) {
 
   const openMainWindow = (): void => {
     const win = createMainWindow();
+    setMainWindowForAnnotation(win);
     win.on("closed", () => closeAnnotationOverlay());
   };
 

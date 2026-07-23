@@ -9,7 +9,6 @@ export const Channels = {
   },
   annotation: {
     open: "annotation:open",
-    close: "annotation:close",
     isOpen: "annotation:isOpen",
     getState: "annotation:getState",
     setTool: "annotation:setTool",
@@ -18,6 +17,7 @@ export const Channels = {
     redo: "annotation:redo",
     clear: "annotation:clear",
     reportHistoryState: "annotation:reportHistoryState",
+    setStrokeActive: "annotation:setStrokeActive",
     stateChanged: "annotation:stateChanged",
     command: "annotation:command",
     historyStateChanged: "annotation:historyStateChanged",

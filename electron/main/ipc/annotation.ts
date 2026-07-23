@@ -3,13 +3,13 @@ import { Channels } from "@shared/constants/channels";
 import { ANNOTATION_COLORS, type AnnotationTool } from "@shared/types/annotation";
 import {
   broadcastAnnotationState,
-  closeAnnotationOverlay,
   getDrawWindowIds,
   isAnnotationOverlayOpen,
   openAnnotationOverlay,
   sendAnnotationCommand,
   sendAnnotationHistoryState,
-  setAnnotationClickThrough,
+  setStrokeActive,
+  updateClickThroughForTool,
 } from "../annotationWindow";
 
 // Main process is the source of truth for the *current* tool/color (cheap, small state)
@@ -34,13 +34,8 @@ export function registerAnnotationIpc(): void {
   ipcMain.handle(Channels.annotation.open, async (): Promise<void> => {
     currentTool = "pointer";
     openAnnotationOverlay();
+    updateClickThroughForTool(currentTool);
     broadcastAnnotationState(currentTool, currentColor);
-  });
-
-  ipcMain.handle(Channels.annotation.close, async (): Promise<void> => {
-    closeAnnotationOverlay();
-    historyByWindow.clear();
-    sendAnnotationHistoryState(false, false);
   });
 
   ipcMain.handle(Channels.annotation.isOpen, async (): Promise<boolean> => isAnnotationOverlayOpen());
@@ -51,7 +46,7 @@ export function registerAnnotationIpc(): void {
 
   ipcMain.handle(Channels.annotation.setTool, async (_event, tool: AnnotationTool): Promise<void> => {
     currentTool = tool;
-    setAnnotationClickThrough(tool === "pointer");
+    updateClickThroughForTool(currentTool);
     broadcastAnnotationState(currentTool, currentColor);
   });
 
@@ -80,4 +75,8 @@ export function registerAnnotationIpc(): void {
       reportAggregateHistory();
     }
   );
+
+  ipcMain.handle(Channels.annotation.setStrokeActive, async (_event, active: boolean): Promise<void> => {
+    setStrokeActive(active);
+  });
 }

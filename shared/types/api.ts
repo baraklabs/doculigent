@@ -32,8 +32,7 @@ export interface DoculigentApi {
   annotation: {
   
     open(): Promise<void>;
-    close(): Promise<void>;
-  
+
     isOpen(): Promise<boolean>;
     getState(): Promise<AnnotationState>;
 
@@ -44,6 +43,7 @@ export interface DoculigentApi {
     clear(): Promise<void>;
     
     reportHistoryState(canUndo: boolean, canRedo: boolean): Promise<void>;
+    setStrokeActive(active: boolean): Promise<void>;
     onStateChanged(callback: (state: AnnotationState) => void): () => void;
     onCommand(callback: (command: AnnotationCommand) => void): () => void;
     onHistoryStateChanged(callback: (state: { canUndo: boolean; canRedo: boolean }) => void): () => void;

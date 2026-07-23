@@ -1,16 +1,5 @@
-/**
- * The "Draw on screen" overlay's drawing surface — a transparent, fullscreen canvas
- * loaded into its own BrowserWindow (see electron/main/annotationWindow.ts), spanning
- * the whole virtual desktop. Not part of the normal <Layout> shell: this window has no
- * topbar/footer, just the canvas.
- *
- * Strokes/undo-redo history live entirely here, not in main — main only relays tool/color
- * selection and undo/redo/clear commands from RecordPage's embedded toolbar, and gets a
- * canUndo/canRedo boolean pair back to enable/disable its buttons (see
- * reportHistoryState below). Ctrl+Z/Ctrl+Y are also handled locally, straight against
- * this window's own state, for undoing mid-drawing without needing to alt-tab back to
- * the main app first (see the keydown listener below).
- */
+
+
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { AnnotationStroke, AnnotationTool } from "@shared/types/annotation";
 
@@ -73,8 +62,7 @@ export function AnnotationDrawPage() {
   const [redoStack, setRedoStack] = useState<AnnotationStroke[]>([]);
   const [current, setCurrent] = useState<AnnotationStroke | null>(null);
 
-  // A real BrowserWindow, not a div in the main app — its own document, so this doesn't
-  // touch the main window's background.
+ 
   useEffect(() => {
     document.documentElement.style.background = "transparent";
     document.body.style.background = "transparent";
@@ -133,12 +121,6 @@ export function AnnotationDrawPage() {
     };
   }, []);
 
-  // Undo/redo straight from this window when it has focus (e.g. mid-drawing), not just
-  // via the main app's toolbar — also reports back through the same reportHistoryState
-  // path so the toolbar's buttons stay in sync either way. Escape drops back to
-  // "pointer" (click-through) so the user can get back to whatever's underneath without
-  // alt-tabbing to Doculigent — it does NOT close the overlay itself, which stays open
-  // (strokes, toolbar, everything) until explicitly closed.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
@@ -158,6 +140,26 @@ export function AnnotationDrawPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [tool]);
 
+  useEffect(() => {
+    function finalizeCurrentStroke(): void {
+      setCurrent((prev) => {
+        if (!prev) return prev;
+        setStrokes((s) => [...s, prev]);
+        setRedoStack([]); // a fresh stroke invalidates whatever could have been redone
+        window.api.annotation.setStrokeActive(false).catch(() => {});
+        return null;
+      });
+    }
+    document.addEventListener("mouseup", finalizeCurrentStroke);
+    document.addEventListener("mouseleave", finalizeCurrentStroke);
+    window.addEventListener("blur", finalizeCurrentStroke);
+    return () => {
+      document.removeEventListener("mouseup", finalizeCurrentStroke);
+      document.removeEventListener("mouseleave", finalizeCurrentStroke);
+      window.removeEventListener("blur", finalizeCurrentStroke);
+    };
+  }, []);
+
   // Lets the toolbar's undo/redo buttons reflect whether there's anything to undo/redo.
   useEffect(() => {
     window.api.annotation.reportHistoryState(strokes.length > 0, redoStack.length > 0).catch(() => { });
@@ -176,6 +178,8 @@ export function AnnotationDrawPage() {
     if (tool === "pointer") return;
     const point = { x: e.clientX, y: e.clientY };
     setCurrent({ id: crypto.randomUUID(), tool, color, points: tool === "pen" ? [point] : [point, point] });
+ 
+    window.api.annotation.setStrokeActive(true).catch(() => {});
   }
 
   function handleMouseMove(e: ReactMouseEvent<HTMLCanvasElement>): void {
@@ -185,13 +189,6 @@ export function AnnotationDrawPage() {
       if (!prev) return prev;
       return prev.tool === "pen" ? { ...prev, points: [...prev.points, point] } : { ...prev, points: [prev.points[0], point] };
     });
-  }
-
-  function handleMouseUp(): void {
-    if (!current) return;
-    setStrokes((prev) => [...prev, current]);
-    setRedoStack([]); // a fresh stroke invalidates whatever could have been redone
-    setCurrent(null);
   }
 
   return (
@@ -206,7 +203,6 @@ export function AnnotationDrawPage() {
       }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
     />
   );
 }
