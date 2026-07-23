@@ -31,7 +31,6 @@ const TABS_AFTER_EDIT: { to: string; label: string }[] = [
 
 /** Top bar + tab nav + footer status, ported from the original App.tsx shell. */
 export function Layout() {
-  const [coreOnline, setCoreOnline] = useState(false);
   const [latestVersion, setLatestVersion] = useState<string>();
   const session = useAuthStore((s) => s.session);
   const initAuth = useAuthStore((s) => s.init);
@@ -71,17 +70,6 @@ export function Layout() {
     const active = stagesRef.current?.querySelector<HTMLElement>(".stage.active");
     if (active) setIndicator({ left: active.offsetLeft, width: active.offsetWidth });
   }, [location.pathname, latestVideoId]);
-
-  useEffect(() => {
-    // Unlike the old Tauri app (a separate Rust sidecar that could genuinely be "not
-    // running" yet), Electron's main process is always up by the time the renderer runs
-    // at all — this is really just a sanity ping that the preload bridge is wired,
-    // kept for visual parity with the original footer status dot.
-    window.api.settings
-      .getSaveDir()
-      .then(() => setCoreOnline(true))
-      .catch(() => setCoreOnline(false));
-  }, []);
 
   return (
     <div className="app">
@@ -181,10 +169,6 @@ export function Layout() {
       </main>
 
       <footer className="footer">
-        <div className="footer-status">
-          <span className={coreOnline ? "status-dot online" : "status-dot"} />
-          {coreOnline ? "Core connected" : "Core not running"}
-        </div>
         <div className="footer-version">
           <span className="muted">Doculigent v{__APP_VERSION__}</span>
           {latestVersion && isNewerVersion(latestVersion, __APP_VERSION__) && (
