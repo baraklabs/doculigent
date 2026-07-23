@@ -13,7 +13,6 @@ interface AuthState {
   submitManualCode: (code: string) => Promise<void>;
   cancelLogin: () => Promise<void>;
   logout: () => Promise<void>;
-  devLogin: () => Promise<void>;
 }
 
 let subscribed = false;
@@ -61,13 +60,5 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   async logout() {
     await AuthService.logout();
-  },
-
-  async devLogin() {
-    try {
-      await AuthService.devLogin();
-    } catch (err) {
-      set({ loginStatus: { phase: "error", message: errorMessage(err) } });
-    }
   },
 }));

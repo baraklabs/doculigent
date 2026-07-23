@@ -6,8 +6,7 @@ import { initials } from "../lib/userDisplay";
  *  electron/main/auth/doculigentAuth.ts). The redirect completes the login automatically;
  *  the manual-code field is a fallback for when the loopback redirect can't reach the app. */
 export function AccountPage() {
-  const { session, loginStatus, ready, init, login, submitManualCode, cancelLogin, logout, devLogin } =
-    useAuthStore();
+  const { session, loginStatus, ready, init, login, submitManualCode, cancelLogin, logout } = useAuthStore();
   const [manualCode, setManualCode] = useState("");
 
   useEffect(() => {
@@ -55,11 +54,6 @@ export function AccountPage() {
                 <button type="button" className="primary" onClick={() => login()}>
                   Sign in with doculigent.com
                 </button>
-                {import.meta.env.DEV && (
-                  <button type="button" onClick={() => devLogin()}>
-                    Use test account (dev only)
-                  </button>
-                )}
               </div>
             )}
 

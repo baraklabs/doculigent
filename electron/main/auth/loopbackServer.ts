@@ -74,8 +74,8 @@ export class LoopbackServer {
 
 function resultPage(error: string | null): string {
   const message = error
-    ? "Sign-in failed. You can close this window and try again from Doculigent."
-    : "Signed in — you can close this window and return to Doculigent.";
+    ? "Sign-in failed. You can close this window and try again from Doculigent App"
+    : "Signed in — you can close this window and return to Doculigent App";
   return `<!doctype html><html><head><meta charset="utf-8"><title>Doculigent</title></head>` +
     `<body style="font-family: system-ui, sans-serif; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; color:#1c1e2a;">` +
     `<p>${message}</p></body></html>`;

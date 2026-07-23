@@ -16,9 +16,6 @@ export const AuthService = {
   logout(): Promise<void> {
     return window.api.auth.logout();
   },
-  devLogin(): Promise<AuthSession> {
-    return window.api.auth.devLogin();
-  },
   onSessionChanged(callback: (session: AuthSession | null, status: LoginStatus) => void): () => void {
     return window.api.auth.onSessionChanged(callback);
   },

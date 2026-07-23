@@ -99,7 +99,8 @@ export function setActiveLlmProfile(id: string): void {
 }
 
 /** The doculigent.com account profile — non-secret, so it lives alongside other settings
- *  rather than in the OS keychain (see keyring.ts's setAuthTokens for the actual tokens). */
+ *  rather than in the OS keychain (see keyring.ts's refresh-token functions, and
+ *  auth/tokenCache.ts for the in-memory-only access token). */
 export function getAuthProfile(): { user: AuthUser; expiresAt: string | null } | null {
   const stored = readStored();
   return stored.authUser ? { user: stored.authUser, expiresAt: stored.authExpiresAt ?? null } : null;

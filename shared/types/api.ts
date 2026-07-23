@@ -21,7 +21,14 @@ import type { WhisperModelSize, WhisperModelStatus } from "../constants/whisperM
  * in shared/constants/channels.ts). This is the single source of truth for the
  * shape of `window.api` — the renderer never talks to ipcRenderer directly.
  */
-export interface MusentricApi {
+export interface DoculigentApi {
+  /** Static values read from the preload script's own Node process (preload runs
+   *  unsandboxed — see electron/main/window.ts) rather than round-tripped through IPC,
+   *  since they never change for the life of the app. */
+  system: {
+    platform: string;
+    arch: string;
+  };
   capture: {
     listTargets(): Promise<CaptureTarget[]>;
   };
@@ -190,9 +197,6 @@ export interface MusentricApi {
     submitManualCode(code: string): Promise<void>;
     cancelLogin(): Promise<void>;
     logout(): Promise<void>;
-    /** Dev-only: instantly "signs in" with a fake local account, no network involved.
-     *  Rejects outside development builds — see electron/main/auth/doculigentAuth.ts. */
-    devLogin(): Promise<AuthSession>;
     /** Pushed whenever the session or an in-flight login's status changes. Returns an
      *  unsubscribe function. */
     onSessionChanged(callback: (session: AuthSession | null, loginStatus: LoginStatus) => void): () => void;

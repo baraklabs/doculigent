@@ -26,24 +26,20 @@ export async function deleteLlmApiKey(profileId: string): Promise<void> {
   await keytar.deletePassword(SERVICE, llmAccountFor(profileId));
 }
 
-const AUTH_ACCOUNT = "auth:session";
+const AUTH_ACCOUNT = "auth:refreshToken";
 
-export interface StoredAuthTokens {
-  accessToken: string;
-  refreshToken: string | null;
+/** doculigent.com OAuth refresh token — kept in the OS keychain like LLM provider keys
+ *  above, never in the plaintext settings.json (see settingsStore.ts for the non-secret
+ *  profile) and never written to disk in any other form. The access token is NOT stored
+ *  here: it lives in memory only (see electron/main/auth/tokenCache.ts). */
+export function setRefreshToken(token: string): Promise<void> {
+  return keytar.setPassword(SERVICE, AUTH_ACCOUNT, token);
 }
 
-/** doculigent.com OAuth tokens — kept in the OS keychain like LLM provider keys above,
- *  never in the plaintext settings.json (see settingsStore.ts for the non-secret profile). */
-export function setAuthTokens(tokens: StoredAuthTokens): Promise<void> {
-  return keytar.setPassword(SERVICE, AUTH_ACCOUNT, JSON.stringify(tokens));
+export function getRefreshToken(): Promise<string | null> {
+  return keytar.getPassword(SERVICE, AUTH_ACCOUNT);
 }
 
-export async function getAuthTokens(): Promise<StoredAuthTokens | null> {
-  const raw = await keytar.getPassword(SERVICE, AUTH_ACCOUNT);
-  return raw ? (JSON.parse(raw) as StoredAuthTokens) : null;
-}
-
-export async function clearAuthTokens(): Promise<void> {
+export async function clearRefreshToken(): Promise<void> {
   await keytar.deletePassword(SERVICE, AUTH_ACCOUNT);
 }

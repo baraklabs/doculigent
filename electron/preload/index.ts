@@ -1,13 +1,17 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { Channels } from "@shared/constants/channels";
-import type { MusentricApi } from "@shared/types/api";
+import type { DoculigentApi } from "@shared/types/api";
 import type { AuthSession, LoginStatus } from "@shared/types/auth";
 import type { AnnotationCommand, AnnotationState } from "@shared/types/annotation";
 import type { Video } from "@shared/types/models";
 
 /** The only place the renderer's `window.api` shape is wired to real IPC calls — see
  *  shared/types/api.ts for the full contract this must satisfy. */
-const api: MusentricApi = {
+const api: DoculigentApi = {
+  system: {
+    platform: process.platform,
+    arch: process.arch,
+  },
   capture: {
     listTargets: () => ipcRenderer.invoke(Channels.capture.listTargets),
   },
@@ -124,7 +128,6 @@ const api: MusentricApi = {
     submitManualCode: (code) => ipcRenderer.invoke(Channels.auth.submitManualCode, code),
     cancelLogin: () => ipcRenderer.invoke(Channels.auth.cancelLogin),
     logout: () => ipcRenderer.invoke(Channels.auth.logout),
-    devLogin: () => ipcRenderer.invoke(Channels.auth.devLogin),
     onSessionChanged: (callback) => {
       const listener = (_event: unknown, session: AuthSession | null, status: LoginStatus) =>
         callback(session, status);

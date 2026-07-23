@@ -15,6 +15,4 @@ export function registerAuthIpc(): void {
   ipcMain.handle(Channels.auth.cancelLogin, async (): Promise<void> => doculigentAuth.cancelLogin());
 
   ipcMain.handle(Channels.auth.logout, async (): Promise<void> => doculigentAuth.logout());
-
-  ipcMain.handle(Channels.auth.devLogin, async (): Promise<AuthSession> => doculigentAuth.devLogin());
 }

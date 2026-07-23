@@ -5,6 +5,7 @@ import pkg from "./package.json";
 
 export default defineConfig({
   main: {
+    envDir: resolve(__dirname, "env"),
     plugins: [externalizeDepsPlugin()],
     build: {
       outDir: "out/main",

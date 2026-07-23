@@ -49,6 +49,10 @@ body {
   color: var(--text); text-decoration: none; font-size: 13px; font-weight: 500;
 }
 .account-btn:hover { background: rgba(0, 0, 0, .06); }
+/* Signed-out state: no account-name span, so the pill's asymmetric padding (extra room on
+   the right for that text) would otherwise stretch the button into an oval around the
+   avatar circle instead of matching it. */
+.account-btn-icon { padding: 3px; }
 .account-btn.active { border-color: var(--accent); background: rgba(91, 75, 245,.12); }
 .user-avatar {
   width: 26px; height: 26px; min-width: 26px; border-radius: 50%;
