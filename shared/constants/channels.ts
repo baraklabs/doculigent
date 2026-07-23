@@ -116,9 +116,6 @@ export const Channels = {
     submitManualCode: "auth:submitManualCode",
     cancelLogin: "auth:cancelLogin",
     logout: "auth:logout",
-    /** Dev-only: signs in with a fake local account, no doculigent.com round trip. Refused
-     *  by the main process in packaged builds — see doculigentAuth.ts's devLogin. */
-    devLogin: "auth:devLogin",
     /** Main -> renderer push (session or in-flight login status changed); not an
      *  ipcMain.handle channel, subscribed to via ipcRenderer.on in the preload. */
     sessionChanged: "auth:sessionChanged",

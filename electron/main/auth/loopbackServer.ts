@@ -1,5 +1,4 @@
-/** Local RFC 8252 loopback redirect target for the OAuth browser round-trip: doculigent.com
- *  redirects the system browser back to this ephemeral 127.0.0.1 port with `?code=&state=`. */
+
 import http from "node:http";
 import { AUTH_CONFIG } from "@shared/constants/authConfig";
 
@@ -35,7 +34,6 @@ export class LoopbackServer {
     return `http://${AUTH_CONFIG.loopbackHost}:${this.port}${AUTH_CONFIG.loopbackPath}`;
   }
 
-  /** Resolves once the redirect hits this server. Only meaningful to call once per instance. */
   waitForCallback(): Promise<LoopbackResult> {
     return new Promise((resolve, reject) => {
       this.settle = { resolve, reject };
@@ -74,8 +72,8 @@ export class LoopbackServer {
 
 function resultPage(error: string | null): string {
   const message = error
-    ? "Sign-in failed. You can close this window and try again from Doculigent."
-    : "Signed in — you can close this window and return to Doculigent.";
+    ? "Sign-in failed. You can close this window and try again from Doculigent App"
+    : "Signed in — you can close this window and return to Doculigent App";
   return `<!doctype html><html><head><meta charset="utf-8"><title>Doculigent</title></head>` +
     `<body style="font-family: system-ui, sans-serif; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; color:#1c1e2a;">` +
     `<p>${message}</p></body></html>`;

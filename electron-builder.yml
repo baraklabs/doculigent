@@ -3,6 +3,10 @@ productName: Doculigent
 directories:
   output: dist
   buildResources: resources
+protocols:
+  - name: Doculigent
+    schemes:
+      - doculigent
 files:
   - out/**/*
   - package.json

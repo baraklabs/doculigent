@@ -1,8 +1,8 @@
-import type { MusentricApi } from "@shared/types/api";
+import type { DoculigentApi } from "@shared/types/api";
 
 declare global {
   interface Window {
-    api: MusentricApi;
+    api: DoculigentApi;
   }
 }
 

@@ -45,7 +45,13 @@ export function Layout() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch(VERSION_ENDPOINT)
+    fetch(VERSION_ENDPOINT, {
+      headers: {
+        "x-app-version": __APP_VERSION__,
+        "x-platform": window.api.system.platform,
+        "x-arch": window.api.system.arch,
+      },
+    })
       .then((res) => res.json())
       .then((data: { version?: string }) => {
         if (!cancelled && data.version) setLatestVersion(data.version);
@@ -117,8 +123,33 @@ export function Layout() {
         </nav>
 
         <div className="topbar-right">
-          <NavLink to="/account" className={({ isActive }) => (isActive ? "account-btn active" : "account-btn")}>
-            <span className="user-avatar">{session ? initials(session.user.name) : "\u{1F464}"}</span>
+          <NavLink
+            to="/account"
+            className={({ isActive }) =>
+              [
+                "account-btn",
+                isActive && "active",
+                // No account-name span when signed out — collapses the pill's asymmetric
+                // padding down to a uniform ring so the button stays a perfect circle
+                // around just the avatar (see .account-btn-icon).
+                !session && "account-btn-icon",
+              ]
+                .filter(Boolean)
+                .join(" ")
+            }
+          >
+            <span className="user-avatar">
+              {session ? (
+                initials(session.user.name)
+              ) : (
+                // A plain glyph instead of the 👤 emoji — emoji render with their own
+                // built-in color and ignore `color`, so it stayed dark against the accent
+                // circle instead of picking up the white already set on .user-avatar.
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
+                  <path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0 1.5c-3.5 0-6.5 1.75-6.5 4v.5a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-.5c0-2.25-3-4-6.5-4Z" />
+                </svg>
+              )}
+            </span>
             {session && <span className="account-name">{session.user.name}</span>}
           </NavLink>
 
