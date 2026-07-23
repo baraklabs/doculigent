@@ -1,14 +1,8 @@
-/** doculigent.com token exchange + refresh (RFC 6749 §4.1.3 / §6). Owns every call to
- *  /oauth/token and is the single place that writes the access token into memory
- *  (tokenCache.ts) and rotates the refresh token in the OS keychain (keyring.ts). Both
- *  doculigentAuth.ts (initial login, logout) and apiClient.ts (401 retry) go through here
- *  rather than touching those stores directly. */
+
 import { AUTH_CONFIG } from "@shared/constants/authConfig";
 import { setRefreshToken, getRefreshToken, clearRefreshToken } from "../native/keyring";
 import { setAccessToken, getAccessToken, clearAccessToken } from "./tokenCache";
 
-/** Wraps an OAuth `error` response from /oauth/token (RFC 6749 §5.2) — e.g. `invalid_grant`
- *  for an expired/already-used authorization code, or a revoked/expired refresh token. */
 export class OAuthTokenError extends Error {
   constructor(
     public readonly code: string,
@@ -60,8 +54,7 @@ async function requestToken(params: Record<string, string>): Promise<TokenRespon
 async function applyTokenResponse(body: TokenResponse): Promise<AppliedTokens> {
   const expiresAt = body.expires_in ? new Date(Date.now() + body.expires_in * 1000).toISOString() : null;
   setAccessToken(body.access_token, expiresAt);
-  // Refresh tokens are typically rotated on every use — always persist whatever the
-  // server just handed back so the old (now possibly invalidated) one isn't reused.
+
   if (body.refresh_token) await setRefreshToken(body.refresh_token);
   return { accessToken: body.access_token, expiresAt };
 }
@@ -83,10 +76,6 @@ export async function exchangeAuthorizationCode(
 
 let refreshInFlight: Promise<string> | null = null;
 
-/** Redeems the keychain-stored refresh token for a new access token. Concurrent callers
- *  (e.g. two API calls 401-ing at once) share one in-flight request rather than each
- *  racing to rotate the refresh token. Clears all local auth state if the refresh token
- *  turns out to be expired or revoked. */
 export function refreshAccessToken(): Promise<string> {
   if (refreshInFlight) return refreshInFlight;
 

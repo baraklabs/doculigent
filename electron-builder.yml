@@ -3,9 +3,6 @@ productName: Doculigent
 directories:
   output: dist
   buildResources: resources
-# Registers the doculigent:// custom URI scheme with the OS (Windows registry entries via
-# NSIS, macOS CFBundleURLTypes, Linux .desktop MimeType) — see
-# electron/main/auth/deepLink.ts for the handlers this feeds.
 protocols:
   - name: Doculigent
     schemes:
