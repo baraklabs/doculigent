@@ -1,5 +1,4 @@
-/** Local RFC 8252 loopback redirect target for the OAuth browser round-trip: doculigent.com
- *  redirects the system browser back to this ephemeral 127.0.0.1 port with `?code=&state=`. */
+
 import http from "node:http";
 import { AUTH_CONFIG } from "@shared/constants/authConfig";
 
@@ -35,7 +34,6 @@ export class LoopbackServer {
     return `http://${AUTH_CONFIG.loopbackHost}:${this.port}${AUTH_CONFIG.loopbackPath}`;
   }
 
-  /** Resolves once the redirect hits this server. Only meaningful to call once per instance. */
   waitForCallback(): Promise<LoopbackResult> {
     return new Promise((resolve, reject) => {
       this.settle = { resolve, reject };

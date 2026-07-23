@@ -137,18 +137,6 @@ export async function cancelLogin(): Promise<void> {
 }
 
 export async function logout(): Promise<void> {
-  const refreshToken = await getRefreshToken();
-  if (refreshToken) {
-    try {
-      await fetch(AUTH_CONFIG.logoutUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: refreshToken }),
-      });
-    } catch {
-      // Best-effort: doculigent.com being unreachable shouldn't block signing out locally.
-    }
-  }
   await forceSignOut();
 }
 
