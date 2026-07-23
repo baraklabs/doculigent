@@ -103,9 +103,6 @@ export function refreshAccessToken(): Promise<string> {
   });
 }
 
-/** The in-memory access token if one is cached, otherwise a freshly-refreshed one if a
- *  refresh token exists — or null if there's no session at all. Never throws: a failed
- *  refresh (revoked/expired token, network error) just means "not signed in". */
 export async function getValidAccessToken(): Promise<string | null> {
   const cached = getAccessToken();
   if (cached) return cached;
