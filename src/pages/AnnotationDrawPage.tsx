@@ -111,6 +111,13 @@ export function AnnotationDrawPage() {
   }
 
   useEffect(() => {
+    window.api.annotation
+      .getState()
+      .then((state) => {
+        setTool(state.tool);
+        setColor(state.color);
+      })
+      .catch(() => { });
     const unsubState = window.api.annotation.onStateChanged((state) => {
       setTool(state.tool);
       setColor(state.color);
@@ -135,7 +142,7 @@ export function AnnotationDrawPage() {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        if (tool !== "pointer") window.api.annotation.setTool("pointer").catch(() => {});
+        if (tool !== "pointer") window.api.annotation.setTool("pointer").catch(() => { });
         return;
       }
       if (!e.ctrlKey) return;
@@ -153,7 +160,7 @@ export function AnnotationDrawPage() {
 
   // Lets the toolbar's undo/redo buttons reflect whether there's anything to undo/redo.
   useEffect(() => {
-    window.api.annotation.reportHistoryState(strokes.length > 0, redoStack.length > 0).catch(() => {});
+    window.api.annotation.reportHistoryState(strokes.length > 0, redoStack.length > 0).catch(() => { });
   }, [strokes, redoStack]);
 
   useEffect(() => {

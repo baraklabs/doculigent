@@ -35,7 +35,8 @@ export interface DoculigentApi {
     close(): Promise<void>;
   
     isOpen(): Promise<boolean>;
-   
+    getState(): Promise<AnnotationState>;
+
     setTool(tool: AnnotationTool): Promise<void>;
     setColor(color: string): Promise<void>;
     undo(): Promise<void>;

@@ -11,6 +11,7 @@ export const Channels = {
     open: "annotation:open",
     close: "annotation:close",
     isOpen: "annotation:isOpen",
+    getState: "annotation:getState",
     setTool: "annotation:setTool",
     setColor: "annotation:setColor",
     undo: "annotation:undo",

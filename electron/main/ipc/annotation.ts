@@ -29,6 +29,10 @@ export function registerAnnotationIpc(): void {
   });
 
   ipcMain.handle(Channels.annotation.isOpen, async (): Promise<boolean> => isAnnotationOverlayOpen());
+  ipcMain.handle(
+    Channels.annotation.getState,
+    async (): Promise<{ tool: AnnotationTool; color: string }> => ({ tool: currentTool, color: currentColor })
+  );
 
   ipcMain.handle(Channels.annotation.setTool, async (_event, tool: AnnotationTool): Promise<void> => {
     currentTool = tool;

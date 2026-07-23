@@ -21,6 +21,7 @@ const api: DoculigentApi = {
     open: () => ipcRenderer.invoke(Channels.annotation.open),
     close: () => ipcRenderer.invoke(Channels.annotation.close),
     isOpen: () => ipcRenderer.invoke(Channels.annotation.isOpen),
+    getState: () => ipcRenderer.invoke(Channels.annotation.getState),
     setTool: (tool) => ipcRenderer.invoke(Channels.annotation.setTool, tool),
     setColor: (color) => ipcRenderer.invoke(Channels.annotation.setColor, color),
     undo: () => ipcRenderer.invoke(Channels.annotation.undo),
