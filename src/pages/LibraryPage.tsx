@@ -263,6 +263,7 @@ export function LibraryPage() {
             <ComingSoon
               icon="🗂️"
               title="Projects is coming soon"
+              subtitle="Saved Edit-tab sessions will live here once the new multi-clip editor ships."
             />
           ) : (
             <>
