@@ -7,6 +7,7 @@ import { audioRecordingService, getSystemAudioStream } from "../services/recordi
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
 import { SettingsService } from "../services/settings/SettingsService";
 import { LiveWaveform } from "../components/LiveWaveform";
+import "./MeetingPage.css";
 
 const SPEAKER_COLORS = ["#5b4bf5", "#0ea5e9", "#f59e0b", "#10b981", "#ef4444"];
 function colorForSpeaker(name: string): string {
@@ -201,7 +202,7 @@ export function MeetingPage() {
 
   // A transient top-right toast (not a persistent banner) each time the mic gets turned
   // off, auto-dismissing after a few seconds — same idea as RecordPage's save-status
-  // toast (bottom-right, see .toast in styles.css) but positioned/timed differently since
+  // toast (bottom-right, see .toast in styles/base.css) but positioned/timed differently since
   // this is a one-shot warning about a choice just made, not an ongoing background task.
   //
   // Only for choices made *this session*: without micWarningInitialized, restoring a

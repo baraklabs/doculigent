@@ -1,11 +1,5 @@
 import type { Transcript, Video } from "@shared/types/models";
 
-/**
- * Thin abstraction over the storage backend (today: SQLite via IPC to the main
- * process — see electron/main/native/db.ts). Per prompt.md's architecture principles,
- * services depend on this, not on `window.api` directly, so a future swap (e.g. moving
- * storage behind a real local HTTP API per the Phase 3 roadmap) only touches this file.
- */
 export const StorageProvider = {
   list(): Promise<Video[]> {
     return window.api.library.list();
@@ -13,11 +7,11 @@ export const StorageProvider = {
   get(id: string): Promise<Video | null> {
     return window.api.library.get(id);
   },
-  delete(id: string): Promise<void> {
-    return window.api.library.delete(id);
+  delete(id: string, keepFile?: boolean): Promise<void> {
+    return window.api.library.delete(id, keepFile);
   },
-  trim(id: string, startSecs: number, endSecs: number): Promise<Video> {
-    return window.api.library.trim(id, startSecs, endSecs);
+  deleteMany(ids: string[], keepFile?: boolean): Promise<void> {
+    return window.api.library.deleteMany(ids, keepFile);
   },
   search(query: string): Promise<Video[]> {
     return window.api.library.search(query);

@@ -1,4 +1,5 @@
 import { useParams } from "react-router-dom";
+import "./SharePage.css";
 
 /** Sharing itself is still a Phase 2 stub (prompt.md: cloud sharing/sync explicitly out
  *  of scope for this pass) — doculigent.com sign-in is now real, see store/authStore.ts. */

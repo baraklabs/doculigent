@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { Channels } from "@shared/constants/channels";
 import type { DoculigentApi } from "@shared/types/api";
 import type { AuthSession, LoginStatus } from "@shared/types/auth";
@@ -9,6 +9,7 @@ const api: DoculigentApi = {
   system: {
     platform: process.platform,
     arch: process.arch,
+    getPathForFile: (file) => webUtils.getPathForFile(file),
   },
   capture: {
     listTargets: () => ipcRenderer.invoke(Channels.capture.listTargets),
@@ -16,6 +17,12 @@ const api: DoculigentApi = {
   cursor: {
     apply: (style) => ipcRenderer.invoke(Channels.cursor.apply, style),
     restore: () => ipcRenderer.invoke(Channels.cursor.restore),
+    startCapture: (targetId, style) => ipcRenderer.invoke(Channels.cursor.startCapture, targetId, style),
+    stopCapture: () => ipcRenderer.invoke(Channels.cursor.stopCapture),
+  },
+  screenCapture: {
+    start: (targetId, hideCursor) => ipcRenderer.invoke(Channels.screenCapture.start, targetId, hideCursor),
+    stop: () => ipcRenderer.invoke(Channels.screenCapture.stop),
   },
   annotation: {
     open: () => ipcRenderer.invoke(Channels.annotation.open),
@@ -23,6 +30,9 @@ const api: DoculigentApi = {
     getState: () => ipcRenderer.invoke(Channels.annotation.getState),
     setTool: (tool) => ipcRenderer.invoke(Channels.annotation.setTool, tool),
     setColor: (color) => ipcRenderer.invoke(Channels.annotation.setColor, color),
+    setWidth: (width) => ipcRenderer.invoke(Channels.annotation.setWidth, width),
+    setOpacity: (opacity) => ipcRenderer.invoke(Channels.annotation.setOpacity, opacity),
+    setFadeMs: (fadeMs) => ipcRenderer.invoke(Channels.annotation.setFadeMs, fadeMs),
     undo: () => ipcRenderer.invoke(Channels.annotation.undo),
     redo: () => ipcRenderer.invoke(Channels.annotation.redo),
     clear: () => ipcRenderer.invoke(Channels.annotation.clear),
@@ -53,6 +63,12 @@ const api: DoculigentApi = {
   recording: {
     save: (input) => ipcRenderer.invoke(Channels.recording.save, input),
     saveAudio: (input) => ipcRenderer.invoke(Channels.recording.saveAudio, input),
+    cancelSave: (id) => ipcRenderer.invoke(Channels.recording.cancelSave, id),
+    onSaveProgress: (callback) => {
+      const listener = (_event: unknown, progress: { id: string; percent: number }) => callback(progress);
+      ipcRenderer.on(Channels.recording.saveProgress, listener);
+      return () => ipcRenderer.removeListener(Channels.recording.saveProgress, listener);
+    },
     onSaveCompleted: (callback) => {
       const listener = (_event: unknown, video: Video) => callback(video);
       ipcRenderer.on(Channels.recording.saveCompleted, listener);
@@ -67,11 +83,21 @@ const api: DoculigentApi = {
   library: {
     list: () => ipcRenderer.invoke(Channels.library.list),
     get: (id) => ipcRenderer.invoke(Channels.library.get, id),
-    delete: (id) => ipcRenderer.invoke(Channels.library.delete, id),
-    trim: (id, startSecs, endSecs) => ipcRenderer.invoke(Channels.library.trim, id, startSecs, endSecs),
+    delete: (id, keepFile) => ipcRenderer.invoke(Channels.library.delete, id, keepFile),
+    deleteMany: (ids, keepFile) => ipcRenderer.invoke(Channels.library.deleteMany, ids, keepFile),
     search: (query) => ipcRenderer.invoke(Channels.library.search, query),
     rename: (id, title) => ipcRenderer.invoke(Channels.library.rename, id, title),
     setTranscript: (id, transcript) => ipcRenderer.invoke(Channels.library.setTranscript, id, transcript),
+  },
+  editProjects: {
+    list: () => ipcRenderer.invoke(Channels.editProjects.list),
+    get: (id) => ipcRenderer.invoke(Channels.editProjects.get, id),
+    create: (input) => ipcRenderer.invoke(Channels.editProjects.create, input),
+    update: (id, patch) => ipcRenderer.invoke(Channels.editProjects.update, id, patch),
+    delete: (id) => ipcRenderer.invoke(Channels.editProjects.delete, id),
+    pickImportFile: () => ipcRenderer.invoke(Channels.editProjects.pickImportFile),
+    fileExists: (filePath) => ipcRenderer.invoke(Channels.editProjects.fileExists, filePath),
+    export: (id, keepRanges) => ipcRenderer.invoke(Channels.editProjects.export, id, keepRanges),
   },
   settings: {
     getSaveDir: () => ipcRenderer.invoke(Channels.settings.getSaveDir),
@@ -120,6 +146,13 @@ const api: DoculigentApi = {
   window: {
     minimize: () => ipcRenderer.invoke(Channels.window.minimize),
     close: () => ipcRenderer.invoke(Channels.window.close),
+    toggleMaximize: () => ipcRenderer.invoke(Channels.window.toggleMaximize),
+    isMaximized: () => ipcRenderer.invoke(Channels.window.isMaximized),
+    onMaximizeChanged: (callback) => {
+      const listener = (_event: unknown, maximized: boolean) => callback(maximized);
+      ipcRenderer.on(Channels.window.maximizeChanged, listener);
+      return () => ipcRenderer.removeListener(Channels.window.maximizeChanged, listener);
+    },
   },
   auth: {
     getSession: () => ipcRenderer.invoke(Channels.auth.getSession),

@@ -21,20 +21,16 @@ export function useVideo(id: string | undefined) {
 export function useDeleteVideo() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => LibraryService.delete(id),
+    mutationFn: ({ id, keepFile }: { id: string; keepFile?: boolean }) => LibraryService.delete(id, keepFile),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["videos"] }),
   });
 }
 
-export function useTrimVideo() {
+export function useDeleteVideos() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, startSecs, endSecs }: { id: string; startSecs: number; endSecs: number }) =>
-      LibraryService.trim(id, startSecs, endSecs),
-    onSuccess: (video) => {
-      queryClient.invalidateQueries({ queryKey: ["videos"] });
-      queryClient.setQueryData(["video", video.id], video);
-    },
+    mutationFn: ({ ids, keepFile }: { ids: string[]; keepFile?: boolean }) => LibraryService.deleteMany(ids, keepFile),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["videos"] }),
   });
 }
 

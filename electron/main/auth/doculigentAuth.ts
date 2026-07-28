@@ -20,19 +20,35 @@ interface PendingLogin {
 }
 
 let pending: PendingLogin | null = null;
+/** Guards the one-shot profile backfill below so a plan-less API can't cause a fetch loop. */
+let planBackfillAttempted = false;
 
 export async function getSession(): Promise<AuthSession | null> {
   const profile = getAuthProfile();
   if (!profile) return null;
-  if (getAccessToken()) return { user: profile.user, expiresAt: profile.expiresAt };
-
-  try {
-    await refreshAccessToken();
-    return { user: profile.user, expiresAt: profile.expiresAt };
-  } catch (err) {
-    if (err instanceof OAuthTokenError) clearAuthProfile();
-    return null;
+  if (!getAccessToken()) {
+    try {
+      await refreshAccessToken();
+    } catch (err) {
+      if (err instanceof OAuthTokenError) clearAuthProfile();
+      return null;
+    }
   }
+
+  // Sessions created before plan support have no plan on file; re-fetch the profile once
+  // per app run so the Account page shows the subscription without a forced re-login.
+  if (!profile.user.plan && !planBackfillAttempted) {
+    planBackfillAttempted = true;
+    try {
+      const user = await fetchProfile();
+      setAuthProfile(user, profile.expiresAt);
+      return { user, expiresAt: profile.expiresAt };
+    } catch {
+      // Offline or endpoint unavailable — keep the stored profile as-is.
+    }
+  }
+
+  return { user: profile.user, expiresAt: profile.expiresAt };
 }
 
 export async function login(): Promise<AuthSession> {
@@ -135,15 +151,38 @@ function buildAuthorizeUrl(challenge: string, state: string, redirectUri: string
   return url.toString();
 }
 
+interface UserInfoResponse {
+  user?: {
+    id?: string;
+    name?: string | null;
+    email?: string;
+    plan?: {
+      tier?: string;
+      interval?: string;
+      startedAt?: string | null;
+      priceUsd?: number | null;
+    } | null;
+  };
+}
+
 async function fetchProfile(): Promise<AuthUser> {
   const res = await authorizedFetch(AUTH_CONFIG.userInfoUrl);
   if (!res.ok) throw new Error(`Could not load your doculigent.com profile (${res.status})`);
-  const body = (await res.json()) as { user?: { id?: string; name?: string | null; email?: string } };
+  const body = (await res.json()) as UserInfoResponse;
   if (!body.user) throw new Error("Could not load your doculigent.com profile.");
+  const plan = body.user.plan;
   return {
     id: body.user.id ?? "",
     name: body.user.name ?? body.user.email ?? "Doculigent user",
     email: body.user.email ?? "",
+    plan: plan
+      ? {
+          tier: plan.tier ?? "free",
+          interval: plan.interval ?? "",
+          startedAt: plan.startedAt ?? null,
+          priceUsd: plan.priceUsd ?? null,
+        }
+      : null,
   };
 }
 

@@ -1,0 +1,189 @@
+/*
+ * Record tab — a Loom-style setup screen: the preview leads, and every setting sits in its
+ * own tinted card so the page reads as a few labelled blocks rather than one long form.
+ * Each block owns an accent colour used for its icon chip and its selected state.
+ */
+
+.record-page { background: transparent; border: none; box-shadow: none; padding: 0; }
+
+.record-hero {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  flex-wrap: wrap; margin-bottom: 14px;
+}
+.record-hero h1 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
+.record-hero p { margin: 2px 0 0; font-size: 13px; }
+
+.record-layout { display: grid; grid-template-columns: minmax(360px, 1.1fr) minmax(320px, 1fr); gap: 18px; align-items: start; }
+@media (max-width: 900px) { .record-layout { grid-template-columns: 1fr; } }
+.record-preview-col, .record-controls-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+/* --- Blocks --------------------------------------------------------------------- */
+
+/* Each block is tinted end to end — background, border and heading all take the block's
+   own accent, so the page reads as coloured cards rather than white boxes with a stripe. */
+.record-block {
+  --block-accent: var(--accent);
+  --block-tint: rgba(91, 75, 245, .08);
+  background: var(--block-tint);
+  border: 1px solid var(--block-accent); border-radius: 16px;
+  padding: 14px 16px; box-shadow: 0 6px 20px rgba(30, 30, 60, .05);
+  position: relative;
+}
+.record-block .record-block-title { color: var(--block-accent); }
+.record-block-icon { background: #fff; }
+/* Inputs keep a white surface so they stay legible against the tint. */
+.record-block select,
+.record-block input[type="text"],
+.record-block input[type="search"] { background: #fff; border-color: rgba(255, 255, 255, .9); }
+.record-block-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.record-block-icon {
+  width: 30px; height: 30px; min-width: 30px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center; font-size: 15px;
+  background: var(--block-tint); color: var(--block-accent);
+}
+.record-block-title { font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+.record-block-sub { font-size: 11px; color: var(--muted); margin: 0; }
+.record-block .field { margin: 0; }
+.record-block .field + .field { margin-top: 10px; }
+
+.record-block-source { --block-accent: #5b4bf5; --block-tint: rgba(91, 75, 245, .09); }
+.record-block-camera { --block-accent: #0284c7; --block-tint: rgba(14, 165, 233, .11); }
+.record-block-audio  { --block-accent: #15803d; --block-tint: rgba(22, 163, 74, .11); }
+.record-block-cursor { --block-accent: #b45309; --block-tint: rgba(245, 158, 11, .13); }
+.record-block-draw   { --block-accent: #db2777; --block-tint: rgba(236, 72, 153, .1); }
+.record-block-output { --block-accent: #0f766e; --block-tint: rgba(15, 118, 110, .1); }
+
+/* --- Preview -------------------------------------------------------------------- */
+
+/* A gradient frame around the preview — the accent runs through the whole palette used by
+   the blocks below, tying the page together and turning red while recording. */
+.stage-preview {
+  position: relative; background: #0d0f16;
+  border: 3px solid transparent; border-radius: 18px;
+  background-image: linear-gradient(#0d0f16, #0d0f16), linear-gradient(135deg, #5b4bf5, #0284c7, #15803d, #b45309, #db2777);
+  background-origin: border-box; background-clip: padding-box, border-box;
+  overflow: hidden; width: 100%; aspect-ratio: 16 / 9; margin: 0;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 12px 32px rgba(20, 20, 40, .16);
+}
+.stage-preview.is-recording {
+  background-image: linear-gradient(#0d0f16, #0d0f16), linear-gradient(135deg, #b3261e, #e0574a);
+  box-shadow: 0 12px 32px rgba(179, 38, 30, .3);
+}
+.stage-preview video, .stage-preview canvas { width: 100%; height: 100%; object-fit: cover; display: block; }
+.stage-preview .stage-empty { color: rgba(255, 255, 255, .7); font-size: 12px; text-align: center; padding: 12px; }
+.recording-canvas-host { width: 100%; height: 100%; }
+.recording-canvas-host canvas { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* Live "REC" pill over the preview, the one thing that should be unmissable. */
+.record-live-pill {
+  position: absolute; top: 12px; left: 12px; z-index: 2;
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(179, 38, 30, .92); color: #fff; font-size: 11px; font-weight: 700;
+  letter-spacing: .06em; padding: 4px 10px; border-radius: 999px;
+}
+.record-live-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: #fff;
+  animation: record-blink 1.2s ease-in-out infinite;
+}
+@keyframes record-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+
+.cam-bubble {
+  position: absolute; overflow: hidden; background: #000;
+  border: 2px solid #fff; border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(20, 20, 40, .25);
+}
+.cam-bubble.circular { border-radius: 50%; }
+.cam-bubble video { width: 100%; height: 100%; object-fit: cover; display: block; transform: scaleX(-1); }
+
+/* --- Start / stop --------------------------------------------------------------- */
+
+.record-cta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.record-cta-btn {
+  flex: 1; min-width: 180px; display: flex; align-items: center; justify-content: center; gap: 9px;
+  padding: 13px 20px; border-radius: 999px; border: none;
+  font-size: 15px; font-weight: 600; color: #fff;
+  background: linear-gradient(135deg, #5b4bf5, #8b5cf6);
+  box-shadow: 0 8px 22px rgba(91, 75, 245, .35);
+  transition: transform 140ms ease, box-shadow 140ms ease, filter 140ms ease;
+}
+.record-cta-btn:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.05); border-color: transparent; }
+.record-cta-btn:disabled { opacity: .55; box-shadow: none; }
+.record-cta-btn.stop {
+  background: linear-gradient(135deg, #b3261e, #e0574a);
+  box-shadow: 0 8px 22px rgba(179, 38, 30, .35);
+}
+.record-cta-dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
+.record-cta-square { width: 10px; height: 10px; border-radius: 2px; background: currentColor; }
+.record-elapsed { font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600; }
+
+/* --- Overlay (camera bubble) config --------------------------------------------- */
+
+.overlay-cfg {
+  border: none; background: transparent; padding: 0;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px;
+}
+.overlay-cfg > * { min-width: 0; }
+.overlay-cfg label:not(.checkbox) {
+  display: flex; flex-direction: row; align-items: center; justify-content: space-between;
+  gap: 10px; font-size: 12px; color: var(--muted);
+}
+.overlay-cfg label:not(.checkbox) > select,
+.overlay-cfg label:not(.checkbox) > input[type="range"] { flex: 1 1 auto; min-width: 0; width: auto; }
+.overlay-cfg .checkbox { justify-content: flex-start; gap: 8px; font-size: 13px; color: var(--text); flex-wrap: wrap; }
+.overlay-cfg input[type="range"] { accent-color: var(--block-accent); }
+
+/* --- Cursor picker -------------------------------------------------------------- */
+
+.cursor-style-picker { display: flex; flex-direction: column; gap: 10px; font-size: 12px; }
+
+.cursor-hide-toggle {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+  padding: 8px 10px; border-radius: 11px; font-size: 12px; text-align: left;
+  /* Same reasoning as .cursor-style-btn below: no `pointer`, which would swap in
+     IDC_HAND and fight the cursor preview. */
+  cursor: default;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+.cursor-hide-toggle:hover:not(:disabled) { border-color: var(--block-accent); color: var(--text); }
+.cursor-hide-toggle.on {
+  background: var(--block-tint); border-color: var(--block-accent); color: var(--text);
+}
+.cursor-hide-toggle:disabled { opacity: .4; cursor: not-allowed; }
+.cursor-hide-icon { display: flex; align-items: center; justify-content: center; }
+.cursor-hide-label { flex: 1 1 auto; min-width: 0; }
+.cursor-hide-switch {
+  flex: none; width: 32px; height: 18px; border-radius: 999px; padding: 2px;
+  background: var(--border); display: flex; transition: background 150ms ease;
+}
+.cursor-hide-toggle.on .cursor-hide-switch { background: var(--block-accent); }
+.cursor-hide-knob {
+  width: 14px; height: 14px; border-radius: 50%; background: var(--bg);
+  transition: transform 150ms ease;
+}
+.cursor-hide-toggle.on .cursor-hide-knob { transform: translateX(14px); }
+
+.cursor-style-options { display: flex; flex-direction: row; gap: 6px; flex-wrap: wrap; }
+/* The tiles stay visible while the cursor is hidden — they're what the toggle is turning
+   off, so hiding them entirely would make the toggle look like it removed a setting. */
+.cursor-style-options.dimmed { opacity: .45; }
+.cursor-style-btn {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+  width: 36px; height: 36px; padding: 0; border-radius: 11px;
+  /* Deliberately NOT `pointer`. Hovering a tile previews the style by swapping the system
+     arrow (OCR_NORMAL); a `pointer` cursor makes Windows draw IDC_HAND instead, so the
+     swap happens to a cursor that isn't on screen and the preview looks broken. */
+  cursor: default;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease, transform 120ms ease;
+}
+.cursor-style-icon { font-size: 16px; line-height: 1; display: flex; align-items: center; justify-content: center; }
+.cursor-style-icon.big { font-size: 13px; font-weight: 700; }
+.cursor-style-btn:hover:not(:disabled) { border-color: var(--block-accent); color: var(--text); transform: translateY(-1px); }
+.cursor-style-btn.active {
+  background: var(--block-tint); border-color: var(--block-accent); color: var(--text);
+  box-shadow: 0 0 0 1px var(--block-accent);
+}
+.cursor-style-btn.active .cursor-style-icon { color: var(--block-accent); }
+.cursor-style-btn:disabled { opacity: .4; cursor: not-allowed; }

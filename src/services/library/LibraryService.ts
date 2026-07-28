@@ -8,11 +8,11 @@ export const LibraryService = {
   get(id: string): Promise<Video | null> {
     return StorageProvider.get(id);
   },
-  delete(id: string): Promise<void> {
-    return StorageProvider.delete(id);
+  delete(id: string, keepFile?: boolean): Promise<void> {
+    return StorageProvider.delete(id, keepFile);
   },
-  trim(id: string, startSecs: number, endSecs: number): Promise<Video> {
-    return StorageProvider.trim(id, startSecs, endSecs);
+  deleteMany(ids: string[], keepFile?: boolean): Promise<void> {
+    return StorageProvider.deleteMany(ids, keepFile);
   },
   rename(id: string, title: string): Promise<Video> {
     return StorageProvider.rename(id, title);

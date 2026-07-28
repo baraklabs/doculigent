@@ -12,6 +12,7 @@ import {
   useSetActiveLlmProfile,
   useTestLlmConnection,
 } from "../hooks/useLlmProfiles";
+import "./SettingsPage.css";
 
 const SECTIONS = [
   { id: "models", label: "Model Config" },

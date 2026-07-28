@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ChatMessage, Summary, Transcript, Video } from "@shared/types/models";
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
 import { AiService } from "../services/ai/AiService";
+import "./AiWorkspace.css";
 
 function fmt(t: number): string {
   const m = Math.floor(t / 60);

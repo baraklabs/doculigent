@@ -1,17 +1,17 @@
-import { useEffect, useRef, useState, type SyntheticEvent } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useRef, useState, type CSSProperties, type SyntheticEvent } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import type { TranscriptSegment, Video } from "@shared/types/models";
 import { mediaUrl } from "@shared/constants/media";
 import { DEFAULT_TRANSCRIPTION_LANGUAGE, TRANSCRIPTION_LANGUAGES } from "@shared/constants/languages";
 import { DEFAULT_WHISPER_MODEL, WHISPER_MODELS } from "@shared/constants/whisperModels";
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
-import { useDeleteVideo, useRenameVideo, useSetVideoTranscript, useVideos } from "../hooks/useVideos";
+import { useDeleteVideo, useDeleteVideos, useRenameVideo, useSetVideoTranscript, useVideos } from "../hooks/useVideos";
+import { useDeleteEditProject, useEditProjects } from "../hooks/useEditProjects";
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
 import { SettingsService } from "../services/settings/SettingsService";
 import { useAuthStore } from "../store/authStore";
+import "./LibraryPage.css";
 
-/** Just the filename for the folder icon's hover tooltip — the full path is what
- *  actually gets revealed, but the filename alone is what's useful to read at a glance. */
 function fileName(filePath: string): string {
   return filePath.split(/[\\/]/).pop() ?? filePath;
 }
@@ -22,18 +22,17 @@ function formatDuration(secs: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-/** Nudges a freshly-loaded <video> to a non-zero frame so it renders as a real thumbnail
- *  instead of a black/blank first frame. */
 function showThumbnailFrame(e: SyntheticEvent<HTMLVideoElement>): void {
   const video = e.currentTarget;
   video.currentTime = Math.min(0.1, video.duration || 0);
 }
 
 const SECTIONS = [
-  { id: "videos", label: "Videos" },
-  { id: "meeting", label: "Meeting" },
-  { id: "shared", label: "Shared" },
-  { id: "transcribed", label: "Transcribed" },
+  { id: "videos", label: "Videos", icon: "🎬", accent: "#5b4bf5", tint: "rgba(91, 75, 245, .09)" },
+  { id: "meeting", label: "Meeting", icon: "🎙️", accent: "#0284c7", tint: "rgba(14, 165, 233, .11)" },
+  { id: "projects", label: "Projects", icon: "🗂️", accent: "#0f766e", tint: "rgba(15, 118, 110, .1)" },
+  { id: "shared", label: "Shared", icon: "🔗", accent: "#db2777", tint: "rgba(236, 72, 153, .1)" },
+  { id: "transcribed", label: "Transcribed", icon: "📄", accent: "#b45309", tint: "rgba(245, 158, 11, .13)" },
 ] as const;
 type SectionId = (typeof SECTIONS)[number]["id"];
 
@@ -43,30 +42,29 @@ const SHARED_TABS = [
 ] as const;
 type SharedTabId = (typeof SHARED_TABS)[number]["id"];
 
-/**
- * The recording library. Side nav: Videos (Record tab captures), Meeting (Meeting tab's
- * audio recordings — see MeetingPage for actually making one), Shared, and Transcribed
- * (cross-cutting — any recording with a saved transcript, regardless of source).
- */
+
+const SECTION_IDS = SECTIONS.map((s) => s.id) as readonly string[];
+
 export function LibraryPage() {
-  const [section, setSection] = useState<SectionId>("videos");
+  const [searchParams] = useSearchParams();
+  const [section, setSection] = useState<SectionId>(() => {
+    const requested = searchParams.get("section");
+    return requested && SECTION_IDS.includes(requested) ? (requested as SectionId) : "videos";
+  });
   const [query, setQuery] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [transcribingId, setTranscribingId] = useState<string | null>(null);
   const [errorFor, setErrorFor] = useState<{ id: string; message: string } | null>(null);
-  // Set right before a user-initiated Stop, so runTranscribe's catch block can tell "the
-  // worker died because the user stopped it" apart from a genuine transcription failure.
   const stoppedRef = useRef(false);
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [sharedTab, setSharedTab] = useState<SharedTabId>("mine");
   const [folderError, setFolderError] = useState<{ id: string; message: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Video | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const session = useAuthStore((s) => s.session);
 
-  /** Reveals a specific recording's file in the OS file explorer, selected — not just the
-   *  save folder in general, so it works the same for videos, meeting audio, and
-   *  transcribed recordings (the transcript itself has no separate file to reveal, just
-   *  the recording it's attached to). */
+ 
   async function showInFolder(v: Video) {
     setFolderError(null);
     try {
@@ -78,8 +76,11 @@ export function LibraryPage() {
 
   const { data: videos = [], isLoading } = useVideos(query);
   const deleteVideo = useDeleteVideo();
+  const deleteVideos = useDeleteVideos();
   const renameVideo = useRenameVideo();
   const setVideoTranscript = useSetVideoTranscript();
+  const { data: editProjects = [], isLoading: projectsLoading } = useEditProjects();
+  const deleteEditProject = useDeleteEditProject();
 
   const sectionVideos =
     section === "transcribed"
@@ -98,12 +99,6 @@ export function LibraryPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [viewingId]);
 
-  // Re-transcribe controls in the drawer — language/model default to the app-wide
-  // Settings > Transcription choice (model fetched once on mount) but only apply to this
-  // one re-transcription, not the global setting. The model picker only ever offers
-  // already-downloaded sizes (modelStatuses, below) — picking an undownloaded size here
-  // would silently kick off a multi-hundred-MB download in the middle of what looks like
-  // a quick re-transcribe; downloading stays a Settings > Transcription-only action.
   const [retranscribeLanguage, setRetranscribeLanguage] = useState(DEFAULT_TRANSCRIPTION_LANGUAGE);
   const [retranscribeModel, setRetranscribeModel] = useState<WhisperModelSize>(DEFAULT_WHISPER_MODEL);
   const [modelStatuses, setModelStatuses] = useState<WhisperModelStatus[] | null>(null);
@@ -113,10 +108,7 @@ export function LibraryPage() {
   }, []);
   const downloadedModels = WHISPER_MODELS.filter((m) => modelStatuses?.find((s) => s.size === m.size)?.downloaded);
 
-  // Editable copy of the currently-viewed transcript's segments. Resyncs from the
-  // persisted transcript whenever the drawer opens (viewingId flips, including
-  // closing and reopening the *same* video — that must discard any unsaved edits from
-  // last time, not leave them lingering) or a (re)transcribe finishes.
+
   const [editingSegments, setEditingSegments] = useState<TranscriptSegment[] | null>(null);
   const [savingEdits, setSavingEdits] = useState(false);
   useEffect(() => {
@@ -132,8 +124,7 @@ export function LibraryPage() {
     setEditingSegments((segs) => segs?.map((s, i) => (i === index ? { ...s, text } : s)) ?? segs);
   }
 
-  /** Discards unsaved edits, reverting the drawer back to the last-saved transcript
-   *  without closing it. */
+
   function handleCancelEdits() {
     setEditingSegments(viewingVideo?.transcript?.segments ?? null);
   }
@@ -156,35 +147,23 @@ export function LibraryPage() {
       const transcript = await TranscriptionService.transcribe(v.filePath, language, modelSize);
       await setVideoTranscript.mutateAsync({ id: v.id, transcript });
     } catch (e) {
-      // A user-initiated Stop kills the transcription worker outright (there's no
-      // mid-inference abort signal — see whisperWorkerClient.ts's terminateTranscriptionWorker),
-      // which surfaces here as this same call rejecting. Show that as a deliberate stop,
-      // not a scary failure.
+
       if (!stoppedRef.current) setErrorFor({ id: v.id, message: String(e) });
     } finally {
       setTranscribingId(null);
     }
   }
-
-  /** Stops whichever transcription is currently running — there's no per-chunk cancel, so
-   *  this kills the worker process outright (see TranscriptionService.cancel); the next
-   *  transcribe/re-transcribe call transparently re-forks a fresh one. */
   async function handleStopTranscribe() {
     stoppedRef.current = true;
     await TranscriptionService.cancel();
   }
 
-  /** Opens the transcript drawer on the right; transcribes first if this recording doesn't
-   *  have one yet (the drawer picks up the result once it's persisted and re-fetched). */
   async function handleTranscribeClick(v: Video) {
     setViewingId(v.id);
     if (v.transcript) return;
     await runTranscribe(v);
   }
 
-  /** The drawer's own "Re-transcribe" button — unlike the card icon's first-time
-   *  transcribe, this always uses whatever language/model are currently picked in the
-   *  drawer, and runs even if a transcript already exists. */
   function handleRetranscribeClick(v: Video) {
     return runTranscribe(v, retranscribeLanguage, retranscribeModel);
   }
@@ -200,16 +179,28 @@ export function LibraryPage() {
     setRenamingId(null);
   }
 
-  /** In the Transcribed section, the trash icon clears just the transcript (so the
-   *  recording drops back out of this list) — it only deletes the whole recording from
-   *  the Videos/Meeting sections. */
   function handleDelete(v: Video) {
     if (section === "transcribed") {
       setVideoTranscript.mutate({ id: v.id, transcript: null });
     } else {
-      deleteVideo.mutate(v.id);
+      setDeleteTarget(v);
     }
   }
+
+  function confirmDelete(keepFile: boolean) {
+    if (!deleteTarget) return;
+    deleteVideo.mutate({ id: deleteTarget.id, keepFile });
+    setDeleteTarget(null);
+  }
+
+  function confirmBulkDelete(keepFile: boolean) {
+    if (sectionVideos.length === 0) return;
+    deleteVideos.mutate({ ids: sectionVideos.map((v) => v.id), keepFile });
+    setBulkDeleteOpen(false);
+  }
+
+  const activeSection = SECTIONS.find((s) => s.id === section)!;
+  const canBulkDelete = section === "videos" || section === "meeting";
 
   return (
     <div className="library-layout">
@@ -220,18 +211,28 @@ export function LibraryPage() {
               key={s.id}
               type="button"
               className={s.id === section ? "library-nav-item active" : "library-nav-item"}
+              style={{ "--nav-accent": s.accent, "--nav-tint": s.tint } as CSSProperties}
               onClick={() => setSection(s.id)}
             >
+              <span className="library-nav-icon">{s.icon}</span>
               {s.label}
             </button>
           ))}
         </nav>
 
-        <section className="panel library-list-panel">
+        <section
+          className="panel library-list-panel"
+          style={{ "--section-accent": activeSection.accent, "--section-tint": activeSection.tint } as CSSProperties}
+        >
           {section === "shared" ? (
             <>
-              <h1>Shared</h1>
-              <p className="muted">Recordings shared through your doculigent.com account.</p>
+              <div className="library-section-head">
+                <span className="library-section-icon">{activeSection.icon}</span>
+                <div>
+                  <h1>Shared</h1>
+                  <p className="muted">Recordings shared through your doculigent.com account.</p>
+                </div>
+              </div>
 
               <div className="shared-subnav">
                 {SHARED_TABS.map((t) => (
@@ -260,12 +261,65 @@ export function LibraryPage() {
                 )}
               </div>
             </>
+          ) : section === "projects" ? (
+            <>
+              <div className="library-section-head">
+                <span className="library-section-icon">{activeSection.icon}</span>
+                <div>
+                  <h1>Projects</h1>
+                  <p className="muted">Saved Edit-tab sessions — trim/cut decisions against your original files.</p>
+                </div>
+              </div>
+
+              {projectsLoading && <p className="muted">Loading…</p>}
+              {!projectsLoading && editProjects.length === 0 && (
+                <p className="muted">
+                  No projects yet — head to the <Link to="/edit">Edit tab</Link> to trim or cut a clip.
+                </p>
+              )}
+
+              <div className="library-grid">
+                {editProjects.map((p) => (
+                  <div key={p.id} className="video-card project-card">
+                    <div className="thumb">
+                      <div className="thumb-audio">{p.sourceKind === "video" ? "🎬" : "🎧"}</div>
+                    </div>
+
+                    <div className="meta">
+                      <h3>{p.name}</h3>
+                      <p className="muted sub">
+                        {formatDuration(p.durationSecs)} · Updated {new Date(p.updatedAt).toLocaleDateString()}
+                      </p>
+                    </div>
+
+                    <div className="video-card-icons">
+                      <Link to={`/edit/${p.id}`} className="icon-btn icon-btn-rename" title="Open">
+                        ✎︎
+                      </Link>
+                      <button
+                        type="button"
+                        title="Delete project"
+                        className="icon-btn icon-btn-delete"
+                        onClick={() => deleteEditProject.mutate(p.id)}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           ) : (
             <>
-              <h1>{SECTIONS.find((s) => s.id === section)?.label}</h1>
-              <p className="muted">
-                {section === "meeting" ? "Audio recorded from the Meeting tab." : "Every recording, stored locally."}
-              </p>
+              <div className="library-section-head">
+                <span className="library-section-icon">{activeSection.icon}</span>
+                <div>
+                  <h1>{activeSection.label}</h1>
+                  <p className="muted">
+                    {section === "meeting" ? "Audio recorded from the Meeting tab." : "Every recording, stored locally."}
+                  </p>
+                </div>
+              </div>
 
               <div className="library-toolbar">
                 <input
@@ -274,6 +328,16 @@ export function LibraryPage() {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
+                {canBulkDelete && (
+                  <button
+                    type="button"
+                    className="danger library-delete-all"
+                    disabled={sectionVideos.length === 0}
+                    onClick={() => setBulkDeleteOpen(true)}
+                  >
+                    Delete All
+                  </button>
+                )}
               </div>
 
               {isLoading && <p className="muted">Loading…</p>}
@@ -395,6 +459,54 @@ export function LibraryPage() {
           )}
         </section>
       </div>
+
+      {deleteTarget && (
+        <div className="modal-backdrop" onClick={() => setDeleteTarget(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Delete "{deleteTarget.title}"?</h2>
+            <p className="muted">
+              You can remove it from your library and keep the file on disk, or delete both the library entry and
+              the file itself. This can't be undone.
+            </p>
+            <div className="actions modal-actions">
+              <button type="button" onClick={() => setDeleteTarget(null)}>
+                Cancel
+              </button>
+              <button type="button" onClick={() => confirmDelete(true)}>
+                Delete from Library
+              </button>
+              <button type="button" className="danger" onClick={() => confirmDelete(false)}>
+                Delete Everything
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {bulkDeleteOpen && (
+        <div className="modal-backdrop" onClick={() => setBulkDeleteOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>
+              Delete all {sectionVideos.length} {sectionVideos.length === 1 ? "recording" : "recordings"}?
+            </h2>
+            <p className="muted">
+              You can clear every recording from your library and keep the files on disk, or delete both the
+              library entries and the files themselves. This can't be undone.
+            </p>
+            <div className="actions modal-actions">
+              <button type="button" onClick={() => setBulkDeleteOpen(false)}>
+                Cancel
+              </button>
+              <button type="button" onClick={() => confirmBulkDelete(true)}>
+                Delete All from Library
+              </button>
+              <button type="button" className="danger" onClick={() => confirmBulkDelete(false)}>
+                Delete All from Disk
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {viewingVideo && (
         <div className="transcript-drawer-backdrop" onClick={() => setViewingId(null)}>

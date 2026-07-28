@@ -1,7 +1,7 @@
 
 import { BrowserWindow, screen, type Display } from "electron";
 import path from "node:path";
-import type { AnnotationTool } from "@shared/types/annotation";
+import type { AnnotationState, AnnotationTool } from "@shared/types/annotation";
 
 const drawWindows = new Map<number, BrowserWindow>();
 
@@ -155,9 +155,8 @@ export function updateClickThroughForTool(tool: AnnotationTool): void {
 
 /** Every draw window (needs it to know how/what to draw) and the main window's embedded
  *  toolbar (needs it to reflect the current selection) get this. */
-export function broadcastAnnotationState(tool: string, color: string): void {
-  const payload = { tool, color };
-  for (const win of BrowserWindow.getAllWindows()) win.webContents.send("annotation:stateChanged", payload);
+export function broadcastAnnotationState(state: AnnotationState): void {
+  for (const win of BrowserWindow.getAllWindows()) win.webContents.send("annotation:stateChanged", state);
 }
 
 export function sendAnnotationCommand(type: "undo" | "redo" | "clear"): void {

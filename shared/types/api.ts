@@ -2,6 +2,7 @@ import type {
   CaptureTarget,
   ChatMessage,
   CursorHighlightStyle,
+  EditProject,
   LlmModelProfile,
   LlmProviderKind,
   MicConfig,
@@ -19,15 +20,32 @@ export interface DoculigentApi {
   system: {
     platform: string;
     arch: string;
+    getPathForFile(file: File): string;
   };
   capture: {
     listTargets(): Promise<CaptureTarget[]>;
   };
   cursor: {
-    
+
     apply(style: CursorHighlightStyle): Promise<void>;
-    
+
     restore(): Promise<void>;
+    /** Starts sampling pointer positions for the cursor metadata sidecar. */
+    startCapture(targetId: string, style: CursorHighlightStyle): Promise<void>;
+    /** Stops sampling; the track stays buffered until recording.save writes it out. */
+    stopCapture(): Promise<void>;
+  };
+  screenCapture: {
+    /** Starts a Windows gdigrab capture of the given display target directly to a temp
+     *  file, with the real cursor excluded from the frames when `hideCursor` is true —
+     *  the real pointer itself is never touched. Resolves `available: false` (not an
+     *  error) whenever this path doesn't apply: non-Windows, or a specific-window target
+     *  rather than a whole display, or a capture is already running. Callers fall back to
+     *  the ordinary getUserMedia/MediaRecorder pipeline in that case. */
+    start(targetId: string, hideCursor: boolean): Promise<{ available: boolean }>;
+    /** Stops the capture and returns the finished file's path. `available: false` mirrors
+     *  start()'s meaning — nothing was running to stop. */
+    stop(): Promise<{ available: boolean; filePath?: string }>;
   };
   annotation: {
   
@@ -38,6 +56,9 @@ export interface DoculigentApi {
 
     setTool(tool: AnnotationTool): Promise<void>;
     setColor(color: string): Promise<void>;
+    setWidth(width: number): Promise<void>;
+    setOpacity(opacity: number): Promise<void>;
+    setFadeMs(fadeMs: number): Promise<void>;
     undo(): Promise<void>;
     redo(): Promise<void>;
     clear(): Promise<void>;
@@ -51,8 +72,15 @@ export interface DoculigentApi {
     onOverlayOpenChanged(callback: (open: boolean) => void): () => void;
   };
   recording: {
+    /** Exactly one of `webmBytes` (ordinary getUserMedia/MediaRecorder pipeline) or
+     *  `screenFilePath` (native gdigrab pipeline, screen already on disk) is set, matching
+     *  whichever RecordingService used for this recording. `sideClip` is the camera-bubble
+     *  or mic-only clip recorded alongside a native screen capture, if any — see
+     *  electron/main/ipc/recording.ts for how the two get combined. */
     save(input: {
-      webmBytes: ArrayBuffer;
+      webmBytes?: ArrayBuffer;
+      screenFilePath?: string;
+      sideClip?: { bytes: ArrayBuffer; hasVideo: boolean; hasAudio: boolean };
       overlay: OverlayConfig;
       durationSecs: number;
       title: string;
@@ -64,17 +92,39 @@ export interface DoculigentApi {
       title: string;
       transcript: Transcript | null;
     }): Promise<Video>;
+    onSaveProgress(callback: (progress: { id: string; percent: number }) => void): () => void;
+    cancelSave(id: string): Promise<boolean>;
     onSaveCompleted(callback: (video: Video) => void): () => void;
     onSaveFailed(callback: (failure: { id: string; message: string }) => void): () => void;
   };
   library: {
     list(): Promise<Video[]>;
     get(id: string): Promise<Video | null>;
-    delete(id: string): Promise<void>;
-    trim(id: string, startSecs: number, endSecs: number): Promise<Video>;
+    delete(id: string, keepFile?: boolean): Promise<void>;
+    deleteMany(ids: string[], keepFile?: boolean): Promise<void>;
     search(query: string): Promise<Video[]>;
     rename(id: string, title: string): Promise<Video>;
     setTranscript(id: string, transcript: Transcript | null): Promise<Video>;
+  };
+  editProjects: {
+    list(): Promise<EditProject[]>;
+    get(id: string): Promise<EditProject | null>;
+    create(input: {
+      name: string;
+      sourceFilePath: string;
+      sourceKind: "video" | "audio";
+      sourceVideoId: string | null;
+      durationSecs: number;
+    }): Promise<EditProject>;
+    update(
+      id: string,
+      patch: Partial<Pick<EditProject, "name" | "sourceFilePath" | "trimStart" | "trimEnd" | "cuts">>
+    ): Promise<EditProject>;
+    delete(id: string): Promise<void>;
+   
+    pickImportFile(): Promise<string | null>;
+    fileExists(filePath: string): Promise<boolean>;
+    export(id: string, keepRanges: [number, number][]): Promise<{ outputPath: string }>;
   };
   settings: {
     getSaveDir(): Promise<string>;
@@ -114,8 +164,6 @@ export interface DoculigentApi {
   ai: {
     summarize(transcript: Transcript, profileId?: string): Promise<Summary>;
     chat(transcript: Transcript, history: ChatMessage[], question: string, profileId?: string): Promise<ChatMessage>;
-    /** Tests connectivity/auth for a profile without saving it first — `apiKey` overrides
-     *  whatever's already stored, so the form can test as you type. */
     testConnection(profile: LlmModelProfile, apiKey?: string | null): Promise<{ ok: boolean; message: string }>;
   };
   transcription: {
@@ -126,6 +174,9 @@ export interface DoculigentApi {
   window: {
     minimize(): Promise<void>;
     close(): Promise<void>;
+    toggleMaximize(): Promise<boolean>;
+    isMaximized(): Promise<boolean>;
+    onMaximizeChanged(callback: (maximized: boolean) => void): () => void;
   };
   auth: {
     getSession(): Promise<AuthSession | null>;

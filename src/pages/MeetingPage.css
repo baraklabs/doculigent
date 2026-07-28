@@ -1,0 +1,69 @@
+/* Meeting tab — audio-only recording with a live transcript feed, no browse UI (that
+   lives in Library's own Meeting section). */
+.meeting-page { display: flex; gap: 16px; flex: 1; min-height: 0; flex-wrap: wrap; }
+.meeting-record-panel { flex: 1 1 360px; display: flex; flex-direction: column; }
+.meeting-transcript-panel { flex: 1 1 380px; min-height: 0; display: flex; flex-direction: column; }
+.meeting-fields-row { display: flex; gap: 12px; margin: 12px 0; flex-wrap: wrap; }
+.meeting-fields-row .field { margin: 0; flex: 1 1 200px; }
+.meeting-title-field { flex: 0 1 220px; }
+.meeting-language-field { flex: 0 1 160px; }
+.meeting-savedir-field { flex: 2 1 340px; }
+.meeting-browse-btn {
+  border: 1px solid var(--border); border-radius: 8px; align-self: stretch;
+  padding: 0 12px; font-size: 17px;
+}
+
+.meeting-audio-sources { margin: 12px 0; display: flex; flex-direction: column; gap: 8px; }
+.meeting-source-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.meeting-source-row .checkbox { flex: 0 0 160px; }
+.meeting-source-row select { flex: 1 1 200px; }
+.meeting-meter-inline { flex: 0 0 60px; width: 60px; }
+
+.meeting-record-area { display: flex; flex-direction: column; align-items: center; gap: 10px; margin: 24px 0 16px; }
+.meeting-record-btn {
+  width: 96px; height: 96px; border-radius: 50%; border: none; cursor: pointer;
+  background: linear-gradient(135deg, #5b4bf5, #7c6cf7); color: #fff; font-size: 32px;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 10px 24px rgba(91, 75, 245, .35); transition: transform 150ms ease;
+}
+.meeting-record-btn:hover:not(:disabled) { transform: scale(1.05); }
+.meeting-record-btn:disabled { opacity: .6; cursor: not-allowed; }
+.meeting-record-btn.recording {
+  background: linear-gradient(135deg, #b3261e, #d1453a);
+  animation: meeting-pulse 1.6s ease-out infinite;
+}
+@keyframes meeting-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(179, 38, 30, .5), 0 10px 24px rgba(179, 38, 30, .35); }
+  70% { box-shadow: 0 0 0 18px rgba(179, 38, 30, 0), 0 10px 24px rgba(179, 38, 30, .35); }
+  100% { box-shadow: 0 0 0 0 rgba(179, 38, 30, 0), 0 10px 24px rgba(179, 38, 30, .35); }
+}
+
+.live-waveform { width: 100%; max-width: 420px; height: 72px; display: block; margin: 4px auto 0; background: var(--bg); border-radius: 10px; }
+
+.meeting-saved-notice { margin-top: 16px; }
+
+.meeting-transcript-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.meeting-model-badge {
+  background: none; border: 1px solid var(--border); color: var(--muted);
+  font-size: 11px; padding: 4px 10px; border-radius: 999px; cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease;
+}
+.meeting-model-badge:hover { border-color: var(--accent); color: var(--text); }
+
+.meeting-chat { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.meeting-bubble { border-left: 3px solid var(--accent); background: var(--bg); border-radius: 0 10px 10px 0; padding: 8px 12px; }
+.meeting-bubble-speaker { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; margin-bottom: 2px; }
+.meeting-bubble p { margin: 0; font-size: 13px; }
+.meeting-pending { font-size: 12px; }
+
+/* Extends .toast from styles/base.css. */
+.meeting-mic-toast {
+  top: 24px; bottom: auto; right: 24px;
+  background: #fffbeb; border-color: rgba(245, 158, 11, .5);
+  padding-right: 34px; animation: meeting-toast-in 200ms ease-out;
+}
+.meeting-mic-toast p { margin: 0; font-size: 13px; color: #92400e; }
+@keyframes meeting-toast-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}

@@ -1,0 +1,52 @@
+.edit-timeline-wrap { margin: 16px 0; }
+.edit-timeline-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.edit-timeline-times { font-size: 12px; font-variant-numeric: tabular-nums; }
+.edit-timeline-toolbar { display: flex; gap: 6px; }
+.timeline-tool {
+  background: var(--panel); border: 1px solid var(--border); color: var(--muted);
+  padding: 3px 10px; border-radius: 999px; font-size: 12px; cursor: pointer;
+}
+.timeline-tool.active { color: #fff; background: var(--accent); border-color: var(--accent); }
+.edit-timeline {
+  position: relative; height: 56px; background: var(--bg); border-radius: 8px;
+  margin: 10px 2px; cursor: pointer; user-select: none; touch-action: none;
+}
+.edit-timeline.scissors-mode { cursor: crosshair; }
+.edit-timeline-dimmed { position: absolute; top: 0; bottom: 0; background: rgba(0, 0, 0, .18); pointer-events: none; }
+.edit-timeline-cut {
+  position: absolute; top: 0; bottom: 0;
+  background: repeating-linear-gradient(45deg, rgba(179, 38, 30, .4) 0, rgba(179, 38, 30, .4) 6px, rgba(179, 38, 30, .18) 6px, rgba(179, 38, 30, .18) 12px);
+  border-top: 2px solid var(--danger); border-bottom: 2px solid var(--danger);
+  cursor: grab; display: flex; align-items: center; justify-content: center; gap: 4px;
+}
+.edit-timeline-cut:active { cursor: grabbing; }
+.edit-timeline-cut.draft { opacity: .6; pointer-events: none; }
+.edit-timeline-cut-label {
+  font-size: 10px; font-weight: 600; color: var(--danger); background: var(--panel);
+  padding: 1px 6px; border-radius: 999px; pointer-events: none; white-space: nowrap;
+}
+.edit-timeline-cut-delete {
+  width: 16px; height: 16px; min-width: 16px; padding: 0; border: none; border-radius: 50%;
+  background: var(--panel); color: var(--danger); font-size: 10px; line-height: 1;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.edit-timeline-handle {
+  position: absolute; top: -4px; bottom: -4px; width: 12px; margin-left: -6px;
+  background: var(--accent); border-radius: 4px; cursor: ew-resize;
+  box-shadow: 0 1px 4px rgba(20, 20, 40, .35); z-index: 2;
+}
+.edit-timeline-handle.cut-handle { background: var(--danger); top: 0; bottom: 0; left: 0; margin-left: -5px; width: 10px; z-index: 3; }
+.edit-timeline-handle.cut-handle.right { left: 100%; }
+.edit-timeline-handle-label {
+  position: absolute; top: -20px; left: 50%; transform: translateX(-50%);
+  font-size: 10px; font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap;
+  pointer-events: none;
+}
+.edit-timeline-playhead {
+  position: absolute; top: -6px; bottom: -6px; width: 2px; margin-left: -1px;
+  background: var(--text); pointer-events: none; z-index: 4;
+}
+.edit-timeline-playhead::before {
+  content: ""; position: absolute; top: -3px; left: 50%; transform: translateX(-50%);
+  width: 8px; height: 8px; border-radius: 50%; background: var(--text);
+}

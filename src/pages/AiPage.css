@@ -1,0 +1,22 @@
+.ai-grid { display: grid; grid-template-columns: 1fr minmax(320px, 420px); gap: 16px; height: 100%; }
+
+/* Standalone AI Assistant tab (AiAssistantPage) — a full-height chat rather than the
+   two-column transcript workspace above. */
+.chat-page { flex: 1; min-height: 0; display: flex; flex-direction: column; width: 100%; }
+.chat-page-log { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; }
+.chat-page-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 48px 0; text-align: center; }
+
+.chat-resource-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 14px; position: sticky; top: 0;
+}
+.chat-resource-title { font-weight: 600; font-size: 13px; }
+
+.chat-page-composer {
+  flex-shrink: 0; display: flex; flex-direction: column; gap: 8px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+  padding: 10px 14px; margin-top: 10px; box-shadow: 0 8px 24px rgba(30, 30, 60, .06);
+}
+.chat-page-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.chat-page-toolbar select { font-size: 12px; padding: 6px 26px 6px 10px; }

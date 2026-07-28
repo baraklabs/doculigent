@@ -5,6 +5,7 @@ import { useVideo, useVideos } from "../hooks/useVideos";
 import { useActiveLlmProfileId, useLlmProfiles } from "../hooks/useLlmProfiles";
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
 import { AiService } from "../services/ai/AiService";
+import "./AiPage.css";
 
 function fmt(t: number): string {
   const m = Math.floor(t / 60);

@@ -13,9 +13,10 @@
  * coordinate space so the crop/mask math above is unaffected.
  */
 import type { OverlayConfig } from "@shared/types/models";
+import { cameraBubbleRect, OUTPUT_HEIGHT, OUTPUT_WIDTH } from "@shared/lib/cameraBubble";
 
-export const CANVAS_WIDTH = 1920;
-export const CANVAS_HEIGHT = 1080;
+export const CANVAS_WIDTH = OUTPUT_WIDTH;
+export const CANVAS_HEIGHT = OUTPUT_HEIGHT;
 
 export function drawLetterboxed(
   ctx: CanvasRenderingContext2D,
@@ -43,16 +44,30 @@ export function drawCameraBubble(
   canvasWidth: number,
   canvasHeight: number
 ): void {
-  const bubble = Math.max(1, Math.round((canvasWidth * overlay.sizePct) / 100));
-  const x = overlay.corner.endsWith("left") ? 0 : canvasWidth - bubble;
-  const y = overlay.corner.startsWith("top") ? 0 : canvasHeight - bubble;
-
+  const { x, y, size: bubble } = cameraBubbleRect(overlay, canvasWidth, canvasHeight);
   ctx.save();
   ctx.translate(x, y);
-  // From here on, local (0,0) is the bubble's top-left corner, local size is bubble x bubble.
+  drawCameraFrame(ctx, camera, bubble, overlay.circular);
+  ctx.restore();
+}
 
+/** The bubble's contents only — crop, mirror-fix, and border — filling a `size x size`
+ *  square at the context's current origin. Split out from `drawCameraBubble` so a
+ *  bubble-only capture (RecordingService's gdigrab path, where the camera is recorded to
+ *  its own small clip rather than composited onto the full frame) can render exactly the
+ *  same square without re-deriving corner/size placement it doesn't need. */
+export function drawCameraFrame(
+  ctx: CanvasRenderingContext2D,
+  camera: HTMLVideoElement,
+  bubble: number,
+  circular: boolean
+): void {
+  // Local (0,0) is the bubble's top-left corner, local size is bubble x bubble. Two
+  // independent save/restore pairs below (fill, then border), both starting fresh from
+  // this same local origin.
+  ctx.save();
   ctx.beginPath();
-  if (overlay.circular) {
+  if (circular) {
     ctx.arc(bubble / 2, bubble / 2, bubble / 2, 0, Math.PI * 2);
   } else {
     ctx.rect(0, 0, bubble, bubble);
@@ -76,13 +91,12 @@ export function drawCameraBubble(
   ctx.restore();
 
   // White border, matching the live preview's `.cam-bubble` CSS — a fresh, unflipped
-  // save/translate since a symmetric circle/square outline looks identical either way.
+  // save since a symmetric circle/square outline looks identical either way.
   ctx.save();
-  ctx.translate(x, y);
   ctx.strokeStyle = "#ffffff";
   ctx.lineWidth = 2;
   ctx.beginPath();
-  if (overlay.circular) {
+  if (circular) {
     ctx.arc(bubble / 2, bubble / 2, bubble / 2 - 1, 0, Math.PI * 2);
   } else {
     ctx.rect(1, 1, bubble - 2, bubble - 2);

@@ -1,0 +1,47 @@
+.settings-layout { display: flex; gap: 16px; align-items: flex-start; width: 100%; }
+.settings-nav { display: flex; flex-direction: column; gap: 4px; width: 160px; flex-shrink: 0; }
+.settings-nav-item {
+  padding: 8px 12px; border-radius: 8px; color: var(--muted); font-size: 13px; cursor: pointer;
+  background: none; border: none; font: inherit; text-align: left; width: 100%;
+}
+.settings-nav-item:hover { color: var(--text); }
+.settings-nav-item.active { color: var(--text); background: rgba(91, 75, 245,.12); font-weight: 600; }
+.settings-content { flex: 1; min-width: 0; }
+
+/* LLM provider profiles */
+.model-list { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.model-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; background: var(--bg);
+}
+.model-row-info h3 { margin: 0 0 2px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.model-row-info .sub { font-size: 12px; }
+.model-form { display: flex; flex-direction: column; gap: 4px; max-width: 480px; margin-top: 8px; }
+.capability-checkboxes { display: flex; gap: 16px; }
+.capability-checkboxes label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 400; }
+
+/* Whisper model sizes */
+.model-size-options { display: flex; flex-direction: row; gap: 8px; flex-wrap: wrap; }
+.model-size-card {
+  display: flex; flex-direction: column; align-items: stretch; gap: 4px;
+  border: 1px solid var(--border); border-radius: 10px; padding: 4px; background: var(--bg);
+  transition: border-color 150ms ease, background 150ms ease;
+}
+.model-size-card.active { border-color: var(--accent); background: rgba(91, 75, 245, .1); }
+.model-size-card-main {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  background: none; border: none; color: var(--muted); cursor: pointer; padding: 6px 12px; border-radius: 7px;
+  transition: color 150ms ease;
+}
+.model-size-card-main:hover { color: var(--text); }
+.model-size-card.active .model-size-card-main { color: var(--text); }
+.model-size-card-label { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.model-size-card-status { font-size: 11px; opacity: .8; }
+.model-size-card-action {
+  font-size: 11px; background: none; border: 1px solid var(--border); color: var(--muted);
+  padding: 3px 8px; border-radius: 6px; cursor: pointer; align-self: stretch;
+}
+.model-size-card-action:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+.model-size-card-action:disabled { opacity: .5; cursor: not-allowed; }
+.model-size-card-action.remove { background: none; color: var(--danger); border-color: var(--danger); }
+.model-size-card-action.remove:hover:not(:disabled) { background: var(--danger); color: #fff; }
