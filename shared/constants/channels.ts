@@ -49,16 +49,6 @@ export const Channels = {
     rename: "library:rename",
     setTranscript: "library:setTranscript",
   },
-  editProjects: {
-    list: "editProjects:list",
-    get: "editProjects:get",
-    create: "editProjects:create",
-    update: "editProjects:update",
-    delete: "editProjects:delete",
-    pickImportFile: "editProjects:pickImportFile",
-    fileExists: "editProjects:fileExists",
-    export: "editProjects:export",
-  },
   settings: {
     getSaveDir: "settings:getSaveDir",
     setSaveDir: "settings:setSaveDir",

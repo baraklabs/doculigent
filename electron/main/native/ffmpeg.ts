@@ -170,31 +170,3 @@ export function overlayCameraBubble(
   args.push(outputMp4Path);
   return run(args, onProgress, signal);
 }
-
-export function exportEdit(
-  inputPath: string,
-  outputPath: string,
-  keepRanges: [number, number][],
-  hasVideo: boolean
-): Promise<void> {
-  const selectExpr = keepRanges.map(([start, end]) => `between(t,${start},${end})`).join("+");
-  const args = ["-y", "-i", inputPath];
-  if (hasVideo) {
-    args.push(
-      "-vf",
-      `select='${selectExpr}',setpts=N/FRAME_RATE/TB`,
-      "-af",
-      `aselect='${selectExpr}',asetpts=N/SR/TB`,
-      "-c:v",
-      "libx264",
-      "-preset",
-      "medium",
-      "-c:a",
-      "aac"
-    );
-  } else {
-    args.push("-af", `aselect='${selectExpr}',asetpts=N/SR/TB`, "-c:a", "pcm_s16le");
-  }
-  args.push(outputPath);
-  return run(args);
-}

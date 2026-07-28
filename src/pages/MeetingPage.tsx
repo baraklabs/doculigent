@@ -7,6 +7,7 @@ import { audioRecordingService, getSystemAudioStream } from "../services/recordi
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
 import { SettingsService } from "../services/settings/SettingsService";
 import { LiveWaveform } from "../components/LiveWaveform";
+import { useToast } from "../hooks/useToast";
 import "./MeetingPage.css";
 
 const SPEAKER_COLORS = ["#5b4bf5", "#0ea5e9", "#f59e0b", "#10b981", "#ef4444"];
@@ -200,17 +201,14 @@ export function MeetingPage() {
     );
   }, [language, micEnabled, micDeviceId, systemAudioEnabled, systemAudioSourceId, settingsLoaded]);
 
-  // A transient top-right toast (not a persistent banner) each time the mic gets turned
-  // off, auto-dismissing after a few seconds — same idea as RecordPage's save-status
-  // toast (bottom-right, see .toast in styles/base.css) but positioned/timed differently since
-  // this is a one-shot warning about a choice just made, not an ongoing background task.
+  // A transient warning toast each time the mic gets turned off — stacking/auto-dismiss is
+  // handled by the shared toast system (see useToast) instead of hand-rolled here.
   //
   // Only for choices made *this session*: without micWarningInitialized, restoring a
   // previously-saved "mic off" on mount (or just navigating back to this tab, which
   // remounts it) would flip micEnabled true->false right as settings load and trigger the
   // same toast as an actual user toggle — this skips exactly that first post-load run.
-  const [showMicWarning, setShowMicWarning] = useState(false);
-  const micWarningTimer = useRef<number | null>(null);
+  const toast = useToast();
   const micWarningInitialized = useRef(false);
   useEffect(() => {
     if (!settingsLoaded) return;
@@ -218,16 +216,14 @@ export function MeetingPage() {
       micWarningInitialized.current = true;
       return;
     }
-    if (micWarningTimer.current !== null) window.clearTimeout(micWarningTimer.current);
     if (!micEnabled) {
-      setShowMicWarning(true);
-      micWarningTimer.current = window.setTimeout(() => setShowMicWarning(false), 6000);
-    } else {
-      setShowMicWarning(false);
+      toast.warning(
+        "If you record like this, your voice won't be picked up at all. Only the other side of the " +
+          "conversation (whatever the enabled sources actually hear, e.g. system sound) will be recorded and " +
+          "transcribed.",
+        { title: "Microphone is off" }
+      );
     }
-    return () => {
-      if (micWarningTimer.current !== null) window.clearTimeout(micWarningTimer.current);
-    };
   }, [micEnabled, settingsLoaded]);
 
   // Same save location the Record tab uses (recording.saveAudio writes into it too, see
@@ -324,72 +320,78 @@ export function MeetingPage() {
 
   return (
     <div className="meeting-page">
-      {showMicWarning && (
-        <div className="toast meeting-mic-toast">
-          <button type="button" className="toast-close" onClick={() => setShowMicWarning(false)} aria-label="Dismiss">
-            ✕
-          </button>
-          <p>
-            ⚠️ Microphone is off — if you record like this, your voice won't be picked up at all. Only the other side
-            of the conversation (whatever the enabled sources actually hear, e.g. system sound) will be recorded and
-            transcribed.
-          </p>
-        </div>
-      )}
-
       <section className="panel meeting-record-panel">
-        <h1>Meeting</h1>
-        <p className="muted">
-          Record audio and get a live transcript as you talk — auto-joining Zoom/Meet/Teams is coming soon
-        </p>
+        <div className="record-hero">
+          <div>
+            <h1>Meeting</h1>
+            <p className="muted">
+              Record audio and get a live transcript as you talk — auto-joining Zoom/Meet/Teams is coming soon
+            </p>
+          </div>
+        </div>
 
-        <div className="meeting-fields-row">
-          <label className="field meeting-title-field">
-            <span>Title</span>
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              disabled={recording || busy}
-            />
-          </label>
-
-          <label className="field meeting-savedir-field">
-            <span>Save to</span>
-            <div className="save-location">
+        <div className="record-block meeting-block-setup">
+          <div className="record-block-head">
+            <span className="record-block-icon">📝</span>
+            <div>
+              <div className="record-block-title">Meeting details</div>
+              <p className="record-block-sub">Title, save location, and transcription language</p>
+            </div>
+          </div>
+          <div className="meeting-fields-row">
+            <label className="field meeting-title-field">
+              <span>Title</span>
               <input
                 type="text"
-                value={saveDir}
-                onChange={(e) => setSaveDir(e.target.value)}
-                onBlur={commitSaveDir}
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
                 disabled={recording || busy}
               />
-              <button
-                type="button"
-                className="icon-btn icon-btn-folder meeting-browse-btn"
-                onClick={browseSaveDir}
-                disabled={recording || busy || pickingDir}
-                title={pickingDir ? "Choosing…" : "Browse…"}
-              >
-                📁
-              </button>
-            </div>
-          </label>
+            </label>
 
-          <label className="field meeting-language-field">
-            <span>Language</span>
-            <select value={language} onChange={(e) => setLanguage(e.target.value)} disabled={recording || busy}>
-              {TRANSCRIPTION_LANGUAGES.map((l) => (
-                <option key={l.code} value={l.code}>
-                  {l.label}
-                </option>
-              ))}
-            </select>
-          </label>
+            <label className="field meeting-savedir-field">
+              <span>Save to</span>
+              <div className="save-location">
+                <input
+                  type="text"
+                  value={saveDir}
+                  onChange={(e) => setSaveDir(e.target.value)}
+                  onBlur={commitSaveDir}
+                  disabled={recording || busy}
+                />
+                <button
+                  type="button"
+                  className="icon-btn icon-btn-folder meeting-browse-btn"
+                  onClick={browseSaveDir}
+                  disabled={recording || busy || pickingDir}
+                  title={pickingDir ? "Choosing…" : "Browse…"}
+                >
+                  📁
+                </button>
+              </div>
+            </label>
+
+            <label className="field meeting-language-field">
+              <span>Language</span>
+              <select value={language} onChange={(e) => setLanguage(e.target.value)} disabled={recording || busy}>
+                {TRANSCRIPTION_LANGUAGES.map((l) => (
+                  <option key={l.code} value={l.code}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
 
-        <fieldset className="field meeting-audio-sources" disabled={recording || busy}>
-          <legend>Audio sources</legend>
+        <fieldset className="record-block meeting-block-audio" disabled={recording || busy}>
+          <div className="record-block-head">
+            <span className="record-block-icon">🎧</span>
+            <div>
+              <div className="record-block-title">Audio sources</div>
+              <p className="record-block-sub">Choose what gets picked up</p>
+            </div>
+          </div>
 
           <div className="meeting-source-row">
             <label className="checkbox">
@@ -461,15 +463,26 @@ export function MeetingPage() {
       </section>
 
       <section className="panel meeting-transcript-panel">
-        <div className="meeting-transcript-header">
-          <h2>Live transcript</h2>
-          <button type="button" className="meeting-model-badge" onClick={() => navigate("/settings")} title="Change in Settings > Transcription">
+        <div className="record-block meeting-block-transcript">
+          <div className="record-block-head">
+            <span className="record-block-icon">💬</span>
+            <div>
+              <div className="record-block-title">Live transcript</div>
+              <p className="record-block-sub">Updates as you talk</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="meeting-model-badge"
+            onClick={() => navigate("/settings")}
+            title="Change in Settings > Transcription"
+          >
             Model: {WHISPER_MODELS.find((m) => m.size === whisperModel)?.label ?? whisperModel}
           </button>
         </div>
         <div className="meeting-chat">
           {messages.length === 0 && !recording && <p className="muted">Start recording to see a live transcript here.</p>}
-          {messages.length === 0 && recording && <p className="muted">Listening…</p>}
+          {messages.length === 0 && recording && <p className="muted meeting-listening">Listening…</p>}
           {messages.map((seg, i) => (
             <div key={i} className="meeting-bubble" style={{ borderLeftColor: colorForSpeaker(seg.speaker) }}>
               <span className="meeting-bubble-speaker" style={{ color: colorForSpeaker(seg.speaker) }}>

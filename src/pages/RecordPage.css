@@ -9,6 +9,7 @@
 .record-hero {
   display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
   flex-wrap: wrap; margin-bottom: 14px;
+  animation: record-fade-down 280ms cubic-bezier(.2, .8, .2, 1);
 }
 .record-hero h1 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
 .record-hero p { margin: 2px 0 0; font-size: 13px; }
@@ -28,6 +29,24 @@
   border: 1px solid var(--block-accent); border-radius: 16px;
   padding: 14px 16px; box-shadow: 0 6px 20px rgba(30, 30, 60, .05);
   position: relative;
+  animation: record-block-in 320ms cubic-bezier(.2, .8, .2, 1) both;
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+.record-block:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(30, 30, 60, .09); }
+/* Staggered so the controls column reads as a cascade rather than popping in as one block. */
+.record-preview-col .record-block:nth-of-type(1) { animation-delay: 40ms; }
+.record-controls-col .record-block:nth-of-type(1) { animation-delay: 60ms; }
+.record-controls-col .record-block:nth-of-type(2) { animation-delay: 120ms; }
+.record-controls-col .record-block:nth-of-type(3) { animation-delay: 180ms; }
+.record-controls-col .record-block:nth-of-type(4) { animation-delay: 240ms; }
+.record-controls-col .record-block:nth-of-type(5) { animation-delay: 300ms; }
+@keyframes record-block-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes record-fade-down {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 .record-block .record-block-title { color: var(--block-accent); }
 .record-block-icon { background: #fff; }
@@ -65,10 +84,22 @@
   overflow: hidden; width: 100%; aspect-ratio: 16 / 9; margin: 0;
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 12px 32px rgba(20, 20, 40, .16);
+  animation: record-stage-in 380ms cubic-bezier(.2, .8, .2, 1);
+  transition: box-shadow 220ms ease;
 }
 .stage-preview.is-recording {
   background-image: linear-gradient(#0d0f16, #0d0f16), linear-gradient(135deg, #b3261e, #e0574a);
   box-shadow: 0 12px 32px rgba(179, 38, 30, .3);
+  animation: record-stage-alert 420ms cubic-bezier(.2, .8, .2, 1);
+}
+@keyframes record-stage-in {
+  from { opacity: 0; transform: scale(.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes record-stage-alert {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.008); }
+  100% { transform: scale(1); }
 }
 .stage-preview video, .stage-preview canvas { width: 100%; height: 100%; object-fit: cover; display: block; }
 .stage-preview .stage-empty { color: rgba(255, 255, 255, .7); font-size: 12px; text-align: center; padding: 12px; }
@@ -81,6 +112,11 @@
   display: flex; align-items: center; gap: 6px;
   background: rgba(179, 38, 30, .92); color: #fff; font-size: 11px; font-weight: 700;
   letter-spacing: .06em; padding: 4px 10px; border-radius: 999px;
+  animation: record-pill-in 220ms cubic-bezier(.2, .8, .2, 1);
+}
+@keyframes record-pill-in {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 .record-live-dot {
   width: 7px; height: 7px; border-radius: 50%; background: #fff;
@@ -92,6 +128,11 @@
   position: absolute; overflow: hidden; background: #000;
   border: 2px solid #fff; border-radius: 10px;
   box-shadow: 0 4px 14px rgba(20, 20, 40, .25);
+  animation: record-bubble-in 260ms cubic-bezier(.2, .8, .2, 1);
+}
+@keyframes record-bubble-in {
+  from { opacity: 0; transform: scale(.9); }
+  to { opacity: 1; transform: scale(1); }
 }
 .cam-bubble.circular { border-radius: 50%; }
 .cam-bubble video { width: 100%; height: 100%; object-fit: cover; display: block; transform: scaleX(-1); }
@@ -103,16 +144,23 @@
   flex: 1; min-width: 180px; display: flex; align-items: center; justify-content: center; gap: 9px;
   padding: 13px 20px; border-radius: 999px; border: none;
   font-size: 15px; font-weight: 600; color: #fff;
-  background: linear-gradient(135deg, #5b4bf5, #8b5cf6);
+  background: linear-gradient(135deg, #5b4bf5, #8b5cf6, #5b4bf5);
+  background-size: 200% auto;
   box-shadow: 0 8px 22px rgba(91, 75, 245, .35);
-  transition: transform 140ms ease, box-shadow 140ms ease, filter 140ms ease;
+  transition: transform 140ms ease, box-shadow 140ms ease, filter 140ms ease, background-position 400ms ease;
 }
-.record-cta-btn:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.05); border-color: transparent; }
+.record-cta-btn:hover:not(:disabled) {
+  transform: translateY(-1px); filter: brightness(1.05); border-color: transparent; background-position: 100% center;
+}
+.record-cta-btn:active:not(:disabled) { transform: translateY(0) scale(.99); }
 .record-cta-btn:disabled { opacity: .55; box-shadow: none; }
 .record-cta-btn.stop {
-  background: linear-gradient(135deg, #b3261e, #e0574a);
+  background: linear-gradient(135deg, #b3261e, #e0574a, #b3261e);
+  background-size: 200% auto;
   box-shadow: 0 8px 22px rgba(179, 38, 30, .35);
 }
+.record-cta-dot { animation: record-dot-pulse 1.5s ease-in-out infinite; }
+@keyframes record-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
 .record-cta-dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
 .record-cta-square { width: 10px; height: 10px; border-radius: 2px; background: currentColor; }
 .record-elapsed { font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600; }
@@ -184,6 +232,19 @@
 .cursor-style-btn.active {
   background: var(--block-tint); border-color: var(--block-accent); color: var(--text);
   box-shadow: 0 0 0 1px var(--block-accent);
+  animation: cursor-select-pop 240ms cubic-bezier(.34, 1.56, .64, 1);
+}
+@keyframes cursor-select-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.12); }
+  100% { transform: scale(1); }
 }
 .cursor-style-btn.active .cursor-style-icon { color: var(--block-accent); }
 .cursor-style-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+@media (prefers-reduced-motion: reduce) {
+  .record-hero, .record-block, .stage-preview, .stage-preview.is-recording, .record-live-pill,
+  .cam-bubble, .record-cta-dot, .cursor-style-btn.active {
+    animation: none;
+  }
+}

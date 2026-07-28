@@ -6,10 +6,10 @@ import { DEFAULT_TRANSCRIPTION_LANGUAGE, TRANSCRIPTION_LANGUAGES } from "@shared
 import { DEFAULT_WHISPER_MODEL, WHISPER_MODELS } from "@shared/constants/whisperModels";
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
 import { useDeleteVideo, useDeleteVideos, useRenameVideo, useSetVideoTranscript, useVideos } from "../hooks/useVideos";
-import { useDeleteEditProject, useEditProjects } from "../hooks/useEditProjects";
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
 import { SettingsService } from "../services/settings/SettingsService";
 import { useAuthStore } from "../store/authStore";
+import { ComingSoon } from "../components/ComingSoon";
 import "./LibraryPage.css";
 
 function fileName(filePath: string): string {
@@ -79,8 +79,6 @@ export function LibraryPage() {
   const deleteVideos = useDeleteVideos();
   const renameVideo = useRenameVideo();
   const setVideoTranscript = useSetVideoTranscript();
-  const { data: editProjects = [], isLoading: projectsLoading } = useEditProjects();
-  const deleteEditProject = useDeleteEditProject();
 
   const sectionVideos =
     section === "transcribed"
@@ -262,53 +260,10 @@ export function LibraryPage() {
               </div>
             </>
           ) : section === "projects" ? (
-            <>
-              <div className="library-section-head">
-                <span className="library-section-icon">{activeSection.icon}</span>
-                <div>
-                  <h1>Projects</h1>
-                  <p className="muted">Saved Edit-tab sessions — trim/cut decisions against your original files.</p>
-                </div>
-              </div>
-
-              {projectsLoading && <p className="muted">Loading…</p>}
-              {!projectsLoading && editProjects.length === 0 && (
-                <p className="muted">
-                  No projects yet — head to the <Link to="/edit">Edit tab</Link> to trim or cut a clip.
-                </p>
-              )}
-
-              <div className="library-grid">
-                {editProjects.map((p) => (
-                  <div key={p.id} className="video-card project-card">
-                    <div className="thumb">
-                      <div className="thumb-audio">{p.sourceKind === "video" ? "🎬" : "🎧"}</div>
-                    </div>
-
-                    <div className="meta">
-                      <h3>{p.name}</h3>
-                      <p className="muted sub">
-                        {formatDuration(p.durationSecs)} · Updated {new Date(p.updatedAt).toLocaleDateString()}
-                      </p>
-                    </div>
-
-                    <div className="video-card-icons">
-                      <Link to={`/edit/${p.id}`} className="icon-btn icon-btn-rename" title="Open">
-                        ✎︎
-                      </Link>
-                      <button
-                        type="button"
-                        title="Delete project"
-                        className="icon-btn icon-btn-delete"
-                        onClick={() => deleteEditProject.mutate(p.id)}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
+            <ComingSoon
+              icon="🗂️"
+              title="Projects is coming soon"
+            />
           ) : (
             <>
               <div className="library-section-head">
@@ -507,6 +462,7 @@ export function LibraryPage() {
           </div>
         </div>
       )}
+
 
       {viewingVideo && (
         <div className="transcript-drawer-backdrop" onClick={() => setViewingId(null)}>

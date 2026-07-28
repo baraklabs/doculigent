@@ -4,7 +4,6 @@ import { registerScreenCaptureIpc } from "./screenCapture";
 import { registerAnnotationIpc } from "./annotation";
 import { registerRecordingIpc } from "./recording";
 import { registerLibraryIpc } from "./library";
-import { registerEditProjectsIpc } from "./editProjects";
 import { registerSettingsIpc } from "./settings";
 import { registerAiIpc } from "./ai";
 import { registerTranscriptionIpc } from "./transcription";
@@ -18,7 +17,6 @@ export function registerIpcHandlers(): void {
   registerAnnotationIpc();
   registerRecordingIpc();
   registerLibraryIpc();
-  registerEditProjectsIpc();
   registerSettingsIpc();
   registerAiIpc();
   registerTranscriptionIpc();

@@ -2,7 +2,6 @@ import type {
   CaptureTarget,
   ChatMessage,
   CursorHighlightStyle,
-  EditProject,
   LlmModelProfile,
   LlmProviderKind,
   MicConfig,
@@ -105,26 +104,6 @@ export interface DoculigentApi {
     search(query: string): Promise<Video[]>;
     rename(id: string, title: string): Promise<Video>;
     setTranscript(id: string, transcript: Transcript | null): Promise<Video>;
-  };
-  editProjects: {
-    list(): Promise<EditProject[]>;
-    get(id: string): Promise<EditProject | null>;
-    create(input: {
-      name: string;
-      sourceFilePath: string;
-      sourceKind: "video" | "audio";
-      sourceVideoId: string | null;
-      durationSecs: number;
-    }): Promise<EditProject>;
-    update(
-      id: string,
-      patch: Partial<Pick<EditProject, "name" | "sourceFilePath" | "trimStart" | "trimEnd" | "cuts">>
-    ): Promise<EditProject>;
-    delete(id: string): Promise<void>;
-   
-    pickImportFile(): Promise<string | null>;
-    fileExists(filePath: string): Promise<boolean>;
-    export(id: string, keepRanges: [number, number][]): Promise<{ outputPath: string }>;
   };
   settings: {
     getSaveDir(): Promise<string>;

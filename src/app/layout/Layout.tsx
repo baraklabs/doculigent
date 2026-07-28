@@ -5,6 +5,7 @@ import { planLabel } from "@shared/constants/plans";
 import { useAuthStore } from "../../store/authStore";
 import { useSavingRecording, watchRecordingSaves } from "../../store/recordingStore";
 import { RecordingSaveToast } from "../../components/RecordingSaveToast";
+import { ToastStack } from "../../components/ToastStack";
 import { initials } from "../../lib/userDisplay";
 import "./Layout.css";
 
@@ -184,6 +185,7 @@ export function Layout() {
       </main>
 
       <RecordingSaveToast />
+      <ToastStack />
 
       <footer className="footer">
         <div className="footer-version">

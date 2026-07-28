@@ -89,16 +89,6 @@ const api: DoculigentApi = {
     rename: (id, title) => ipcRenderer.invoke(Channels.library.rename, id, title),
     setTranscript: (id, transcript) => ipcRenderer.invoke(Channels.library.setTranscript, id, transcript),
   },
-  editProjects: {
-    list: () => ipcRenderer.invoke(Channels.editProjects.list),
-    get: (id) => ipcRenderer.invoke(Channels.editProjects.get, id),
-    create: (input) => ipcRenderer.invoke(Channels.editProjects.create, input),
-    update: (id, patch) => ipcRenderer.invoke(Channels.editProjects.update, id, patch),
-    delete: (id) => ipcRenderer.invoke(Channels.editProjects.delete, id),
-    pickImportFile: () => ipcRenderer.invoke(Channels.editProjects.pickImportFile),
-    fileExists: (filePath) => ipcRenderer.invoke(Channels.editProjects.fileExists, filePath),
-    export: (id, keepRanges) => ipcRenderer.invoke(Channels.editProjects.export, id, keepRanges),
-  },
   settings: {
     getSaveDir: () => ipcRenderer.invoke(Channels.settings.getSaveDir),
     setSaveDir: (dir) => ipcRenderer.invoke(Channels.settings.setSaveDir, dir),

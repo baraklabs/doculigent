@@ -1,0 +1,51 @@
+.coming-soon {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 72px 20px; gap: 10px; min-height: 320px;
+}
+
+.coming-soon-orb {
+  width: 92px; height: 92px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: conic-gradient(from 0deg, #5b4bf5, #0284c7, #15803d, #b45309, #db2777, #5b4bf5);
+  animation: coming-soon-tilt 3.2s ease-in-out infinite;
+  box-shadow: 0 14px 34px rgba(91, 75, 245, .3);
+  position: relative;
+}
+.coming-soon-orb::before {
+  content: ""; position: absolute; inset: 5px; border-radius: 50%; background: var(--panel);
+}
+.coming-soon-icon {
+  position: relative; font-size: 38px; line-height: 1;
+  animation: coming-soon-bounce 2.2s ease-in-out infinite;
+}
+
+/* A gentle wobble rather than a full spin — tilt one way, back the other, repeat. */
+@keyframes coming-soon-tilt {
+  0%, 100% { transform: rotate(-12deg); }
+  50% { transform: rotate(12deg); }
+}
+@keyframes coming-soon-bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+
+.coming-soon-title {
+  margin: 10px 0 0; font-size: 26px; font-weight: 800; letter-spacing: -.02em;
+  background: linear-gradient(90deg, #5b4bf5, #0284c7, #db2777, #5b4bf5);
+  background-size: 300% auto; -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: coming-soon-shimmer 4s linear infinite;
+}
+@keyframes coming-soon-shimmer { to { background-position: 300% center; } }
+
+.coming-soon-subtitle { margin: 0; max-width: 420px; color: var(--muted); font-size: 14px; }
+
+.coming-soon-badge {
+  margin-top: 8px; padding: 5px 14px; border-radius: 999px; font-size: 11px; font-weight: 700;
+  letter-spacing: .04em; text-transform: uppercase; color: #fff;
+  background: linear-gradient(135deg, #5b4bf5, #db2777);
+  animation: coming-soon-pulse 2s ease-in-out infinite;
+}
+@keyframes coming-soon-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(91, 75, 245, .5); }
+  50% { box-shadow: 0 0 0 8px rgba(91, 75, 245, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .coming-soon-orb, .coming-soon-icon, .coming-soon-title, .coming-soon-badge { animation: none; }
+}

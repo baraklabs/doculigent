@@ -1,18 +1,1 @@
-.edit-preview-video { width: 100%; max-height: 420px; border-radius: 10px; background: #000; display: block; margin: 12px 0; }
-.edit-preview-audio { width: 100%; margin: 12px 0; }
-
-.edit-import-options { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 12px 0; }
-.edit-import-card {
-  border: 1px dashed var(--border-strong); border-radius: 12px; padding: 16px;
-  display: flex; flex-direction: column; gap: 10px; background: var(--bg);
-  transition: border-color 120ms ease, background 120ms ease;
-}
-.edit-import-card.drag-over { border-color: var(--accent); background: var(--accent-soft); }
-.edit-import-library-grid { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
-.edit-import-library-item {
-  display: flex; align-items: center; gap: 8px; text-align: left;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
-  padding: 8px 10px; cursor: pointer; font: inherit; color: var(--text);
-}
-.edit-import-library-item.active { border-color: var(--accent); background: var(--accent-soft); }
-.edit-import-library-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.edit-coming-soon { display: flex; align-items: center; justify-content: center; min-height: 60vh; }

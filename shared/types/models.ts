@@ -83,26 +83,6 @@ export interface Video {
   source: "record" | "meeting";
 }
 
-export interface CutRange {
-  start: number;
-  end: number;
-}
-
-export interface EditProject {
-  id: string;
-  name: string;
-  sourceFilePath: string;
-  sourceKind: "video" | "audio";
-  sourceVideoId: string | null;
-  durationSecs: number;
-  trimStart: number;
-  trimEnd: number;
-  cuts: CutRange[];
-  lastExportPath: string | null;
-  createdAt: string; 
-  updatedAt: string; 
-}
-
 export interface TranscriptSegment {
   start: number;
   end: number;

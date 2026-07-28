@@ -20,7 +20,6 @@ export const router = createHashRouter([
       { path: "meeting", element: <MeetingPage /> },
       { path: "library", element: <LibraryPage /> },
       { path: "edit", element: <EditPage /> },
-      { path: "edit/:projectId", element: <EditPage /> },
       { path: "library/:id/ai", element: <AiPage /> },
       { path: "ai", element: <AiAssistantPage /> },
       { path: "library/:id/share", element: <SharePage /> },

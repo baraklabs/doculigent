@@ -56,9 +56,7 @@ const CURSOR_STYLES: {
 ];
 
 const CURSOR_HINT =
-  "Every mouse movement is saved with your recording. In the Edit section you can add a cursor back in, change its " +
-  "look — arrow, hand, big, coloured — and add effects like smooth motion and click highlights. Hiding it keeps the " +
-  "pointer out of the video while you still see it on screen, so the cursor you add later looks perfect.";
+  "";
 
 /** Where the toggle returns to when the cursor is switched back on, if the user never
  *  picked a style themselves. */

@@ -2,18 +2,17 @@
 import { app } from "electron";
 import fs from "node:fs";
 import path from "node:path";
-import type { CutRange, EditProject, Summary, Transcript, Video } from "@shared/types/models";
+import type { Summary, Transcript, Video } from "@shared/types/models";
 import { libraryStoreFilePath } from "./paths";
 
 interface StoreFile {
   /** App version that last wrote this file — the hook for future migrations. */
   appVersion: string;
   videos: Video[];
-  editProjects: EditProject[];
 }
 
 function emptyStore(): StoreFile {
-  return { appVersion: app.getVersion(), videos: [], editProjects: [] };
+  return { appVersion: app.getVersion(), videos: [] };
 }
 
 function migrate(store: StoreFile): StoreFile {
@@ -34,25 +33,6 @@ function normalizeVideo(raw: Partial<Video>): Video {
   };
 }
 
-function normalizeEditProject(raw: Partial<EditProject>): EditProject {
-  const durationSecs = raw.durationSecs ?? 0;
-  return {
-    id: String(raw.id),
-    name: raw.name ?? "Untitled project",
-    sourceFilePath: raw.sourceFilePath ?? "",
-    sourceKind: raw.sourceKind === "audio" ? "audio" : "video",
-    sourceVideoId: raw.sourceVideoId ?? null,
-    durationSecs,
-    trimStart: raw.trimStart ?? 0,
-    trimEnd: raw.trimEnd ?? durationSecs,
-    cuts: (raw.cuts as CutRange[]) ?? [],
-    lastExportPath: raw.lastExportPath ?? null,
-    createdAt: raw.createdAt ?? new Date(0).toISOString(),
-    updatedAt: raw.updatedAt ?? raw.createdAt ?? new Date(0).toISOString(),
-  };
-}
-
-
 let cache: StoreFile | null = null;
 
 function read(): StoreFile {
@@ -62,7 +42,6 @@ function read(): StoreFile {
     cache = migrate({
       appVersion: parsed.appVersion ?? "0.0.0",
       videos: (parsed.videos ?? []).map(normalizeVideo),
-      editProjects: (parsed.editProjects ?? []).map(normalizeEditProject),
     });
   } catch {
     cache = emptyStore();
@@ -161,34 +140,4 @@ export function searchVideos(query: string): Video[] {
     .filter((r) => r.score >= 0)
     .sort((a, b) => b.score - a.score || b.video.createdAt.localeCompare(a.video.createdAt))
     .map((r) => r.video);
-}
-
-export function insertEditProject(project: EditProject): void {
-  const store = read();
-  write({ ...store, editProjects: [...store.editProjects, project] });
-}
-
-export function listEditProjects(): EditProject[] {
-  return [...read().editProjects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-}
-
-export function getEditProject(id: string): EditProject | null {
-  return read().editProjects.find((p) => p.id === id) ?? null;
-}
-
-export function updateEditProject(
-  id: string,
-  patch: Partial<Pick<EditProject, "name" | "sourceFilePath" | "trimStart" | "trimEnd" | "cuts" | "lastExportPath">>
-): EditProject | null {
-  const store = read();
-  const existing = store.editProjects.find((p) => p.id === id);
-  if (!existing) return null;
-  const merged: EditProject = { ...existing, ...patch, updatedAt: new Date().toISOString() };
-  write({ ...store, editProjects: store.editProjects.map((p) => (p.id === id ? merged : p)) });
-  return merged;
-}
-
-export function deleteEditProject(id: string): void {
-  const store = read();
-  write({ ...store, editProjects: store.editProjects.filter((p) => p.id !== id) });
 }
