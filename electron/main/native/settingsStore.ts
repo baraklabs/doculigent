@@ -84,7 +84,9 @@ export function setActiveLlmProfile(id: string): void {
 
 export function getAuthProfile(): { user: AuthUser; expiresAt: string | null } | null {
   const stored = readStored();
-  return stored.authUser ? { user: stored.authUser, expiresAt: stored.authExpiresAt ?? null } : null;
+  if (!stored.authUser) return null;
+  const user: AuthUser = { ...stored.authUser, plan: stored.authUser.plan ?? null };
+  return { user, expiresAt: stored.authExpiresAt ?? null };
 }
 
 export function setAuthProfile(user: AuthUser, expiresAt: string | null): void {

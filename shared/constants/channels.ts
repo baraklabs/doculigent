@@ -6,6 +6,12 @@ export const Channels = {
   cursor: {
     apply: "cursor:apply",
     restore: "cursor:restore",
+    startCapture: "cursor:startCapture",
+    stopCapture: "cursor:stopCapture",
+  },
+  screenCapture: {
+    start: "screenCapture:start",
+    stop: "screenCapture:stop",
   },
   annotation: {
     open: "annotation:open",
@@ -13,6 +19,9 @@ export const Channels = {
     getState: "annotation:getState",
     setTool: "annotation:setTool",
     setColor: "annotation:setColor",
+    setWidth: "annotation:setWidth",
+    setOpacity: "annotation:setOpacity",
+    setFadeMs: "annotation:setFadeMs",
     undo: "annotation:undo",
     redo: "annotation:redo",
     clear: "annotation:clear",
@@ -26,6 +35,8 @@ export const Channels = {
   recording: {
     save: "recording:save",
     saveAudio: "recording:saveAudio",
+    saveProgress: "recording:saveProgress",
+    cancelSave: "recording:cancelSave",
     saveCompleted: "recording:saveCompleted",
     saveFailed: "recording:saveFailed",
   },
@@ -33,7 +44,7 @@ export const Channels = {
     list: "library:list",
     get: "library:get",
     delete: "library:delete",
-    trim: "library:trim",
+    deleteMany: "library:deleteMany",
     search: "library:search",
     rename: "library:rename",
     setTranscript: "library:setTranscript",
@@ -74,6 +85,9 @@ export const Channels = {
   window: {
     minimize: "window:minimize",
     close: "window:close",
+    toggleMaximize: "window:toggleMaximize",
+    isMaximized: "window:isMaximized",
+    maximizeChanged: "window:maximizeChanged",
   },
   auth: {
     getSession: "auth:getSession",

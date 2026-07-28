@@ -1,6 +1,7 @@
 import { useParams } from "react-router-dom";
 import { useVideo } from "../hooks/useVideos";
 import { AiWorkspace } from "../components/AiWorkspace";
+import "./AiPage.css";
 
 /** Transcript+chat scoped to one video by route id — see AiWorkspace for the actual UI,
  *  shared with the AI Assistant tab (AiAssistantPage). */

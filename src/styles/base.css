@@ -1,0 +1,165 @@
+/*
+ * App-wide foundations only: design tokens, the reset, and the primitives that genuinely
+ * appear on most screens (panels, form controls, buttons, toasts, progress).
+ * Anything owned by a single page or component lives in a .css file next to it and is
+ * imported from that module — see src/pages/*.css and src/components/*.css.
+ */
+
+:root {
+  --bg: #eef0f6;
+  --panel: #ffffff;
+  --border: #e3e5ee;
+  --border-strong: #d2d5e4;
+  --text: #171a23;
+  --muted: #5c6273;
+  --accent: #5b4bf5;
+  --accent-strong: #4436e0;
+  --accent-soft: #eeecff;
+  --danger: #b3261e;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background:
+    radial-gradient(1100px 620px at 12% -12%, #e6e1ff 0%, rgba(230, 225, 255, 0) 62%),
+    radial-gradient(900px 520px at 88% -4%, #d9efff 0%, rgba(217, 239, 255, 0) 58%),
+    radial-gradient(700px 500px at 70% 108%, #ffe8f3 0%, rgba(255, 232, 243, 0) 60%),
+    linear-gradient(180deg, #fcfcfe 0%, #f4f5fa 100%);
+  background-attachment: fixed;
+  color: var(--text);
+  font-size: 14px;
+}
+
+/* --- Surfaces ------------------------------------------------------------------- */
+
+.panel {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 14px; padding: 10px 20px; width: 100%; box-sizing: border-box;
+  box-shadow: 0 8px 24px rgba(30, 30, 60, .06);
+}
+.panel h1 { margin: 0 0 4px; font-size: 18px; }
+.panel h2 { font-size: 15px; margin: 16px 0 6px; }
+.panel h3 { font-size: 13px; margin: 12px 0 4px; color: var(--muted); }
+
+/* --- Text helpers --------------------------------------------------------------- */
+
+.muted { color: var(--muted); }
+.error { color: var(--danger); margin-top: 12px; }
+.notice { background: rgba(91, 75, 245,.1); border: 1px solid var(--border); padding: 8px 12px; border-radius: 8px; }
+.notice-warning {
+  background: rgba(245, 158, 11, .12); border-color: rgba(245, 158, 11, .4); color: #b45309;
+  font-size: 12px; margin: 4px 0;
+}
+.badge {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+  background: var(--accent); color: #fff; padding: 2px 7px; border-radius: 999px;
+}
+.info-dot { cursor: help; opacity: .7; }
+
+/* Shown in the topbar and on the Account page, so it stays shared. */
+.user-avatar {
+  width: 26px; height: 26px; min-width: 26px; border-radius: 50%;
+  background: var(--accent); color: #fff; font-size: 12px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; line-height: 1;
+}
+.user-avatar-lg { width: 48px; height: 48px; min-width: 48px; font-size: 18px; }
+.user-avatar-anon { background: rgba(0, 0, 0, .08); color: var(--muted); }
+
+/* --- Forms ---------------------------------------------------------------------- */
+
+fieldset.field { border: none; padding: 0; min-width: 0; }
+.field { display: flex; flex-direction: column; gap: 3px; margin: 4px 0; }
+.field > span, .field > legend { color: var(--muted); font-size: 12px; padding: 0; margin: 0; }
+.field > legend { margin-bottom: 4px; }
+.field-hint { color: var(--muted); font-size: 11px; margin: 0; }
+.field-hint-inline { font-size: 11px; opacity: .75; }
+.link-btn {
+  background: none; border: none; padding: 0; font: inherit; font-size: 11px;
+  color: var(--accent); cursor: pointer; text-decoration: underline;
+}
+select, input[type="text"], input[type="search"], input[type="password"], input[type="number"], input:not([type]) {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 8px 10px; border-radius: 8px; width: 100%; box-sizing: border-box;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+select:focus, input[type="text"]:focus, input[type="search"]:focus, input[type="password"]:focus, input[type="number"]:focus, input:not([type]):focus {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91, 75, 245, .15);
+}
+select {
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%235c6273' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+  padding-right: 30px; cursor: pointer;
+}
+select:disabled { cursor: not-allowed; }
+
+.checkbox { display: flex; flex-direction: row; align-items: center; gap: 8px; }
+.checkbox input[type="checkbox"] {
+  appearance: none; -webkit-appearance: none; width: 34px; height: 20px; min-width: 34px;
+  border-radius: 999px; background: var(--border); position: relative; cursor: pointer;
+  transition: background 150ms ease; margin: 0;
+}
+.checkbox input[type="checkbox"]::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(20, 20, 40, .3);
+  transition: transform 150ms ease;
+}
+.checkbox input[type="checkbox"]:checked { background: var(--accent); }
+.checkbox input[type="checkbox"]:checked::after { transform: translateX(14px); }
+.checkbox input[type="checkbox"]:disabled { opacity: .5; cursor: not-allowed; }
+
+.save-location { display: flex; gap: 8px; align-items: center; }
+.save-location input { flex: 1; }
+
+/* Live input level — used by both the Record and Meeting tabs. */
+.mic-meter { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.mic-meter-track { height: 10px; background: var(--border); border-radius: 6px; overflow: hidden; }
+.mic-meter-fill { height: 100%; background: var(--accent); border-radius: 6px; transition: width 80ms linear; }
+
+/* --- Buttons -------------------------------------------------------------------- */
+
+.actions { display: flex; gap: 10px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+button {
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  padding: 8px 14px; border-radius: 8px; cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+/* --- Toast + progress ----------------------------------------------------------- */
+/* The shell is shared (RecordingSaveToast, MeetingPage's mic warning); per-variant
+   styling lives with the component that owns it. */
+
+.toast {
+  position: fixed; bottom: 24px; right: 24px; z-index: 60;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px 18px; max-width: 380px; box-shadow: 0 12px 32px rgba(20, 20, 40, .18);
+}
+.toast strong { display: block; margin-bottom: 4px; }
+.toast-path { word-break: break-all; font-size: 12px; margin: 0 0 10px; }
+.toast-close {
+  position: absolute; top: 8px; right: 10px; border: none; background: transparent;
+  color: var(--muted); font-size: 16px; line-height: 1; padding: 4px; cursor: pointer;
+}
+.toast .actions { margin-top: 0; }
+
+.progress {
+  height: 6px; border-radius: 999px; overflow: hidden;
+  background: rgba(0, 0, 0, .08);
+}
+.progress-fill {
+  height: 100%; background: var(--accent); border-radius: 999px;
+  transition: width 200ms linear;
+}
+.progress-label { font-size: 12px; }
+.progress-indeterminate .progress-fill { width: 40%; animation: progress-sweep 1.1s ease-in-out infinite; }
+@keyframes progress-sweep {
+  0% { margin-left: -40%; }
+  100% { margin-left: 100%; }
+}

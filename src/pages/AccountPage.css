@@ -1,0 +1,17 @@
+.account-page { flex: 1; display: flex; align-items: center; justify-content: center; width: 100%; }
+.account-card { max-width: 380px; width: 100%; text-align: center; display: flex; flex-direction: column; align-items: center; }
+.account-card h1 { width: 100%; }
+.account-card .actions, .account-card .notice { width: 100%; justify-content: center; }
+.account-profile { display: flex; flex-direction: column; align-items: center; gap: 4px; margin: 16px 0; }
+.account-profile .user-avatar-lg { margin-bottom: 6px; }
+.account-profile h3 { margin: 0; font-size: 15px; }
+.account-plan {
+  width: 100%; margin-bottom: 16px; padding: 12px 14px;
+  border: 1px solid var(--border); border-radius: 10px; background: rgba(0, 0, 0, .02);
+}
+.account-plan p { margin: 0; font-size: 13px; }
+.account-plan p + p { margin-top: 4px; font-size: 12px; }
+.account-login-pending { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 12px; text-align: center; }
+.account-login-pending p { margin: 0; }
+.account-login-pending .field { align-items: center; }
+.account-login-pending .save-location { justify-content: center; }

@@ -5,6 +5,7 @@ import { registerIpcHandlers } from "./ipc";
 import { registerMediaScheme, registerMediaHandler } from "./mediaProtocol";
 import { restorePendingCursorOverride, restoreCursor } from "./native/systemCursor";
 import { killPendingFfmpegJobs } from "./native/ffmpeg";
+import { killPendingScreenCapture } from "./native/screenCapture";
 import { initTranscriptionWorkerClient, terminateTranscriptionWorker } from "./transcription/whisperWorkerClient";
 import { registerProtocolClient, handleOpenUrl, handleSecondInstanceArgv, handleInitialArgv } from "./auth/deepLink";
 
@@ -55,6 +56,7 @@ if (!gotSingleInstanceLock) {
     restoreCursor();
     closeAnnotationOverlay();
     killPendingFfmpegJobs();
+    killPendingScreenCapture();
     terminateTranscriptionWorker();
   });
 }

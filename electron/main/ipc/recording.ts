@@ -5,13 +5,40 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Channels } from "@shared/constants/channels";
 import type { OverlayConfig, Transcript, Video } from "@shared/types/models";
+import { cameraBubbleRect, OUTPUT_HEIGHT, OUTPUT_WIDTH } from "@shared/lib/cameraBubble";
 import { ensureSaveDir } from "../native/paths";
-import { convertToWav, remuxToMp4 } from "../native/ffmpeg";
-import { insertVideo } from "../native/db";
+import {
+  convertToWav,
+  copyToMp4,
+  FfmpegCancelledError,
+  muxScreenWithAudio,
+  overlayCameraBubble,
+  remuxToMp4,
+} from "../native/ffmpeg";
+import { insertVideo } from "../native/libraryStore";
+import { writeCursorMetadata } from "../native/cursorTrack";
 import { writeTranscriptFile } from "../native/transcriptFile";
 
+/** A side clip recorded alongside a native (gdigrab) screen capture — see
+ *  native/screenCapture.ts and RecordingService's gdigrab branch. `hasVideo` distinguishes
+ *  a camera-bubble clip (overlaid onto the screen video) from a mic-only clip (just muxed
+ *  in as audio); `hasAudio` is only meaningful when `hasVideo` is true, since a bubble clip
+ *  can be silent (mic muted, camera still on). */
+interface SideClip {
+  bytes: ArrayBuffer;
+  hasVideo: boolean;
+  hasAudio: boolean;
+}
+
 interface SaveRecordingInput {
-  webmBytes: ArrayBuffer;
+  /** Full composited webm from the ordinary getUserMedia/MediaRecorder pipeline. Mutually
+   *  exclusive with `screenFilePath` — exactly one is set, depending on which pipeline
+   *  RecordingService used for this recording. */
+  webmBytes?: ArrayBuffer;
+  /** A screen video already written to disk by native/screenCapture.ts (gdigrab), with the
+   *  real cursor excluded at capture time rather than drawn over afterward. */
+  screenFilePath?: string;
+  sideClip?: SideClip;
   overlay: OverlayConfig;
   durationSecs: number;
   title: string;
@@ -25,8 +52,6 @@ interface SaveAudioInput {
   transcript: Transcript | null;
 }
 
-// Meeting audio recordings have no camera bubble — this is just filler to satisfy the
-// shared Video/OverlayConfig shape, never rendered for an audio-only entry.
 const AUDIO_OVERLAY: OverlayConfig = {
   corner: "bottom-right",
   sizePct: 0,
@@ -36,30 +61,82 @@ const AUDIO_OVERLAY: OverlayConfig = {
   cursorHighlight: "default",
 };
 
-/** Every recording gets its own `saveDir/{id}/` folder — the media file, and (once
- *  transcribed) transcript.srt, live side by side rather than as a flat pile of files
- *  sharing one directory. */
 function recordingDir(saveDir: string, id: string): string {
   return path.join(saveDir, id);
 }
 
-/** The MP4 remux (see ffmpeg.ts) is a real re-encode, not a fast container-only copy —
- *  it takes real time proportional to the recording's length. Blocking the Stop button
- *  on it made stopping feel like it hung, so `recording.save` now resolves as soon as the
- *  (fast) webm write is done, and this runs the (slow) transcode + library insert
- *  afterward, pushing the result back once it's actually ready. Any window still open by
- *  then picks it up; if the app quits first, this in-flight save is simply interrupted
- *  (same as any other background job killed by process exit) — not attempting
- *  crash-resilient resume-on-next-launch, which is a different, bigger feature. */
+const pendingSaves = new Map<string, AbortController>();
+
+/** Produces `finalMp4` from `input`, picking the right ffmpeg step for whichever pipeline
+ *  recorded it: a plain remux for the ordinary webm pipeline, or — for the gdigrab
+ *  pipeline — a stream copy (screen only), an audio mux (screen + mic clip), or an overlay
+ *  (screen + camera-bubble clip), so the fast no-camera/no-mic case never pays for a
+ *  needless re-encode. */
+async function buildFinalMp4(
+  id: string,
+  input: SaveRecordingInput,
+  finalMp4: string,
+  onProgress: (secondsDone: number) => void,
+  signal: AbortSignal,
+  cleanupPaths: string[]
+): Promise<void> {
+  if (input.screenFilePath) {
+    cleanupPaths.push(input.screenFilePath);
+    if (!input.sideClip) {
+      await copyToMp4(input.screenFilePath, finalMp4, onProgress, signal);
+      return;
+    }
+
+    const sideClipPath = path.join(os.tmpdir(), `${id}-side.webm`);
+    await fs.writeFile(sideClipPath, Buffer.from(input.sideClip.bytes));
+    cleanupPaths.push(sideClipPath);
+
+    if (input.sideClip.hasVideo) {
+      const { x, y } = cameraBubbleRect(input.overlay, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+      await overlayCameraBubble(
+        input.screenFilePath,
+        sideClipPath,
+        { x, y },
+        input.overlay.circular,
+        input.sideClip.hasAudio,
+        finalMp4,
+        onProgress,
+        signal
+      );
+    } else {
+      await muxScreenWithAudio(input.screenFilePath, sideClipPath, finalMp4, onProgress, signal);
+    }
+    return;
+  }
+
+  const tempWebm = path.join(os.tmpdir(), `${id}.webm`);
+  await fs.writeFile(tempWebm, Buffer.from(input.webmBytes!));
+  cleanupPaths.push(tempWebm);
+  await remuxToMp4(tempWebm, finalMp4, onProgress, signal);
+}
+
 async function finishRecordingSave(
   id: string,
-  tempWebm: string,
   finalMp4: string,
   input: SaveRecordingInput,
   sender: IpcMainInvokeEvent["sender"]
 ): Promise<void> {
+  const abort = new AbortController();
+  pendingSaves.set(id, abort);
+  const cleanupPaths: string[] = [];
   try {
-    await remuxToMp4(tempWebm, finalMp4);
+    await buildFinalMp4(
+      id,
+      input,
+      finalMp4,
+      (secondsDone) => {
+        if (sender.isDestroyed() || input.durationSecs <= 0) return;
+        const percent = Math.max(0, Math.min(99, Math.round((secondsDone / input.durationSecs) * 100)));
+        sender.send(Channels.recording.saveProgress, { id, percent });
+      },
+      abort.signal,
+      cleanupPaths
+    );
     const video: Video = {
       id,
       title: input.title,
@@ -74,9 +151,14 @@ async function finishRecordingSave(
     insertVideo(video);
     if (!sender.isDestroyed()) sender.send(Channels.recording.saveCompleted, video);
   } catch (e) {
-    if (!sender.isDestroyed()) sender.send(Channels.recording.saveFailed, { id, message: String(e) });
+    if (e instanceof FfmpegCancelledError) {
+      await fs.rm(path.dirname(finalMp4), { recursive: true, force: true });
+    } else if (!sender.isDestroyed()) {
+      sender.send(Channels.recording.saveFailed, { id, message: String(e) });
+    }
   } finally {
-    await fs.rm(tempWebm, { force: true });
+    pendingSaves.delete(id);
+    await Promise.all(cleanupPaths.map((p) => fs.rm(p, { force: true })));
   }
 }
 
@@ -86,22 +168,22 @@ export function registerRecordingIpc(): void {
     const id = randomUUID();
     const recDir = recordingDir(saveDir, id);
     await fs.mkdir(recDir, { recursive: true });
-    const tempWebm = path.join(os.tmpdir(), `${id}.webm`);
     const finalMp4 = path.join(recDir, "recording.mp4");
-
-    // Only the (fast) write is awaited here — the (slow) transcode + library insert
-    // happens in the background; see finishRecordingSave's doc comment above.
-    await fs.writeFile(tempWebm, Buffer.from(input.webmBytes));
-    void finishRecordingSave(id, tempWebm, finalMp4, input, event.sender);
+    // Written up front, next to the media rather than inside the app's own data dir, so
+    // the cursor track travels with the recording the same way transcript.srt does.
+    await writeCursorMetadata(id, recDir);
+    void finishRecordingSave(id, finalMp4, input, event.sender);
 
     return { id };
   });
+  ipcMain.handle(Channels.recording.cancelSave, async (_event, id: string): Promise<boolean> => {
+    const abort = pendingSaves.get(id);
+    if (!abort) return false;
+    abort.abort();
+    return true;
+  });
 
   ipcMain.handle(Channels.recording.saveAudio, async (_event, input: SaveAudioInput): Promise<Video> => {
-    // WAV (uncompressed PCM) rather than the original compressed WebM/Opus, for
-    // universal compatibility with audio tools — meaningfully bigger on disk, but the
-    // conversion itself is fast (audio-only), so this stays a normal blocking save
-    // unlike recording.save above.
     const saveDir = ensureSaveDir();
     const id = randomUUID();
     const recDir = recordingDir(saveDir, id);
@@ -128,8 +210,6 @@ export function registerRecordingIpc(): void {
       source: "meeting",
     };
     insertVideo(video);
-    // The Meeting tab transcribes live during the call, so (unlike a video, which only
-    // gets transcribed later from the Library) the transcript can already be here.
     if (input.transcript) await writeTranscriptFile(finalWav, input.transcript);
     return video;
   });

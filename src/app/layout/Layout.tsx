@@ -1,13 +1,27 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import logo from "../../assets/logo.png";
+import { planLabel } from "@shared/constants/plans";
 import { useAuthStore } from "../../store/authStore";
+import { useSavingRecording, watchRecordingSaves } from "../../store/recordingStore";
+import { RecordingSaveToast } from "../../components/RecordingSaveToast";
+import { ToastStack } from "../../components/ToastStack";
 import { initials } from "../../lib/userDisplay";
-import { useVideos } from "../../hooks/useVideos";
+import "./Layout.css";
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL).replace(/\/+$/, "");
 const VERSION_ENDPOINT = `${SUPABASE_URL}/functions/v1/version`;
 const DOWNLOAD_URL = "https://doculigent.com";
+
+const SAVING_HINT = "Saving your recording — you can switch tabs once it's done";
+
+function WindowGlyph({ d }: { d: string }) {
+  return (
+    <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+      <path d={d} fill="none" stroke="currentColor" strokeWidth="1" />
+    </svg>
+  );
+}
 
 function isNewerVersion(latest: string, current: string) {
   const toParts = (v: string) => v.split(".").map((n) => parseInt(n, 10) || 0);
@@ -16,31 +30,28 @@ function isNewerVersion(latest: string, current: string) {
   return la !== ca ? la > ca : lb !== cb ? lb > cb : lc > cc;
 }
 
-// Split around the "Edit" tab, which — unlike the others — has no fixed route: it jumps
-// into the Edit page for whichever recording was made/touched most recently (see the
-// useVideos() lookup below), so it needs a dynamic `to` rather than a static one.
-const TABS_BEFORE_EDIT: { to: string; label: string }[] = [
-  { to: "/record", label: "Record" },
-  { to: "/meeting", label: "Meeting" },
-  { to: "/library", label: "Library" },
-];
-const TABS_AFTER_EDIT: { to: string; label: string }[] = [
-  { to: "/ai", label: "AI Assistant" },
-  { to: "/settings", label: "⚙ Settings" },
+const TABS: { to: string; label: string; end: boolean }[] = [
+  { to: "/record", label: "Record", end: true },
+  { to: "/meeting", label: "Meeting", end: true },
+  { to: "/library", label: "Library", end: true },
+  { to: "/edit", label: "Edit", end: false },
+  { to: "/ai", label: "AI Assistant", end: false },
+  { to: "/settings", label: "⚙ Settings", end: false },
 ];
 
-/** Top bar + tab nav + footer status, ported from the original App.tsx shell. */
 export function Layout() {
   const [latestVersion, setLatestVersion] = useState<string>();
   const session = useAuthStore((s) => s.session);
   const initAuth = useAuthStore((s) => s.init);
   const location = useLocation();
-  const { data: videos = [] } = useVideos("");
-  const latestVideoId = videos[0]?.id ?? null;
 
   useEffect(() => {
     initAuth();
   }, [initAuth]);
+  const savingRecording = useSavingRecording();
+  useEffect(() => {
+    watchRecordingSaves();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -61,12 +72,18 @@ export function Layout() {
     };
   }, []);
 
+  const [maximized, setMaximized] = useState(false);
+  useEffect(() => {
+    window.api.window.isMaximized().then(setMaximized);
+    return window.api.window.onMaximizeChanged(setMaximized);
+  }, []);
+
   const stagesRef = useRef<HTMLElement>(null);
   const [indicator, setIndicator] = useState<{ left: number; width: number } | null>(null);
   useLayoutEffect(() => {
     const active = stagesRef.current?.querySelector<HTMLElement>(".stage.active");
     if (active) setIndicator({ left: active.offsetLeft, width: active.offsetWidth });
-  }, [location.pathname, latestVideoId]);
+  }, [location.pathname]);
 
   return (
     <div className="app">
@@ -82,26 +99,22 @@ export function Layout() {
               style={{ transform: `translateX(${indicator.left}px)`, width: indicator.width }}
             />
           )}
-          {TABS_BEFORE_EDIT.map((t) => (
-            <NavLink key={t.to} to={t.to} end className={({ isActive }) => (isActive ? "stage active" : "stage")}>
-              {t.label}
-            </NavLink>
-          ))}
-          {latestVideoId ? (
+          {TABS.map((t) => (
             <NavLink
-              to={`/library/${latestVideoId}/edit`}
-              end
-              className={({ isActive }) => (isActive ? "stage active" : "stage")}
+              key={t.to}
+              to={t.to}
+              end={t.end}
+              onClick={(e) => {
+                if (savingRecording) e.preventDefault();
+              }}
+              aria-disabled={savingRecording || undefined}
+              title={savingRecording ? SAVING_HINT : undefined}
+              className={({ isActive }) =>
+                [isActive ? "stage active" : "stage", savingRecording && !isActive && "stage-locked"]
+                  .filter(Boolean)
+                  .join(" ")
+              }
             >
-              Edit
-            </NavLink>
-          ) : (
-            <button type="button" className="stage" disabled title="Record something first">
-              Edit
-            </button>
-          )}
-          {TABS_AFTER_EDIT.map((t) => (
-            <NavLink key={t.to} to={t.to} className={({ isActive }) => (isActive ? "stage active" : "stage")}>
               {t.label}
             </NavLink>
           ))}
@@ -110,17 +123,18 @@ export function Layout() {
         <div className="topbar-right">
           <NavLink
             to="/account"
+            onClick={(e) => {
+              if (savingRecording) e.preventDefault();
+            }}
+            aria-disabled={savingRecording || undefined}
+            title={savingRecording ? SAVING_HINT : session ? session.user.name : "Sign in to doculigent.com"}
             className={({ isActive }) =>
-              [
-                "account-btn",
-                isActive && "active",
-                !session && "account-btn-icon",
-              ]
+              ["account-btn", isActive && "active", savingRecording && !isActive && "stage-locked"]
                 .filter(Boolean)
                 .join(" ")
             }
           >
-            <span className="user-avatar">
+            <span className={session ? "user-avatar" : "user-avatar user-avatar-anon"}>
               {session ? (
                 initials(session.user.name)
               ) : (
@@ -129,7 +143,7 @@ export function Layout() {
                 </svg>
               )}
             </span>
-            {session && <span className="account-name">{session.user.name}</span>}
+            <span className="account-name">{session ? session.user.name : "Sign in"}</span>
           </NavLink>
 
           <div className="window-controls">
@@ -138,16 +152,29 @@ export function Layout() {
               className="win-btn"
               onClick={() => window.api.window.minimize()}
               aria-label="Minimize"
+              title="Minimize"
             >
-              &#x2013;
+              <WindowGlyph d="M0 5h10" />
+            </button>
+            <button
+              type="button"
+              className="win-btn"
+              onClick={() => window.api.window.toggleMaximize()}
+              aria-label={maximized ? "Restore down" : "Maximize"}
+              title={maximized ? "Restore down (F11)" : "Maximize (F11)"}
+            >
+              <WindowGlyph
+                d={maximized ? "M2.5 2.5V.5h7v7h-2M.5 2.5h7v7h-7z" : "M.5.5h9v9h-9z"}
+              />
             </button>
             <button
               type="button"
               className="win-btn win-btn-close"
               onClick={() => window.api.window.close()}
               aria-label="Close"
+              title="Close"
             >
-              &#x2715;
+              <WindowGlyph d="M.5.5l9 9M9.5.5l-9 9" />
             </button>
           </div>
         </div>
@@ -156,6 +183,9 @@ export function Layout() {
       <main className="workspace">
         <Outlet />
       </main>
+
+      <RecordingSaveToast />
+      <ToastStack />
 
       <footer className="footer">
         <div className="footer-version">
@@ -166,6 +196,11 @@ export function Layout() {
             </a>
           )}
         </div>
+        {session?.user.plan && (
+          <div className="footer-plan">
+            <span className="footer-plan-tier">{planLabel(session.user.plan.tier)} plan</span>
+          </div>
+        )}
       </footer>
     </div>
   );

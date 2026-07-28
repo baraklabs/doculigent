@@ -1,6 +1,6 @@
 import { BrowserWindow, ipcMain } from "electron";
 import { Channels } from "@shared/constants/channels";
-import { ANNOTATION_COLORS, type AnnotationTool } from "@shared/types/annotation";
+import { ANNOTATION_COLORS, type AnnotationState, type AnnotationTool } from "@shared/types/annotation";
 import {
   broadcastAnnotationState,
   getDrawWindowIds,
@@ -12,11 +12,25 @@ import {
   updateClickThroughForTool,
 } from "../annotationWindow";
 
-// Main process is the source of truth for the *current* tool/color (cheap, small state)
-// — strokes/history live in each draw window's own renderer, reported back only as a
-// boolean pair for the toolbar's undo/redo buttons (see reportHistoryState below).
+// Main process is the source of truth for the *current* tool/color/width/opacity/fade
+// (cheap, small state) — strokes/history live in each draw window's own renderer, reported
+// back only as a boolean pair for the toolbar's undo/redo buttons (see reportHistoryState
+// below).
 let currentTool: AnnotationTool = "pointer";
 let currentColor: string = ANNOTATION_COLORS[0];
+let currentWidth = 4;
+let currentOpacity = 1;
+let currentFadeMs = 0;
+
+function currentState() {
+  return {
+    tool: currentTool,
+    color: currentColor,
+    width: currentWidth,
+    opacity: currentOpacity,
+    fadeMs: currentFadeMs,
+  };
+}
 
 const historyByWindow = new Map<number, { canUndo: boolean; canRedo: boolean }>();
 
@@ -35,24 +49,36 @@ export function registerAnnotationIpc(): void {
     currentTool = "pointer";
     openAnnotationOverlay();
     updateClickThroughForTool(currentTool);
-    broadcastAnnotationState(currentTool, currentColor);
+    broadcastAnnotationState(currentState());
   });
 
   ipcMain.handle(Channels.annotation.isOpen, async (): Promise<boolean> => isAnnotationOverlayOpen());
-  ipcMain.handle(
-    Channels.annotation.getState,
-    async (): Promise<{ tool: AnnotationTool; color: string }> => ({ tool: currentTool, color: currentColor })
-  );
+  ipcMain.handle(Channels.annotation.getState, async (): Promise<AnnotationState> => currentState());
 
   ipcMain.handle(Channels.annotation.setTool, async (_event, tool: AnnotationTool): Promise<void> => {
     currentTool = tool;
     updateClickThroughForTool(currentTool);
-    broadcastAnnotationState(currentTool, currentColor);
+    broadcastAnnotationState(currentState());
   });
 
   ipcMain.handle(Channels.annotation.setColor, async (_event, color: string): Promise<void> => {
     currentColor = color;
-    broadcastAnnotationState(currentTool, currentColor);
+    broadcastAnnotationState(currentState());
+  });
+
+  ipcMain.handle(Channels.annotation.setWidth, async (_event, width: number): Promise<void> => {
+    currentWidth = width;
+    broadcastAnnotationState(currentState());
+  });
+
+  ipcMain.handle(Channels.annotation.setOpacity, async (_event, opacity: number): Promise<void> => {
+    currentOpacity = opacity;
+    broadcastAnnotationState(currentState());
+  });
+
+  ipcMain.handle(Channels.annotation.setFadeMs, async (_event, fadeMs: number): Promise<void> => {
+    currentFadeMs = fadeMs;
+    broadcastAnnotationState(currentState());
   });
 
   ipcMain.handle(Channels.annotation.undo, async (): Promise<void> => {

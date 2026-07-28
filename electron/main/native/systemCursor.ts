@@ -18,6 +18,11 @@
  *  - a custom-drawn colored cursor (colorArrow/colorHand), built at runtime via GDI+
  *    (gdiplus.dll) since Windows doesn't ship any pre-colored cursor files to just load.
  *
+ * "hidden" is deliberately NOT one of these swaps: it's handled entirely by
+ * native/screenCapture.ts (ffmpeg gdigrab's `-draw_mouse 0`), which excludes the cursor
+ * from the captured frames while leaving the real one completely untouched on screen —
+ * this module never blanks or replaces the pointer the user actually sees.
+ *
  * All styles are undone the same way: restoreCursor() reloads the user's real scheme
  * from the registry (SPI_SETCURSORS) — the standard way other apps undo SetSystemCursor.
  * No per-style undo state is needed since none of this touches the registry itself.
@@ -295,11 +300,12 @@ function swapFileCursor(filePath: string): void {
 }
 
 /** Swaps the real system cursor for the recording's duration. A no-op for "default" and
- *  on non-Windows platforms. Persists a marker first (via settingsStore) so a crash
- *  mid-recording can still be cleaned up on next launch — see
+ *  "hidden" (the latter is handled by native/screenCapture.ts instead — see the file-level
+ *  comment above) and on non-Windows platforms. Persists a marker first (via settingsStore)
+ *  so a crash mid-recording can still be cleaned up on next launch — see
  *  restorePendingCursorOverride(). */
 export function applyCursorStyle(style: CursorHighlightStyle): void {
-  if (style === "default" || !bind()) return;
+  if (style === "default" || style === "hidden" || !bind()) return;
 
   if (!getCursorOverride()) setCursorOverride(true);
 

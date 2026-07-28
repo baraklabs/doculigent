@@ -1,0 +1,15 @@
+DOCULIGENT - TERMS OF SERVICE AND PRIVACY POLICY
+
+Before installing Doculigent, please review our Terms of Service and
+Privacy Policy at the links below:
+
+  Terms of Service:  https://www.doculigent.com/terms-of-service
+  Privacy Policy:    https://www.doculigent.com/privacy-policy
+
+By selecting "I accept the terms of the License Agreement" and clicking
+Next, you confirm that you have read and agree to both documents, and
+installation will continue.
+
+If you do not agree, select "I do not accept the terms of the License
+Agreement" (or click Cancel) to stop the installation. Doculigent will
+not be installed on this computer.

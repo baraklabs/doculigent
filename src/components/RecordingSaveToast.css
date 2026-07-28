@@ -1,0 +1,12 @@
+/* Variant styling for the global save toast; the .toast/.progress shells are in
+   styles/base.css since the Meeting page reuses them too. */
+
+.toast-success { border-color: #16a34a; background: #f0fdf4; }
+.toast-success strong { color: #15803d; }
+
+.toast-progress-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+.danger-link {
+  border: none; background: transparent; padding: 0; cursor: pointer;
+  color: var(--danger); font-size: 12px; font-weight: 600;
+}
+.danger-link:disabled { color: var(--muted); cursor: default; }

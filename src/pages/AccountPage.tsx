@@ -1,6 +1,23 @@
 import { useEffect, useState, type FormEvent } from "react";
+import type { AuthPlan } from "@shared/types/auth";
+import { billingIntervalLabel, isBilledTier, planLabel } from "@shared/constants/plans";
 import { useAuthStore } from "../store/authStore";
 import { initials } from "../lib/userDisplay";
+import "./AccountPage.css";
+
+/** "You're on Pro (billed monthly)." — the interval is dropped for free tiers and unknown intervals. */
+function planSummary(plan: AuthPlan): string {
+  const interval = isBilledTier(plan.tier) ? billingIntervalLabel(plan.interval) : null;
+  const head = `You're on ${planLabel(plan.tier)}${interval ? ` (${interval})` : ""}`;
+  return `${head}.`;
+}
+
+function formatStartedAt(startedAt: string | null): string | null {
+  if (!startedAt) return null;
+  const date = new Date(startedAt);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
 
 export function AccountPage() {
   const { session, loginStatus, ready, init, login, submitManualCode, cancelLogin, logout } = useAuthStore();
@@ -34,6 +51,15 @@ export function AccountPage() {
               <h3>{session.user.name}</h3>
               <p className="muted">{session.user.email}</p>
             </div>
+
+            {session.user.plan && (
+              <div className="account-plan">
+                <p>{planSummary(session.user.plan)}</p>
+                {formatStartedAt(session.user.plan.startedAt) && (
+                  <p className="muted">Since {formatStartedAt(session.user.plan.startedAt)}</p>
+                )}
+              </div>
+            )}
             <div className="actions">
               <button type="button" className="danger" onClick={() => logout()}>
                 Sign out
