@@ -11,8 +11,14 @@ import { terminateTranscriptionWorker } from "../transcription/whisperWorkerClie
 export function registerTranscriptionIpc(): void {
   ipcMain.handle(
     Channels.transcription.transcribe,
-    async (_event, filePath: string, language?: string, modelSize?: WhisperModelSize): Promise<Transcript> => {
-      return transcribeWithWhisper(filePath, language, modelSize);
+    async (
+      _event,
+      filePath: string,
+      language?: string,
+      modelSize?: WhisperModelSize,
+      byokProfileId?: string
+    ): Promise<Transcript> => {
+      return transcribeWithWhisper(filePath, language, modelSize, byokProfileId);
     }
   );
 

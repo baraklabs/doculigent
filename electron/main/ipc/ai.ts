@@ -1,12 +1,12 @@
 import { ipcMain } from "electron";
 import { Channels } from "@shared/constants/channels";
 import type { ChatMessage, LlmModelProfile, Summary, Transcript } from "@shared/types/models";
-import { getActiveLlmProfile, getLlmProfile } from "../native/settingsStore";
+import { getLlmProfile, listLlmProfiles } from "../native/settingsStore";
 import { getLlmApiKey } from "../native/keyring";
 import * as aiRouter from "../ai";
 
 function resolveProfile(profileId: string | undefined): LlmModelProfile {
-  const profile = profileId ? getLlmProfile(profileId) : getActiveLlmProfile();
+  const profile = profileId ? getLlmProfile(profileId) : (listLlmProfiles()[0] ?? null);
   if (!profile) throw new Error("No AI model is configured — add one in Settings.");
   return profile;
 }
@@ -25,7 +25,7 @@ export function registerAiIpc(): void {
     Channels.ai.chat,
     async (
       _event,
-      transcript: Transcript,
+      transcript: Transcript | null,
       history: ChatMessage[],
       question: string,
       profileId?: string

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Pencil, Monitor, Video, Mic, MousePointer2, FolderOpen, Info } from "lucide-react";
 import type { CaptureTarget, MicConfig, OverlayConfig } from "@shared/types/models";
 import { useRecordingStore, useSavingRecording } from "../store/recordingStore";
 import { desktopConstraints } from "../services/recording/constraints";
@@ -62,6 +63,21 @@ const CURSOR_HINT =
  *  picked a style themselves. */
 const FALLBACK_VISIBLE_STYLE: OverlayConfig["cursorHighlight"] = "default";
 
+/** "Recording 29-07-26 11:23" — the default title, timestamped so a batch of
+ *  never-renamed recordings in the Library are still distinguishable from each other
+ *  instead of all reading as the same "Untitled recording" (same idea as MeetingPage.tsx's
+ *  defaultMeetingTitle). */
+function defaultRecordingTitle(): string {
+  const now = new Date();
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  const dd = pad(now.getDate());
+  const mm = pad(now.getMonth() + 1);
+  const yy = pad(now.getFullYear() % 100);
+  const hh = pad(now.getHours());
+  const min = pad(now.getMinutes());
+  return `Recording ${dd}-${mm}-${yy} ${hh}:${min}`;
+}
+
 export function RecordPage() {
   const { recording, busy, error, start, stop } = useRecordingStore();
   const saving = useSavingRecording();
@@ -73,7 +89,7 @@ export function RecordPage() {
   const [targetId, setTargetId] = useState("");
 
   const [overlay, setOverlay] = useState<OverlayConfig>(DEFAULT_OVERLAY);
-  const [title, setTitle] = useState("Untitled recording");
+  const [title, setTitle] = useState(() => defaultRecordingTitle());
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [preferredTargetId, setPreferredTargetId] = useState<string | null>(null);
   const [mic, setMic] = useState<MicConfig>({ deviceId: null, muted: false });
@@ -312,14 +328,7 @@ export function RecordPage() {
 
   return (
     <section className="panel record-page">
-      <div className="record-hero">
-        <div>
-          <h1>Record</h1>
-          <p className="muted">Set up your shot, then hit record.</p>
-        </div>
-      </div>
-
-      <div className="record-layout">
+         <div className="record-layout">
         <div className="record-preview-col">
           <div className={`stage-preview${recording ? " is-recording" : ""}`}>
             {recording && (
@@ -371,7 +380,7 @@ export function RecordPage() {
 
           <div className="record-block record-block-draw">
             <div className="record-block-head">
-              <span className="record-block-icon">✏️</span>
+              <span className="record-block-icon"><Pencil size={16} /></span>
               <div>
                 <div className="record-block-title">Draw on screen</div>
                 <p className="record-block-sub">Annotate live while you record</p>
@@ -384,7 +393,7 @@ export function RecordPage() {
         <div className="record-controls-col">
           <div className="record-block record-block-source">
             <div className="record-block-head">
-              <span className="record-block-icon">🖥️</span>
+              <span className="record-block-icon"><Monitor size={16} /></span>
               <div>
                 <div className="record-block-title">What to capture</div>
                 <p className="record-block-sub">Pick a screen or a single window</p>
@@ -401,15 +410,11 @@ export function RecordPage() {
                 ))}
               </select>
             </label>
-            <label className="field">
-              <span>Title</span>
-              <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} disabled={recording || busy} />
-            </label>
           </div>
 
           <fieldset className="record-block record-block-camera" disabled={recording || busy}>
             <div className="record-block-head">
-              <span className="record-block-icon">🎥</span>
+              <span className="record-block-icon"><Video size={16} /></span>
               <div>
                 <div className="record-block-title">Camera bubble</div>
                 <p className="record-block-sub">Your webcam, composited into the corner</p>
@@ -477,7 +482,7 @@ export function RecordPage() {
 
           <fieldset className="record-block record-block-audio" disabled={recording || busy}>
             <div className="record-block-head">
-              <span className="record-block-icon">🎙️</span>
+              <span className="record-block-icon"><Mic size={16} /></span>
               <div>
                 <div className="record-block-title">Microphone</div>
                 <p className="record-block-sub">Voice-over recorded alongside the screen</p>
@@ -521,12 +526,12 @@ export function RecordPage() {
 
           <div className="record-block record-block-cursor">
             <div className="record-block-head">
-              <span className="record-block-icon">🖱️</span>
+              <span className="record-block-icon"><MousePointer2 size={16} /></span>
               <div>
                 <div className="record-block-title">
                   Cursor{" "}
                   <span className="info-dot" title={CURSOR_HINT} aria-label={CURSOR_HINT} role="img">
-                    ⓘ
+                    <Info size={13} />
                   </span>
                 </div>
                 <p className="record-block-sub">How the pointer appears in the recording</p>
@@ -577,12 +582,16 @@ export function RecordPage() {
 
           <div className="record-block record-block-output">
             <div className="record-block-head">
-              <span className="record-block-icon">📁</span>
+              <span className="record-block-icon"><FolderOpen size={16} /></span>
               <div>
                 <div className="record-block-title">Save to</div>
                 <p className="record-block-sub">Where the finished MP4 lands</p>
               </div>
             </div>
+            <label className="field">
+              <span>Title</span>
+              <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} disabled={recording || busy} />
+            </label>
             <div className="save-location">
               <input
                 type="text"

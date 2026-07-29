@@ -64,6 +64,10 @@
 .record-block-sub { font-size: 11px; color: var(--muted); margin: 0; }
 .record-block .field { margin: 0; }
 .record-block .field + .field { margin-top: 10px; }
+/* .save-location isn't a .field (see RecordPage.tsx's Save-to block), so the sibling rule
+   above doesn't reach it — without this it had no top margin at all and sat flush against
+   the Title field right above it, reading as overlapping. */
+.record-block .field + .save-location { margin-top: 10px; }
 
 .record-block-source { --block-accent: #5b4bf5; --block-tint: rgba(91, 75, 245, .09); }
 .record-block-camera { --block-accent: #0284c7; --block-tint: rgba(14, 165, 233, .11); }

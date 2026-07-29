@@ -76,15 +76,19 @@ export async function summarizeWithOpenAiCompatible(
 }
 
 export async function chatWithOpenAiCompatible(
-  transcript: Transcript,
+  transcript: Transcript | null,
   history: ChatMessage[],
   question: string,
   config: LlmProviderConfig,
   apiKey: string | null
 ): Promise<ChatMessage> {
-  const system =
-    "Answer questions about the following transcript. Be concise and only use information " +
-    `from it.\n\n${transcriptToPrompt(transcript)}`;
+  // No attachment — the AI Assistant tab allows chatting on just a model, with nothing to
+  // ground answers in (see AiAssistantPage.tsx), so fall back to a plain assistant prompt
+  // instead of one that demands transcript content that doesn't exist.
+  const system = transcript
+    ? "Answer questions about the following transcript. Be concise and only use information " +
+      `from it.\n\n${transcriptToPrompt(transcript)}`
+    : "You are a helpful assistant. Be concise.";
   const content = await chatCompletion(config, apiKey, [
     { role: "system", content: system },
     ...history.map((m) => ({ role: m.role, content: m.content })),

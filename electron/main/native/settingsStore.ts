@@ -4,12 +4,10 @@ import path from "node:path";
 import type { LlmModelProfile, MicConfig, OverlayConfig } from "@shared/types/models";
 import type { AuthUser } from "@shared/types/auth";
 import type { WhisperModelSize } from "@shared/constants/whisperModels";
-import { DEFAULT_WHISPER_MODEL } from "@shared/constants/whisperModels";
 import { settingsFilePath } from "./paths";
 
 interface StoredSettings {
   llmProfiles?: LlmModelProfile[];
-  activeLlmProfileId?: string | null;
   authUser?: AuthUser;
   authExpiresAt?: string | null;
   recordOverlay?: OverlayConfig;
@@ -20,8 +18,10 @@ interface StoredSettings {
   meetingMicDeviceId?: string | null;
   meetingSystemAudioEnabled?: boolean;
   meetingSystemAudioSourceId?: string | null;
-  whisperModel?: WhisperModelSize;
+  whisperModel?: WhisperModelSize | null;
   cursorOverride?: boolean;
+  useDoculigentModel?: boolean;
+  transcriptionByokProfileId?: string | null;
 }
 
 function readStored(): StoredSettings {
@@ -43,21 +43,6 @@ export function listLlmProfiles(): LlmModelProfile[] {
   return profiles.map((p) => (p.capabilities ? p : { ...p, capabilities: ["chat"] }));
 }
 
-export function getActiveLlmProfileId(): string | null {
-  const profiles = listLlmProfiles();
-  const stored = readStored();
-  if (stored.activeLlmProfileId && profiles.some((p) => p.id === stored.activeLlmProfileId)) {
-    return stored.activeLlmProfileId;
-  }
-  return profiles[0]?.id ?? null;
-}
-
-export function getActiveLlmProfile(): LlmModelProfile | null {
-  const profiles = listLlmProfiles();
-  const activeId = getActiveLlmProfileId();
-  return profiles.find((p) => p.id === activeId) ?? profiles[0] ?? null;
-}
-
 export function getLlmProfile(id: string): LlmModelProfile | null {
   return listLlmProfiles().find((p) => p.id === id) ?? null;
 }
@@ -67,19 +52,17 @@ export function saveLlmProfile(profile: LlmModelProfile): void {
   const existing = stored.llmProfiles ?? [];
   const idx = existing.findIndex((p) => p.id === profile.id);
   const llmProfiles = idx >= 0 ? existing.map((p, i) => (i === idx ? profile : p)) : [...existing, profile];
-  const activeLlmProfileId = stored.activeLlmProfileId ?? profile.id;
-  writeStored({ ...stored, llmProfiles, activeLlmProfileId });
+  writeStored({ ...stored, llmProfiles });
 }
 
 export function deleteLlmProfile(id: string): void {
   const stored = readStored();
   const llmProfiles = (stored.llmProfiles ?? []).filter((p) => p.id !== id);
-  const activeLlmProfileId = stored.activeLlmProfileId === id ? (llmProfiles[0]?.id ?? null) : stored.activeLlmProfileId;
-  writeStored({ ...stored, llmProfiles, activeLlmProfileId });
-}
-
-export function setActiveLlmProfile(id: string): void {
-  writeStored({ ...readStored(), activeLlmProfileId: id });
+  // Mirrors whisperModel's clear-on-delete: leaving the Meeting tab pointed at a BYOK
+  // profile that no longer exists would silently look selected but do nothing.
+  const transcriptionByokProfileId =
+    stored.transcriptionByokProfileId === id ? null : stored.transcriptionByokProfileId;
+  writeStored({ ...stored, llmProfiles, transcriptionByokProfileId });
 }
 
 export function getAuthProfile(): { user: AuthUser; expiresAt: string | null } | null {
@@ -149,12 +132,40 @@ export function setMeetingSettings(
   });
 }
 
-export function getWhisperModel(): WhisperModelSize {
-  return readStored().whisperModel ?? DEFAULT_WHISPER_MODEL;
+// No fallback default here on purpose — an unset/cleared model means transcription isn't
+// set up yet (see modelCache.ts's downloaded check for why nothing gets auto-activated).
+export function getWhisperModel(): WhisperModelSize | null {
+  return readStored().whisperModel ?? null;
 }
 
-export function setWhisperModel(size: WhisperModelSize): void {
+export function setWhisperModel(size: WhisperModelSize | null): void {
   writeStored({ ...readStored(), whisperModel: size });
+}
+
+// Whether the Meeting tab's model picker should use the (not yet implemented) hosted
+// Doculigent Model instead of a local Whisper size — gated in the UI to signed-in,
+// non-free accounts (see SettingsPage.tsx's Doculigent Model block), stored separately
+// from whisperModel so the last-used local size is preserved underneath if the user
+// signs out or downgrades later.
+export function getUseDoculigentModel(): boolean {
+  return !!readStored().useDoculigentModel;
+}
+
+export function setUseDoculigentModel(use: boolean): void {
+  writeStored({ ...readStored(), useDoculigentModel: use });
+}
+
+// Which BYOK (custom, "transcribe"-capable) LLM profile the Meeting tab's model picker
+// has selected, if any — see SettingsPage.tsx's BYOK cards for where these profiles get
+// created. Stored by id (not the whole profile) so it stays correct if the profile is
+// later edited; MeetingPage.tsx re-validates the id still exists and is still
+// transcribe-capable before treating it as selected.
+export function getTranscriptionByokProfileId(): string | null {
+  return readStored().transcriptionByokProfileId ?? null;
+}
+
+export function setTranscriptionByokProfileId(id: string | null): void {
+  writeStored({ ...readStored(), transcriptionByokProfileId: id });
 }
 
 export function getCursorOverride(): boolean {

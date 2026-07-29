@@ -17,17 +17,11 @@ export const SettingsService = {
   listLlmProfiles(): Promise<LlmModelProfile[]> {
     return window.api.settings.listLlmProfiles();
   },
-  getActiveLlmProfileId(): Promise<string | null> {
-    return window.api.settings.getActiveLlmProfileId();
-  },
   saveLlmProfile(profile: LlmModelProfile, apiKey?: string | null): Promise<void> {
     return window.api.settings.saveLlmProfile(profile, apiKey);
   },
   deleteLlmProfile(id: string): Promise<void> {
     return window.api.settings.deleteLlmProfile(id);
-  },
-  setActiveLlmProfile(id: string): Promise<void> {
-    return window.api.settings.setActiveLlmProfile(id);
   },
   defaultProfileTemplate(kind: LlmProviderKind): Promise<LlmModelProfile> {
     return window.api.settings.defaultProfileTemplate(kind);
@@ -56,10 +50,10 @@ export const SettingsService = {
   ): Promise<void> {
     return window.api.settings.setMeetingSettings(language, micEnabled, micDeviceId, systemAudioEnabled, systemAudioSourceId);
   },
-  getWhisperModel(): Promise<WhisperModelSize> {
+  getWhisperModel(): Promise<WhisperModelSize | null> {
     return window.api.settings.getWhisperModel();
   },
-  setWhisperModel(size: WhisperModelSize): Promise<void> {
+  setWhisperModel(size: WhisperModelSize | null): Promise<void> {
     return window.api.settings.setWhisperModel(size);
   },
   getWhisperModelStatuses(): Promise<WhisperModelStatus[]> {
@@ -76,5 +70,17 @@ export const SettingsService = {
   },
   openWhisperModelsDir(): Promise<void> {
     return window.api.settings.openWhisperModelsDir();
+  },
+  getUseDoculigentModel(): Promise<boolean> {
+    return window.api.settings.getUseDoculigentModel();
+  },
+  setUseDoculigentModel(use: boolean): Promise<void> {
+    return window.api.settings.setUseDoculigentModel(use);
+  },
+  getTranscriptionByokProfileId(): Promise<string | null> {
+    return window.api.settings.getTranscriptionByokProfileId();
+  },
+  setTranscriptionByokProfileId(id: string | null): Promise<void> {
+    return window.api.settings.setTranscriptionByokProfileId(id);
   },
 };

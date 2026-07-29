@@ -13,9 +13,19 @@
 
 .chat { display: flex; flex-direction: column; }
 .chat-log { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
-.msg { padding: 8px 12px; border-radius: 10px; max-width: 90%; }
+/* Assistant replies always span the full message column — same width as the composer row
+   below (chat-page-composer/chat-input share the same centered max-width as
+   chat-page-log-inner, see AiPage.css), so a reply's text starts flush left at the same
+   x-position as the composer's settings icon and wraps within that same width, ending
+   where the Ask button sits on the right.
+   User messages cap at that same 100% width but don't stretch to fill it (align-self:
+   flex-end overrides the flex column's default stretch) — a short question shrinks to its
+   own size and hugs the right edge; a long one that actually needs the full width to wrap
+   grows out to that same 100% cap, at which point its left edge lands exactly where
+   assistant replies start, rather than staying pinned to a narrower fixed max-width. */
+.msg { padding: 8px 12px; border-radius: 10px; max-width: 100%; box-sizing: border-box; }
 .msg.user { align-self: flex-end; background: rgba(91, 75, 245,.18); }
-.msg.assistant { align-self: flex-start; background: var(--bg); }
+.msg.assistant { width: 100%; background: var(--bg); }
 .citation { font-size: 12px; margin: 6px 6px 0 0; padding: 2px 8px; }
 .chat-input { display: flex; gap: 8px; }
 .chat-input input { flex: 1; }

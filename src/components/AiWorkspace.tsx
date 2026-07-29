@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ChatMessage, Summary, Transcript, Video } from "@shared/types/models";
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
 import { AiService } from "../services/ai/AiService";
+import { ChatMessageContent } from "./ChatMessageContent";
 import "./AiWorkspace.css";
 
 function fmt(t: number): string {
@@ -143,7 +144,7 @@ export function AiWorkspace({ video, profileId }: AiWorkspaceProps) {
         <div className="chat-log">
           {history.map((m, i) => (
             <div key={i} className={`msg ${m.role}`}>
-              <div className="msg-content">{m.content}</div>
+              <ChatMessageContent content={m.content} />
               {m.citations?.map((c, j) => (
                 <button key={j} className="citation" title={c.quote}>
                   ↷ {fmt(c.timestamp)}

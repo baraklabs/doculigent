@@ -8,7 +8,7 @@
   background: rgba(255, 255, 255, .55); backdrop-filter: blur(10px);
   -webkit-app-region: drag;
 }
-.brand { font-weight: 700; font-size: 28px; letter-spacing: -.01em; color: var(--accent); display: flex; align-items: center; gap: 8px; }
+.brand { font-family: "Geist Sans", "Inter", sans-serif; font-weight: 700; font-size: 28px; letter-spacing: -.01em; color: var(--accent); display: flex; align-items: center; gap: 8px; }
 .brand-logo { width: 28px; height: 28px; object-fit: contain; }
 .stages, .topbar-right { -webkit-app-region: no-drag; }
 .topbar-right { display: flex; align-items: center; gap: 10px; }
@@ -49,7 +49,13 @@
 .win-btn:hover { background: rgba(0, 0, 0, .06); }
 .win-btn-close:hover { background: var(--danger); color: #fff; }
 
-.workspace { flex: 1; overflow: auto; padding: 8px 20px; display: flex; flex-direction: column; position: relative; }
+/* min-height: 0 is the fix, not decoration — without it, a flex item's default min-height
+   is "auto" (never shrink below content size), so a page with its own nested scrolling
+   (e.g. Meeting's transcript feed) can briefly force this whole area to its full natural
+   content height on first render before things settle, flashing this outer scrollbar for
+   an instant. With it, .workspace correctly stays clamped to the remaining viewport space
+   and the page's own inner container is what scrolls, as intended. */
+.workspace { flex: 1; min-height: 0; overflow: auto; padding: 8px 20px; display: flex; flex-direction: column; position: relative; }
 
 .footer {
   display: flex; align-items: center; justify-content: space-between;

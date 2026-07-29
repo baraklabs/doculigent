@@ -67,11 +67,28 @@
 .icon-btn-delete { color: var(--danger); }
 .icon-btn-save { color: #16a34a; }
 .icon-btn-cancel { color: var(--muted); }
+/* Set apart from the other row actions (open folder/transcribe/rename/share/delete) at
+   the far right of the row, rather than just tacked on after Delete. Briefly pulses once
+   on mount (a single iteration, not looping) to draw the eye to the new action, then
+   settles at rest — not a persistent/looping animation. */
+.icon-btn-ai { color: #6d28d9; margin-left: auto; animation: icon-btn-ai-pulse 600ms ease-in-out 1; }
+@keyframes icon-btn-ai-pulse {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.35); }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .icon-btn-ai { animation: none; }
+}
 .icon-btn.primary { color: var(--accent); }
 .icon-btn.danger:hover { color: var(--danger); }
 
+/* Fixed to the viewport rather than absolute — absolute (relative to .workspace, the
+   scrollable page container) anchored inset:0 to the top of the scrolled *content*, not
+   the visible viewport, so opening a modal after scrolling far down the library left it
+   rendered off-screen above the fold, needing a scroll up to even see it. */
 .modal-backdrop {
-  position: absolute; inset: 0; background: rgba(10, 10, 20, .28); z-index: 80;
+  position: fixed; inset: 0; background: rgba(10, 10, 20, .28); z-index: 80;
   display: flex; align-items: center; justify-content: center;
 }
 .modal {
@@ -83,8 +100,15 @@
 .modal-actions { justify-content: flex-end; margin-top: 16px; flex-wrap: nowrap; overflow-x: auto; }
 .modal-actions button { white-space: nowrap; }
 
+/* Same fixed-vs-absolute fix as .modal-backdrop above — otherwise the transcript drawer
+   opens off-screen after scrolling down the library. `top`/`bottom` stop short of the app's
+   custom titlebar and footer (see Layout.css's .topbar/.footer) rather than inset: 0 —
+   a full-height drawer put this drawer's own close (X) right on top of the app window's
+   own close button in the corner, so a double-click aimed at the drawer's X could land on
+   the real window-close button underneath instead. Confining the drawer to just the
+   workspace area keeps it clear of both bars entirely. */
 .transcript-drawer-backdrop {
-  position: absolute; inset: 0; background: rgba(10, 10, 20, .28); z-index: 70;
+  position: fixed; top: 40px; right: 0; bottom: 28px; left: 0; background: rgba(10, 10, 20, .28); z-index: 70;
   display: flex; justify-content: flex-end;
 }
 .transcript-drawer {

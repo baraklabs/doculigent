@@ -5,10 +5,10 @@ import type { WhisperModelSize } from "@shared/constants/whisperModels";
  *  @huggingface/transformers, no network calls after the one-time model download. No
  *  speaker diarization yet (separate model/pipeline, future work). */
 export const TranscriptionService = {
-  /** `modelSize` overrides the Settings > Transcription default for just this call — used
-   *  by the Library transcript drawer's re-transcribe controls. */
-  transcribe(filePath: string, language?: string, modelSize?: WhisperModelSize): Promise<Transcript> {
-    return window.api.transcription.transcribe(filePath, language, modelSize);
+  /** `modelSize`/`byokProfileId` override the Settings > Transcription default for just
+   *  this call — used by the Library transcript drawer's re-transcribe controls. */
+  transcribe(filePath: string, language?: string, modelSize?: WhisperModelSize, byokProfileId?: string): Promise<Transcript> {
+    return window.api.transcription.transcribe(filePath, language, modelSize, byokProfileId);
   },
   /** Transcribes one already-decoded 16kHz mono PCM chunk — used for the Meeting tab's
    *  live transcript (see decodeToPcm16k in AudioRecordingService.ts for the decode step). */

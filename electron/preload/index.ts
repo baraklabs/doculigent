@@ -95,10 +95,8 @@ const api: DoculigentApi = {
     pickSaveDir: () => ipcRenderer.invoke(Channels.settings.pickSaveDir),
     showItemInFolder: (filePath) => ipcRenderer.invoke(Channels.settings.showItemInFolder, filePath),
     listLlmProfiles: () => ipcRenderer.invoke(Channels.settings.listLlmProfiles),
-    getActiveLlmProfileId: () => ipcRenderer.invoke(Channels.settings.getActiveLlmProfileId),
     saveLlmProfile: (profile, apiKey) => ipcRenderer.invoke(Channels.settings.saveLlmProfile, profile, apiKey),
     deleteLlmProfile: (id) => ipcRenderer.invoke(Channels.settings.deleteLlmProfile, id),
-    setActiveLlmProfile: (id) => ipcRenderer.invoke(Channels.settings.setActiveLlmProfile, id),
     defaultProfileTemplate: (kind) => ipcRenderer.invoke(Channels.settings.defaultProfileTemplate, kind),
     getRecordSettings: () => ipcRenderer.invoke(Channels.settings.getRecordSettings),
     setRecordSettings: (overlay, targetId, mic) =>
@@ -120,6 +118,10 @@ const api: DoculigentApi = {
     deleteWhisperModel: (size) => ipcRenderer.invoke(Channels.settings.deleteWhisperModel, size),
     getWhisperModelsDir: () => ipcRenderer.invoke(Channels.settings.getWhisperModelsDir),
     openWhisperModelsDir: () => ipcRenderer.invoke(Channels.settings.openWhisperModelsDir),
+    getUseDoculigentModel: () => ipcRenderer.invoke(Channels.settings.getUseDoculigentModel),
+    setUseDoculigentModel: (use) => ipcRenderer.invoke(Channels.settings.setUseDoculigentModel, use),
+    getTranscriptionByokProfileId: () => ipcRenderer.invoke(Channels.settings.getTranscriptionByokProfileId),
+    setTranscriptionByokProfileId: (id) => ipcRenderer.invoke(Channels.settings.setTranscriptionByokProfileId, id),
   },
   ai: {
     summarize: (transcript, profileId) => ipcRenderer.invoke(Channels.ai.summarize, transcript, profileId),
@@ -128,8 +130,8 @@ const api: DoculigentApi = {
     testConnection: (profile, apiKey) => ipcRenderer.invoke(Channels.ai.testConnection, profile, apiKey),
   },
   transcription: {
-    transcribe: (filePath, language, modelSize) =>
-      ipcRenderer.invoke(Channels.transcription.transcribe, filePath, language, modelSize),
+    transcribe: (filePath, language, modelSize, byokProfileId) =>
+      ipcRenderer.invoke(Channels.transcription.transcribe, filePath, language, modelSize, byokProfileId),
     transcribePcm: (samples, language) => ipcRenderer.invoke(Channels.transcription.transcribePcm, samples, language),
     cancel: () => ipcRenderer.invoke(Channels.transcription.cancel),
   },

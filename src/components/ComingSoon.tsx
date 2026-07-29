@@ -1,7 +1,8 @@
+import type { ReactNode } from "react";
 import "./ComingSoon.css";
 
 interface ComingSoonProps {
-  icon: string;
+  icon: ReactNode;
   title: string;
   subtitle?: string;
 }

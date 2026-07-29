@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState, type CSSProperties, type SyntheticEvent } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Bot, Clapperboard, Mic, FolderKanban, Link2, FileText, Check, X, FolderOpen, Pencil, Trash2 } from "lucide-react";
 import type { TranscriptSegment, Video } from "@shared/types/models";
 import { mediaUrl } from "@shared/constants/media";
 import { DEFAULT_TRANSCRIPTION_LANGUAGE, TRANSCRIPTION_LANGUAGES } from "@shared/constants/languages";
-import { DEFAULT_WHISPER_MODEL, WHISPER_MODELS } from "@shared/constants/whisperModels";
+import { WHISPER_MODELS } from "@shared/constants/whisperModels";
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
 import { useDeleteVideo, useDeleteVideos, useRenameVideo, useSetVideoTranscript, useVideos } from "../hooks/useVideos";
+import { useLlmProfiles } from "../hooks/useLlmProfiles";
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
 import { SettingsService } from "../services/settings/SettingsService";
 import { useAuthStore } from "../store/authStore";
+import { useToast } from "../hooks/useToast";
+import { friendlyErrorMessage } from "../utils/errors";
 import { ComingSoon } from "../components/ComingSoon";
 import "./LibraryPage.css";
 
@@ -28,11 +32,11 @@ function showThumbnailFrame(e: SyntheticEvent<HTMLVideoElement>): void {
 }
 
 const SECTIONS = [
-  { id: "videos", label: "Videos", icon: "🎬", accent: "#5b4bf5", tint: "rgba(91, 75, 245, .09)" },
-  { id: "meeting", label: "Meeting", icon: "🎙️", accent: "#0284c7", tint: "rgba(14, 165, 233, .11)" },
-  { id: "projects", label: "Projects", icon: "🗂️", accent: "#0f766e", tint: "rgba(15, 118, 110, .1)" },
-  { id: "shared", label: "Shared", icon: "🔗", accent: "#db2777", tint: "rgba(236, 72, 153, .1)" },
-  { id: "transcribed", label: "Transcribed", icon: "📄", accent: "#b45309", tint: "rgba(245, 158, 11, .13)" },
+  { id: "videos", label: "Videos", icon: <Clapperboard size={16} />, accent: "#5b4bf5", tint: "rgba(91, 75, 245, .09)" },
+  { id: "meeting", label: "Meeting", icon: <Mic size={16} />, accent: "#0284c7", tint: "rgba(14, 165, 233, .11)" },
+  { id: "projects", label: "Projects", icon: <FolderKanban size={16} />, accent: "#0f766e", tint: "rgba(15, 118, 110, .1)" },
+  { id: "shared", label: "Shared", icon: <Link2 size={16} />, accent: "#db2777", tint: "rgba(236, 72, 153, .1)" },
+  { id: "transcribed", label: "Transcribed", icon: <FileText size={16} />, accent: "#b45309", tint: "rgba(245, 158, 11, .13)" },
 ] as const;
 type SectionId = (typeof SECTIONS)[number]["id"];
 
@@ -46,6 +50,7 @@ type SharedTabId = (typeof SHARED_TABS)[number]["id"];
 const SECTION_IDS = SECTIONS.map((s) => s.id) as readonly string[];
 
 export function LibraryPage() {
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [section, setSection] = useState<SectionId>(() => {
     const requested = searchParams.get("section");
@@ -56,6 +61,7 @@ export function LibraryPage() {
   const [titleDraft, setTitleDraft] = useState("");
   const [transcribingId, setTranscribingId] = useState<string | null>(null);
   const [errorFor, setErrorFor] = useState<{ id: string; message: string } | null>(null);
+  const toast = useToast();
   const stoppedRef = useRef(false);
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [sharedTab, setSharedTab] = useState<SharedTabId>("mine");
@@ -98,13 +104,44 @@ export function LibraryPage() {
   }, [viewingId]);
 
   const [retranscribeLanguage, setRetranscribeLanguage] = useState(DEFAULT_TRANSCRIPTION_LANGUAGE);
-  const [retranscribeModel, setRetranscribeModel] = useState<WhisperModelSize>(DEFAULT_WHISPER_MODEL);
+  const [retranscribeModel, setRetranscribeModel] = useState<WhisperModelSize | null>(null);
+  // Which BYOK (transcribe-capable) model, configured in Settings, this re-transcribe
+  // should use instead of a local Whisper size — null means "use the local size below"
+  // rather than one of the profiles from llmProfiles. Not persisted anywhere (unlike the
+  // Meeting tab's global BYOK selection); it only applies to the next transcribe click.
+  const [retranscribeByokId, setRetranscribeByokId] = useState<string | null>(null);
   const [modelStatuses, setModelStatuses] = useState<WhisperModelStatus[] | null>(null);
   useEffect(() => {
     SettingsService.getWhisperModel().then(setRetranscribeModel).catch(() => {});
     SettingsService.getWhisperModelStatuses().then(setModelStatuses).catch(() => {});
   }, []);
-  const downloadedModels = WHISPER_MODELS.filter((m) => modelStatuses?.find((s) => s.size === m.size)?.downloaded);
+  // Excludes anything still mid-download: the model cache writes its files incrementally,
+  // so `downloaded` (any bytes on disk) can go true before a download actually finishes
+  // (see whisper.ts's requireDownloadedModel for the same check on the main-process side).
+  const downloadedModels = WHISPER_MODELS.filter((m) => {
+    const status = modelStatuses?.find((s) => s.size === m.size);
+    return status?.downloaded && !status.downloading;
+  });
+  // Falls back to whichever downloaded size sorts first when no model is active in
+  // Settings — the picker below only ever lists downloaded sizes, so this is never used
+  // to silently trigger a download.
+  const effectiveRetranscribeModel = retranscribeModel ?? downloadedModels[0]?.size;
+
+  // Custom/BYOK profiles tagged "transcribe" in Settings > Models — offered alongside the
+  // downloaded local sizes so re-transcribing isn't limited to on-device Whisper.
+  const { data: llmProfiles = [] } = useLlmProfiles();
+  const byokProfiles = llmProfiles.filter((p) => p.capabilities.includes("transcribe"));
+  const usingByok = retranscribeByokId !== null && byokProfiles.some((p) => p.id === retranscribeByokId);
+  const hasAnyModel = downloadedModels.length > 0 || byokProfiles.length > 0;
+
+  function handleRetranscribeModelSelectChange(value: string) {
+    if (value.startsWith("byok:")) {
+      setRetranscribeByokId(value.slice("byok:".length));
+    } else {
+      setRetranscribeByokId(null);
+      setRetranscribeModel(value as WhisperModelSize);
+    }
+  }
 
 
   const [editingSegments, setEditingSegments] = useState<TranscriptSegment[] | null>(null);
@@ -137,16 +174,19 @@ export function LibraryPage() {
     }
   }
 
-  async function runTranscribe(v: Video, language?: string, modelSize?: WhisperModelSize) {
+  async function runTranscribe(v: Video, language?: string, modelSize?: WhisperModelSize, byokProfileId?: string) {
     setTranscribingId(v.id);
     setErrorFor(null);
     stoppedRef.current = false;
     try {
-      const transcript = await TranscriptionService.transcribe(v.filePath, language, modelSize);
+      const transcript = await TranscriptionService.transcribe(v.filePath, language, modelSize, byokProfileId);
       await setVideoTranscript.mutateAsync({ id: v.id, transcript });
     } catch (e) {
-
-      if (!stoppedRef.current) setErrorFor({ id: v.id, message: String(e) });
+      if (!stoppedRef.current) {
+        const message = friendlyErrorMessage(e);
+        setErrorFor({ id: v.id, message });
+        toast.error(message, { title: "Transcription failed" });
+      }
     } finally {
       setTranscribingId(null);
     }
@@ -159,11 +199,17 @@ export function LibraryPage() {
   async function handleTranscribeClick(v: Video) {
     setViewingId(v.id);
     if (v.transcript) return;
+    // No model set up at all yet — opening the drawer is enough; its model picker already
+    // shows the "no models configured" hint + Settings link and disables Transcribe, so
+    // don't also fire a transcribe attempt that can only fail (see whisper.ts's
+    // requireDownloadedModel — it refuses rather than silently downloading one).
+    if (!hasAnyModel) return;
     await runTranscribe(v);
   }
 
   function handleRetranscribeClick(v: Video) {
-    return runTranscribe(v, retranscribeLanguage, retranscribeModel);
+    if (usingByok) return runTranscribe(v, retranscribeLanguage, undefined, retranscribeByokId!);
+    return runTranscribe(v, retranscribeLanguage, effectiveRetranscribeModel);
   }
 
   function startRename(v: Video) {
@@ -249,7 +295,7 @@ export function LibraryPage() {
                 {session ? (
                   <p className="muted">
                     {sharedTab === "mine"
-                      ? "Nothing shared yet. Sharing (the 🔗 icon on a recording) is still being built for doculigent.com accounts."
+                      ? "Nothing shared yet. Sharing (the share icon on a recording) is still being built for doculigent.com accounts."
                       : "Your team's shared recordings will show up here once doculigent.com sharing is live."}
                   </p>
                 ) : (
@@ -261,9 +307,8 @@ export function LibraryPage() {
             </>
           ) : section === "projects" ? (
             <ComingSoon
-              icon="🗂️"
+              icon={<FolderKanban size={36} />}
               title="Projects is coming soon"
-              subtitle="Saved Edit-tab sessions will live here once the new multi-clip editor ships."
             />
           ) : (
             <>
@@ -312,7 +357,9 @@ export function LibraryPage() {
                   <div key={v.id} className="video-card">
                     <div className="thumb">
                       {v.source === "meeting" ? (
-                        <div className="thumb-audio">🎙️</div>
+                        <div className="thumb-audio">
+                          <Mic size={32} />
+                        </div>
                       ) : (
                         <video
                           src={mediaUrl(v.filePath)}
@@ -351,7 +398,7 @@ export function LibraryPage() {
                             className="icon-btn icon-btn-save"
                             onClick={() => saveRename(v)}
                           >
-                            ✓
+                            <Check size={20} />
                           </button>
                           <button
                             type="button"
@@ -359,7 +406,7 @@ export function LibraryPage() {
                             className="icon-btn icon-btn-cancel"
                             onClick={() => setRenamingId(null)}
                           >
-                            ✕
+                            <X size={20} />
                           </button>
                         </>
                       ) : (
@@ -370,7 +417,7 @@ export function LibraryPage() {
                             className="icon-btn icon-btn-folder"
                             onClick={() => showInFolder(v)}
                           >
-                            📁
+                            <FolderOpen size={20} />
                           </button>
                           <button
                             type="button"
@@ -379,7 +426,7 @@ export function LibraryPage() {
                             disabled={transcribingId === v.id}
                             onClick={() => handleTranscribeClick(v)}
                           >
-                            {transcribingId === v.id ? "…" : "📄"}
+                            {transcribingId === v.id ? "…" : <FileText size={20} />}
                           </button>
                           <button
                             type="button"
@@ -387,12 +434,12 @@ export function LibraryPage() {
                             className="icon-btn icon-btn-rename"
                             onClick={() => startRename(v)}
                           >
-                            ✎︎
+                            <Pencil size={20} />
                           </button>
                           {/* Sharing requires a doculigent.com account and is a Phase 2
                               feature (see prompt.md's roadmap) — intentionally a no-op. */}
                           <button type="button" title="Share" className="icon-btn icon-btn-share" onClick={() => {}}>
-                            🔗
+                            <Link2 size={20} />
                           </button>
                           <button
                             type="button"
@@ -400,13 +447,24 @@ export function LibraryPage() {
                             className="icon-btn icon-btn-delete"
                             onClick={() => handleDelete(v)}
                           >
-                            ✕
+                            <Trash2 size={20} />
+                          </button>
+                          {/* Pushed to the far right (see .icon-btn-ai's margin-left:auto)
+                              rather than sitting in the same cluster as the other actions —
+                              jumps to the AI Assistant tab with this recording already
+                              attached (see AiAssistantPage.tsx's location.state handling). */}
+                          <button
+                            type="button"
+                            title="Ask AI about this recording"
+                            className="icon-btn icon-btn-ai"
+                            onClick={() => navigate("/ai", { state: { videoId: v.id } })}
+                          >
+                            <Bot size={20} />
                           </button>
                         </>
                       )}
                     </div>
 
-                    {errorFor?.id === v.id && <p className="error video-card-error">{errorFor.message}</p>}
                     {folderError?.id === v.id && <p className="error video-card-error">{folderError.message}</p>}
                   </div>
                 ))}
@@ -471,7 +529,7 @@ export function LibraryPage() {
             <div className="transcript-drawer-header">
               <h2>{viewingVideo.title}</h2>
               <button type="button" className="icon-btn" title="Close (Esc)" onClick={() => setViewingId(null)}>
-                ✕
+                <X size={20} />
               </button>
             </div>
 
@@ -492,21 +550,27 @@ export function LibraryPage() {
 
                 <label className="field">
                   <span>Model</span>
-                  {downloadedModels.length > 0 ? (
+                  {hasAnyModel ? (
                     <select
-                      value={retranscribeModel}
-                      onChange={(e) => setRetranscribeModel(e.target.value as WhisperModelSize)}
+                      value={usingByok ? `byok:${retranscribeByokId}` : (effectiveRetranscribeModel ?? "")}
+                      onChange={(e) => handleRetranscribeModelSelectChange(e.target.value)}
                     >
                       {downloadedModels.map((m) => (
                         <option key={m.size} value={m.size}>
                           {m.label}
                         </option>
                       ))}
+                      {byokProfiles.map((p) => (
+                        <option key={p.id} value={`byok:${p.id}`}>
+                          {p.name || "BYOK"}
+                        </option>
+                      ))}
                     </select>
                   ) : (
                     modelStatuses && (
                       <span className="muted field-hint-inline">
-                        No models downloaded — get one in <Link to="/settings">Settings &gt; Transcription</Link>.
+                        No models configured — set one up in{" "}
+                        <Link to="/settings">Settings &gt; Models</Link>.
                       </span>
                     )
                   )}
@@ -522,7 +586,7 @@ export function LibraryPage() {
                 type="button"
                 className="primary"
                 onClick={() => handleRetranscribeClick(viewingVideo)}
-                disabled={transcribingId === viewingVideo.id || downloadedModels.length === 0}
+                disabled={transcribingId === viewingVideo.id || !hasAnyModel}
               >
                 {transcribingId === viewingVideo.id
                   ? "Transcribing…"

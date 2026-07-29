@@ -88,11 +88,35 @@ class AudioRecordingService {
   private segmentRecorder: MediaRecorder | null = null;
   private segmentChunks: Blob[] = [];
   private segmentTimer: number | null = null;
-  private onSegment: ((samples: Float32Array) => void) | null = null;
+  // `offsetSecs`: how far into the meeting (recorded time, pauses excluded) this segment's
+  // audio starts — see elapsedRecordedSecs. Whisper only ever sees one rolling ~4s clip at
+  // a time and returns timestamps relative to *that clip*, so without adding this back on,
+  // every segment's chunks would report starting around 0:00.
+  private onSegment: ((samples: Float32Array, offsetSecs: number) => void) | null = null;
   private startedAt = 0;
   private recording = false;
+  private paused = false;
+  private pausedAccumMs = 0;
+  private pauseStartedAt: number | null = null;
+  // Tracks the latest segment's decode+onSegment callback so stop() (and pause(), for the
+  // partial segment it flushes) can wait for it to actually land before tearing down
+  // onSegment/the streams — without this, whatever was captured since the last completed
+  // segment boundary gets silently dropped (see stop()'s comment below).
+  private pendingFlush: Promise<void> = Promise.resolve();
 
-  async start(onSegment: (samples: Float32Array) => void, sources: MeetingAudioSources): Promise<AnalyserNode> {
+  /** Wall-clock time since start(), minus time spent paused — i.e. how much of the meeting
+   *  has actually been recorded so far, which is what each segment's reported timestamps
+   *  should be relative to (matches the master recording's own timeline, since paused
+   *  windows are excluded from that too). */
+  private elapsedRecordedSecs(): number {
+    const pausedMs = this.pausedAccumMs + (this.pauseStartedAt !== null ? performance.now() - this.pauseStartedAt : 0);
+    return (performance.now() - this.startedAt - pausedMs) / 1000;
+  }
+
+  async start(
+    onSegment: (samples: Float32Array, offsetSecs: number) => void,
+    sources: MeetingAudioSources
+  ): Promise<AnalyserNode> {
     if (!sources.mic.enabled && !sources.systemAudio.enabled) {
       throw new Error("Enable at least one audio source (microphone or system sound).");
     }
@@ -100,6 +124,9 @@ class AudioRecordingService {
     this.onSegment = onSegment;
     this.startedAt = performance.now();
     this.recording = true;
+    this.paused = false;
+    this.pausedAccumMs = 0;
+    this.pauseStartedAt = null;
 
     this.audioCtx = new AudioContext();
     this.analyser = this.audioCtx.createAnalyser();
@@ -144,6 +171,7 @@ class AudioRecordingService {
   private startNextSegment(stream: MediaStream): void {
     if (!this.recording) return;
     this.segmentChunks = [];
+    const segmentStartOffsetSecs = this.elapsedRecordedSecs();
     const recorder = new MediaRecorder(stream, { mimeType: pickAudioMimeType() });
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) this.segmentChunks.push(e.data);
@@ -153,18 +181,62 @@ class AudioRecordingService {
       if (blob.size > 0) {
         // Decoding is async but chaining the next segment below isn't gated on it, so
         // recording keeps rolling gap-free while this segment's decode+transcribe happens
-        // in the background.
-        decodeToPcm16k(blob)
-          .then((samples) => this.onSegment?.(samples))
+        // in the background. stop()/pause() await this specific promise, though, so the
+        // final (possibly partial) segment of a session still reaches the transcript
+        // before things get torn down.
+        this.pendingFlush = decodeToPcm16k(blob)
+          .then((samples) => {
+            this.onSegment?.(samples, segmentStartOffsetSecs);
+          })
           .catch(() => {}); // e.g. a too-short/silent segment the decoder can't parse — drop it
+      } else {
+        this.pendingFlush = Promise.resolve();
       }
-      // Chain the next segment only if we're still recording (stop() clears the flag
-      // before calling segmentRecorder.stop(), which is what lands us here at the end).
-      if (this.recording) this.startNextSegment(stream);
+      // Chain the next segment only if we're still actively recording — not paused (pause()
+      // stops this recorder deliberately to flush the partial segment, and starts a fresh
+      // one itself on resume()) and not fully stopped (stop() clears `recording` before
+      // calling segmentRecorder.stop(), which is what lands us here at the end).
+      if (this.recording && !this.paused) this.startNextSegment(stream);
     };
     recorder.start();
     this.segmentRecorder = recorder;
     this.segmentTimer = window.setTimeout(() => this.segmentRecorder?.stop(), SEGMENT_MS);
+  }
+
+  /** Pauses the master recorder — MediaRecorder excludes the paused window from the
+   *  eventual output entirely (not silence, just a seamless cut), so resuming picks the
+   *  master recording back up as if the gap never happened. The segment recorder is
+   *  stopped outright rather than paused: pausing it would leave whatever it had captured
+   *  so far stuck in a buffer that never reaches onstop (and therefore never gets
+   *  transcribed) until the recorder is eventually stopped — stopping it now instead
+   *  flushes that partial segment through the normal decode+transcribe path immediately,
+   *  same as any other segment boundary. The `!this.paused` check in startNextSegment's
+   *  onstop keeps this from immediately chaining a new segment while paused. Mic/system-
+   *  audio streams stay connected throughout — same as RecordPage's pause, only the write
+   *  to the output file (and new segments) stops, not the capture devices themselves. */
+  pause(): void {
+    if (!this.recording || this.paused) return;
+    this.paused = true;
+    this.pauseStartedAt = performance.now();
+    if (this.segmentTimer !== null) {
+      window.clearTimeout(this.segmentTimer);
+      this.segmentTimer = null;
+    }
+    this.masterRecorder?.pause();
+    if (this.segmentRecorder?.state === "recording") this.segmentRecorder.stop();
+  }
+
+  /** Resumes the master recorder and starts a brand-new segment (rather than resuming a
+   *  paused one, since pause() above stops it outright) for a fresh SEGMENT_MS window. */
+  resume(): void {
+    if (!this.recording || !this.paused) return;
+    this.paused = false;
+    if (this.pauseStartedAt !== null) {
+      this.pausedAccumMs += performance.now() - this.pauseStartedAt;
+      this.pauseStartedAt = null;
+    }
+    this.masterRecorder?.resume();
+    if (this.mixDestination) this.startNextSegment(this.mixDestination.stream);
   }
 
   async stop(): Promise<{ blob: Blob; durationSecs: number }> {
@@ -172,7 +244,29 @@ class AudioRecordingService {
     if (this.segmentTimer !== null) window.clearTimeout(this.segmentTimer);
 
     this.recording = false; // signals startNextSegment (via segmentRecorder.onstop) to stop chaining
-    this.segmentRecorder?.stop();
+    this.paused = false;
+
+    // Whatever's been captured since the last completed segment boundary is still sitting
+    // in the segment recorder — stop() used to fire-and-forget this, which raced
+    // onSegment being nulled out below against decodeToPcm16k's async decode (the decode
+    // reliably lost that race, so the last few seconds of every meeting's live transcript
+    // silently never showed up even though the master recording had them fine). Waiting
+    // for onstop to actually fire, then for the flush it kicks off, closes that gap.
+    if (this.segmentRecorder && this.segmentRecorder.state !== "inactive") {
+      const recorder = this.segmentRecorder;
+      await new Promise<void>((resolve) => {
+        const priorOnStop = recorder.onstop;
+        recorder.onstop = (ev) => {
+          if (typeof priorOnStop === "function") priorOnStop.call(recorder, ev);
+          resolve();
+        };
+        recorder.stop();
+      });
+    }
+    // Also needed on its own (not just after the block above) for the pause-then-stop
+    // case: pause() already stopped the segment recorder and kicked off its flush, which
+    // may still be in flight by the time stop() runs.
+    await this.pendingFlush;
 
     const blob = await new Promise<Blob>((resolve) => {
       if (!this.masterRecorder) {
