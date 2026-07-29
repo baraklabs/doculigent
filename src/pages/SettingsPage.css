@@ -8,40 +8,103 @@
 .settings-nav-item.active { color: var(--text); background: rgba(91, 75, 245,.12); font-weight: 600; }
 .settings-content { flex: 1; min-width: 0; }
 
-/* LLM provider profiles */
-.model-list { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+/* Quick filter chips above the model profiles list, with "+ Add model" on the right */
+.model-filter-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0; flex-wrap: wrap; }
+.model-filter { display: flex; gap: 6px; flex-wrap: wrap; }
+.filter-chip {
+  padding: 5px 12px; border-radius: 999px; color: var(--muted); font-size: 12px; cursor: pointer;
+  background: none; border: 1px solid var(--border); font: inherit;
+}
+.filter-chip:hover { color: var(--text); border-color: var(--accent); }
+.filter-chip.active { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+
+/* LLM provider profiles — kept deliberately slim (tight padding/line-height) since the
+   list can hold a lot of entries once Whisper sizes and Doculigent are merged in. */
+.model-list { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
 .model-row {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; background: var(--bg);
 }
-.model-row-info h3 { margin: 0 0 2px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
-.model-row-info .sub { font-size: 12px; }
+.model-row-info h3 { margin: 0; font-size: 13px; line-height: 1.3; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.model-row-info .sub { font-size: 11px; margin: 1px 0 0; line-height: 1.3; }
 .model-form { display: flex; flex-direction: column; gap: 4px; max-width: 480px; margin-top: 8px; }
 .capability-checkboxes { display: flex; gap: 16px; }
 .capability-checkboxes label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 400; }
 
-/* Whisper model sizes */
+/* Locality (Local/Cloud) and capability (AI summary/Transcription/Multimodel) tags shown
+   inline with each row's name — color-coded so the two facets are readable at a glance
+   without adding a line of text (which would fight the slimmer row height above). */
+.badge {
+  font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px; line-height: 1.6;
+  white-space: nowrap;
+}
+.locality-badge.local { color: #15803d; background: rgba(22, 163, 74, .12); }
+.locality-badge.cloud { color: #1d4ed8; background: rgba(37, 99, 235, .12); }
+.cap-badge.cap-chat { color: #6d28d9; background: rgba(124, 58, 237, .12); }
+.cap-badge.cap-transcribe { color: #b45309; background: rgba(245, 158, 11, .12); }
+.cap-badge.cap-both { color: #be185d; background: rgba(219, 39, 119, .12); }
+
+/* Downloaded Whisper rows lose the click-to-preview card (see the "Available to
+   download" grid below) once they move into the list, so the same description/hardware
+   recommendation is surfaced as a native title tooltip on a small info glyph instead. */
+.info-icon { color: var(--muted); font-size: 12px; cursor: help; line-height: 1; }
+.info-icon:hover { color: var(--text); }
+
+/* Doculigent's own row — called out from the plain list rows around it (green brand
+   accent, pinned to the 3rd slot in SettingsPage.tsx) so it reads as a promoted option
+   rather than just another saved model. */
+.model-row.doculigent-row {
+  border-color: #15803d; background: linear-gradient(135deg, rgba(21, 128, 61, .10), rgba(21, 128, 61, .03));
+  box-shadow: 0 0 0 1px rgba(21, 128, 61, .2);
+}
+.model-row.doculigent-row .model-row-info h3 { color: #15803d; }
+/* Extra pop on top of the ordinary .primary button — a glow ring plus a slight lift, so
+   the Sign in/Upgrade CTA reads as more urgent than a routine Edit/Save action. */
+.cta-highlight {
+  box-shadow: 0 0 0 3px rgba(91, 75, 245, .22), 0 2px 6px rgba(91, 75, 245, .25);
+  font-weight: 700;
+}
+.cta-highlight:hover { box-shadow: 0 0 0 3px rgba(91, 75, 245, .3), 0 2px 8px rgba(91, 75, 245, .3); }
+
+/* Separates "ready to use" rows (LLM profiles, downloaded Whisper sizes, Doculigent) from
+   "not downloaded yet" Whisper sizes below it — a plain label rather than a full rule so it
+   doesn't read as a section boundary as heavy as the field labels above it. */
+.model-size-divider {
+  font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em;
+  margin: 12px 0 6px; padding-top: 10px; border-top: 1px solid var(--border);
+}
+
+/* Not-yet-downloaded Whisper sizes stay boxed cards (unlike the list rows above) — a
+   deliberately different shape so "things I could still get" reads as a distinct picker
+   rather than more rows in the same list. */
 .model-size-options { display: flex; flex-direction: row; gap: 8px; flex-wrap: wrap; }
 .model-size-card {
   display: flex; flex-direction: column; align-items: stretch; gap: 4px;
   border: 1px solid var(--border); border-radius: 10px; padding: 4px; background: var(--bg);
   transition: border-color 150ms ease, background 150ms ease;
+  /* Fixed rather than content-sized — otherwise the whole row reflows every time a
+     card's status text changes length (e.g. "~1560MB" vs "Downloading…"), most
+     noticeably while a download is actually in progress. */
+  width: 190px; flex-shrink: 0;
 }
-.model-size-card.active { border-color: var(--accent); background: rgba(91, 75, 245, .1); }
+/* Clicking a card (its label area) previews that size's description/hardware
+   recommendation below the grid — see SettingsPage.tsx's previewedSize. */
+.model-size-card.previewed { border-color: var(--accent); background: rgba(91, 75, 245, .1); }
 .model-size-card-main {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; width: 100%;
   background: none; border: none; color: var(--muted); cursor: pointer; padding: 6px 12px; border-radius: 7px;
   transition: color 150ms ease;
 }
 .model-size-card-main:hover { color: var(--text); }
-.model-size-card.active .model-size-card-main { color: var(--text); }
+.model-size-card.previewed .model-size-card-main { color: var(--text); }
 .model-size-card-label { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
-.model-size-card-status { font-size: 11px; opacity: .8; }
+.model-size-card-status {
+  font-size: 11px; opacity: .8; max-width: 100%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .model-size-card-action {
   font-size: 11px; background: none; border: 1px solid var(--border); color: var(--muted);
   padding: 3px 8px; border-radius: 6px; cursor: pointer; align-self: stretch;
 }
 .model-size-card-action:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
 .model-size-card-action:disabled { opacity: .5; cursor: not-allowed; }
-.model-size-card-action.remove { background: none; color: var(--danger); border-color: var(--danger); }
-.model-size-card-action.remove:hover:not(:disabled) { background: var(--danger); color: #fff; }

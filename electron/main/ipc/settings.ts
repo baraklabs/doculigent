@@ -8,16 +8,18 @@ import { defaultLlmConfig } from "@shared/constants/llmDefaults";
 import { getSaveDir, setSaveDir } from "../native/paths";
 import {
   listLlmProfiles,
-  getActiveLlmProfileId,
   saveLlmProfile,
   deleteLlmProfile,
-  setActiveLlmProfile,
   getRecordSettings,
   setRecordSettings,
   getMeetingSettings,
   setMeetingSettings,
   getWhisperModel,
   setWhisperModel,
+  getUseDoculigentModel,
+  setUseDoculigentModel,
+  getTranscriptionByokProfileId,
+  setTranscriptionByokProfileId,
 } from "../native/settingsStore";
 import { setLlmApiKey, deleteLlmApiKey } from "../native/keyring";
 import { preloadWhisperModel } from "../transcription/whisper";
@@ -45,11 +47,6 @@ export function registerSettingsIpc(): void {
   ipcMain.handle(Channels.settings.listLlmProfiles, async (): Promise<LlmModelProfile[]> => listLlmProfiles());
 
   ipcMain.handle(
-    Channels.settings.getActiveLlmProfileId,
-    async (): Promise<string | null> => getActiveLlmProfileId()
-  );
-
-  ipcMain.handle(
     Channels.settings.saveLlmProfile,
     async (_event, profile: LlmModelProfile, apiKey?: string | null): Promise<void> => {
       if (apiKey) await setLlmApiKey(profile.id, apiKey);
@@ -60,10 +57,6 @@ export function registerSettingsIpc(): void {
   ipcMain.handle(Channels.settings.deleteLlmProfile, async (_event, id: string): Promise<void> => {
     await deleteLlmApiKey(id);
     deleteLlmProfile(id);
-  });
-
-  ipcMain.handle(Channels.settings.setActiveLlmProfile, async (_event, id: string): Promise<void> => {
-    setActiveLlmProfile(id);
   });
 
   ipcMain.handle(
@@ -113,9 +106,9 @@ export function registerSettingsIpc(): void {
     }
   );
 
-  ipcMain.handle(Channels.settings.getWhisperModel, async (): Promise<WhisperModelSize> => getWhisperModel());
+  ipcMain.handle(Channels.settings.getWhisperModel, async (): Promise<WhisperModelSize | null> => getWhisperModel());
 
-  ipcMain.handle(Channels.settings.setWhisperModel, async (_event, size: WhisperModelSize): Promise<void> => {
+  ipcMain.handle(Channels.settings.setWhisperModel, async (_event, size: WhisperModelSize | null): Promise<void> => {
     setWhisperModel(size);
   });
 
@@ -130,6 +123,10 @@ export function registerSettingsIpc(): void {
 
   ipcMain.handle(Channels.settings.deleteWhisperModel, async (_event, size: WhisperModelSize): Promise<void> => {
     deleteWhisperModelCache(size);
+    // Clearing the files out from under the active model would otherwise leave it
+    // "active" but silently untranscribable until the next implicit-download attempt —
+    // dropping it back to no-active-model instead surfaces that in Settings/Meeting.
+    if (getWhisperModel() === size) setWhisperModel(null);
   });
 
   ipcMain.handle(Channels.settings.getWhisperModelsDir, async (): Promise<string> => whisperCacheDir());
@@ -138,5 +135,20 @@ export function registerSettingsIpc(): void {
     const dir = whisperCacheDir();
     fs.mkdirSync(dir, { recursive: true });
     await shell.openPath(dir);
+  });
+
+  ipcMain.handle(Channels.settings.getUseDoculigentModel, async (): Promise<boolean> => getUseDoculigentModel());
+
+  ipcMain.handle(Channels.settings.setUseDoculigentModel, async (_event, use: boolean): Promise<void> => {
+    setUseDoculigentModel(use);
+  });
+
+  ipcMain.handle(
+    Channels.settings.getTranscriptionByokProfileId,
+    async (): Promise<string | null> => getTranscriptionByokProfileId()
+  );
+
+  ipcMain.handle(Channels.settings.setTranscriptionByokProfileId, async (_event, id: string | null): Promise<void> => {
+    setTranscriptionByokProfileId(id);
   });
 }

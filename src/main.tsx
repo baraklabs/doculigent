@@ -7,6 +7,8 @@ import "@fontsource/inter/400.css";
 import "@fontsource/inter/500.css";
 import "@fontsource/inter/600.css";
 import "@fontsource/inter/700.css";
+import "@fontsource/geist-sans/600.css";
+import "@fontsource/geist-sans/700.css";
 // Tokens, reset and shared primitives only — page/component styles are imported by the
 // modules that own them (src/pages/*.css, src/components/*.css).
 import "./styles/base.css";

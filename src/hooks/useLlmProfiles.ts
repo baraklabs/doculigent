@@ -10,18 +10,10 @@ export function useLlmProfiles() {
   });
 }
 
-export function useActiveLlmProfileId() {
-  return useQuery<string | null>({
-    queryKey: ["activeLlmProfileId"],
-    queryFn: () => SettingsService.getActiveLlmProfileId(),
-  });
-}
-
 function useInvalidateProfiles() {
   const queryClient = useQueryClient();
   return () => {
     queryClient.invalidateQueries({ queryKey: ["llmProfiles"] });
-    queryClient.invalidateQueries({ queryKey: ["activeLlmProfileId"] });
   };
 }
 
@@ -38,14 +30,6 @@ export function useDeleteLlmProfile() {
   const invalidate = useInvalidateProfiles();
   return useMutation({
     mutationFn: (id: string) => SettingsService.deleteLlmProfile(id),
-    onSuccess: invalidate,
-  });
-}
-
-export function useSetActiveLlmProfile() {
-  const invalidate = useInvalidateProfiles();
-  return useMutation({
-    mutationFn: (id: string) => SettingsService.setActiveLlmProfile(id),
     onSuccess: invalidate,
   });
 }

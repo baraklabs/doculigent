@@ -42,5 +42,5 @@ export function LiveWaveform({ analyser }: LiveWaveformProps) {
     return () => cancelAnimationFrame(raf);
   }, [analyser]);
 
-  return <canvas ref={canvasRef} className="live-waveform" width={640} height={72} />;
+  return <canvas ref={canvasRef} className="live-waveform" width={640} height={28} />;
 }

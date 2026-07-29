@@ -1,5 +1,6 @@
 
 import { useEffect, useState, type ReactNode } from "react";
+import { Pencil, ArrowRight, Circle, Square, Undo2, Redo2, Trash2 } from "lucide-react";
 import {
   ANNOTATION_COLORS,
   ANNOTATION_FADE_OPTIONS,
@@ -37,11 +38,11 @@ function fadeLabel(ms: number): string {
 
 const TOOLS: { value: AnnotationTool; label: string; icon: ReactNode }[] = [
   { value: "pointer", label: "No tool — stop drawing, clicks pass through (Esc)", icon: <NoToolIcon /> },
-  { value: "pen", label: "Pen", icon: "✏️" },
+  { value: "pen", label: "Pen", icon: <Pencil size={14} /> },
   { value: "line", label: "Line", icon: <LineIcon /> },
-  { value: "arrow", label: "Arrow", icon: "➡️" },
-  { value: "circle", label: "Circle", icon: "⭕" },
-  { value: "square", label: "Square", icon: "⬜" },
+  { value: "arrow", label: "Arrow", icon: <ArrowRight size={14} /> },
+  { value: "circle", label: "Circle", icon: <Circle size={14} /> },
+  { value: "square", label: "Square", icon: <Square size={14} /> },
 ];
 
 export function AnnotationToolbar() {
@@ -208,7 +209,7 @@ export function AnnotationToolbar() {
             disabled={!canUndo}
             onClick={() => window.api.annotation.undo().catch(() => {})}
           >
-            ↶
+            <Undo2 size={14} />
           </button>
           <button
             type="button"
@@ -217,7 +218,7 @@ export function AnnotationToolbar() {
             disabled={!canRedo}
             onClick={() => window.api.annotation.redo().catch(() => {})}
           >
-            ↷
+            <Redo2 size={14} />
           </button>
           <button
             type="button"
@@ -226,7 +227,7 @@ export function AnnotationToolbar() {
             disabled={!overlayOpen}
             onClick={() => window.api.annotation.clear().catch(() => {})}
           >
-            🗑️
+            <Trash2 size={14} />
           </button>
         </div>
     </div>

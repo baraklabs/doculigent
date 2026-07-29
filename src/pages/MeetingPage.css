@@ -1,45 +1,150 @@
-/* Meeting tab — audio-only recording with a live transcript feed, restyled with the same
-   tinted-card language as Record (see .record-block in RecordPage.css, reused here). */
-.meeting-page { display: flex; gap: 16px; flex: 1; min-height: 0; flex-wrap: wrap; }
-.meeting-record-panel {
-  flex: 1 1 360px; display: flex; flex-direction: column; gap: 14px;
-  border-top: 3px solid #5b4bf5;
+/* Meeting tab — a single row (Model, Audio, the record button, Language, Details) always
+   pinned to the bottom of the panel, whether idle or recording — unlike the old layout,
+   the record button never jumps from vertically-centered to bottom-docked once you start
+   recording; it's always in the same spot (see .meeting-main-panel's
+   justify-content: flex-end). The transcript feed above it just grows to fill whatever
+   space is left once a meeting is active — see .meeting-main-panel.active. */
+/* overflow: hidden here (not just min-height: 0) is what actually stops the outer
+   .workspace scrollbar from flashing on mount/route-switch — the entrance animation below
+   and the panel's own mount-time layout settling can each transiently make this page's
+   natural content height a few pixels taller than its final settled size, and without a
+   clip at this level that shows up as .workspace's scrollbar for a frame. The transcript
+   feed's own overflow-y: auto (further down) is unaffected — clipping here only contains
+   accidental overflow of this page as a whole, not the deliberate inner scroll area. */
+.meeting-page-v2 { display: flex; flex-direction: column; gap: 14px; flex: 1; min-height: 0; overflow: hidden; }
+.meeting-page-header { flex-shrink: 0; }
+
+.meeting-main-panel {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: stretch;
+  justify-content: flex-end; gap: 6px;
+  border-top: 3px solid var(--border-strong);
   animation: meeting-panel-in 320ms cubic-bezier(.2, .8, .2, 1);
-}
-.meeting-transcript-panel {
-  flex: 1 1 380px; min-height: 0; display: flex; flex-direction: column; gap: 12px;
-  border-top: 3px solid #0284c7;
-  animation: meeting-panel-in 320ms cubic-bezier(.2, .8, .2, 1) 60ms both;
 }
 @keyframes meeting-panel-in {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Per-block accents, same --block-accent/--block-tint mechanism RecordPage.css defines. */
-.meeting-block-setup { --block-accent: #5b4bf5; --block-tint: rgba(91, 75, 245, .09); }
-.meeting-block-audio { --block-accent: #15803d; --block-tint: rgba(22, 163, 74, .11); }
-.meeting-block-transcript {
-  --block-accent: #0284c7; --block-tint: rgba(14, 165, 233, .11);
-  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+.meeting-transcript-area {
+  flex: 0 0 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column;
+  transition: flex-grow 250ms ease;
+}
+.meeting-main-panel.active .meeting-transcript-area { flex: 1 1 auto; }
+/* Pushes the message list to the bottom of the scroll container when it's shorter than
+   the available space (so the first message doesn't render up at the top with empty
+   space below it), without touching justify-content on the scrollable element itself —
+   combining justify-content: flex-end with overflow-y: auto is what made the scrollbar
+   flicker/disappear and scrolling feel unreliable. */
+.meeting-transcript-content {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  width: 100%; min-width: 0; margin-top: auto;
 }
 
-.meeting-fields-row { display: flex; gap: 12px; margin: 0; flex-wrap: wrap; }
-.meeting-fields-row .field { margin: 0; flex: 1 1 200px; }
-.meeting-title-field { flex: 0 1 220px; }
-.meeting-language-field { flex: 0 1 160px; }
-.meeting-savedir-field { flex: 2 1 340px; }
-.meeting-browse-btn {
-  border: 1px solid var(--border); border-radius: 8px; align-self: stretch;
-  padding: 0 12px; font-size: 17px;
+.meeting-error { align-self: center; }
+
+/* Three individual small white pills — sit directly above .meeting-dock-row (not a corner
+   toast) so they're impossible to miss right where your eyes already are (you just hit
+   Stop). Stay up until one is clicked or a new recording starts, rather than auto-expiring
+   or needing an explicit close button — no wrapping bar/label, just the pills themselves. */
+.meeting-saved-popup {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; align-self: center;
+  margin-bottom: 2px;
+  animation: meeting-saved-in 200ms cubic-bezier(.2, .8, .2, 1);
 }
+.meeting-saved-popup button {
+  font-size: 12px; font-weight: 600; padding: 5px 14px; border-radius: 999px;
+  background: #fff; border: 1px solid var(--border); color: #000; cursor: pointer;
+  transition: border-color 150ms ease;
+  /* Brief one-shot pulse (not looping) on each pill as the popup appears, staggered
+     slightly left-to-right, to draw the eye — same idea as the Library tab's
+     icon-btn-ai-pulse. */
+  animation: meeting-pill-pulse 450ms ease-in-out 1;
+}
+.meeting-saved-popup button:nth-child(2) { animation-delay: 70ms; }
+.meeting-saved-popup button:nth-child(3) { animation-delay: 140ms; }
+.meeting-saved-popup button:hover { border-color: var(--accent); }
+@keyframes meeting-saved-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes meeting-pill-pulse {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+/* One row: Model, Audio, the record button, Language, Details — wraps naturally on narrow
+   windows rather than needing a separate stacked layout. Vertically centered against the
+   record button (align-items: center) rather than bottom-anchored — see
+   .meeting-record-area's fixed min-height for why that button's own position stays put
+   across idle/recording/paused instead of nudging this whole row up or down. */
+.meeting-dock-row {
+  display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap;
+  width: 100%; padding: 4px 4px 8px;
+}
+
+/* Shows the setting's current value right on the button (see modelSummary/audioSummary/
+   languageSummary/title in MeetingPage.tsx) instead of only inside the modal it opens —
+   so it's visible at a glance whether e.g. a transcription model is actually configured. */
+.meeting-side-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  min-width: 120px; max-width: 170px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 8px 12px; cursor: pointer; text-align: center; box-sizing: border-box;
+  transition: border-color 150ms ease;
+}
+.meeting-side-btn:hover { border-color: var(--accent); }
+.meeting-side-btn-head {
+  display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .03em; color: var(--muted);
+}
+.meeting-side-btn-value {
+  font-size: 13px; font-weight: 600; color: var(--text); width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* position: relative so .live-waveform (position: absolute, see below) is positioned
+   relative to this box specifically — centered behind the record controls — rather than
+   the nearest other positioned ancestor. */
+.meeting-control-dock { position: relative; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+
+.meeting-toolbar-controls {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--panel); border: 1px solid var(--border-strong); border-radius: 999px;
+  padding: 6px 8px;
+}
+
+/* Settings popup — shares .modal/.modal-backdrop with the Library tab's dialogs (see
+   LibraryPage.css) so it looks/behaves consistently rather than inventing a new shell. */
+.meeting-settings-modal { text-align: left; }
+.meeting-modal-fields {
+  display: flex; flex-direction: column; gap: 12px; margin: 12px 0;
+  /* Resets the browser's default fieldset chrome — the Audio modal's fields live inside
+     a <fieldset> (so `disabled` locks the whole group while recording) which otherwise
+     keeps its default groove border/padding, showing up as a stray box around the
+     controls. */
+  border: none; padding: 0; min-width: 0;
+}
+.meeting-modal-fields .field { margin: 0; }
 
 .meeting-source-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .meeting-source-row .checkbox { flex: 0 0 160px; }
 .meeting-source-row select { flex: 1 1 200px; }
 .meeting-meter-inline { flex: 0 0 60px; width: 60px; }
+.meeting-browse-btn {
+  border: 1px solid var(--border); border-radius: 8px; align-self: stretch;
+  padding: 0 12px; font-size: 17px;
+}
 
-.meeting-record-area { display: flex; flex-direction: column; align-items: center; gap: 10px; margin: 10px 0 4px; }
+/* Fixed height (tall enough for the 96px idle record button + label) rather than
+   shrink-to-fit — the recording-state content (44px pause/stop pill + label) is
+   considerably shorter, and without this the record button's own vertical position would
+   shift every time you start/stop, dragging the row's centered Model/Audio/Language/
+   Details buttons along with it. */
+.meeting-record-area {
+  position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 10px; min-height: 124px;
+}
 .meeting-record-btn {
   width: 96px; height: 96px; border-radius: 50%; border: none; cursor: pointer;
   background: linear-gradient(135deg, #5b4bf5, #7c6cf7); color: #fff; font-size: 32px;
@@ -50,57 +155,78 @@
 .meeting-record-btn:hover:not(:disabled) { transform: scale(1.06); filter: brightness(1.05); }
 .meeting-record-btn:active:not(:disabled) { transform: scale(.98); }
 .meeting-record-btn:disabled { opacity: .6; cursor: not-allowed; }
-.meeting-record-btn.recording {
-  background: linear-gradient(135deg, #b3261e, #d1453a);
-  animation: meeting-pulse 1.6s ease-out infinite;
-}
 @keyframes meeting-pulse {
   0% { box-shadow: 0 0 0 0 rgba(179, 38, 30, .5), 0 10px 24px rgba(179, 38, 30, .35); }
   70% { box-shadow: 0 0 0 18px rgba(179, 38, 30, 0), 0 10px 24px rgba(179, 38, 30, .35); }
   100% { box-shadow: 0 0 0 0 rgba(179, 38, 30, 0), 0 10px 24px rgba(179, 38, 30, .35); }
 }
 
+.meeting-pause-btn {
+  width: 44px; height: 44px; flex-shrink: 0;
+  border-radius: 50%; border: 1px solid var(--border-strong); cursor: pointer;
+  background: var(--panel); color: var(--text);
+  display: flex; align-items: center; justify-content: center;
+  transition: border-color 150ms ease, transform 150ms ease, background 150ms ease;
+}
+.meeting-pause-btn:hover:not(:disabled) { border-color: var(--text); transform: scale(1.06); }
+.meeting-pause-btn:active:not(:disabled) { transform: scale(.96); }
+.meeting-pause-btn:disabled { opacity: .6; cursor: not-allowed; }
+
+/* The Stop button (only shown while recording) keeps the same red/pulsing treatment the
+   big record button used to have when it doubled as Stop. */
+.meeting-stop-btn {
+  background: linear-gradient(135deg, #b3261e, #d1453a); color: #fff; border-color: transparent;
+  animation: meeting-pulse 1.6s ease-out infinite;
+}
+.meeting-stop-btn:hover:not(:disabled) { border-color: transparent; }
+/* Paused stays visually red (still "recording", just not writing right now) but drops the
+   attention-grabbing pulse, since nothing's actively happening for it to draw eyes to. */
+.meeting-stop-btn.paused { animation: none; }
+
+/* Absolutely positioned and centered behind .meeting-record-area (z-index: 0 under its
+   z-index: 1) rather than a normal document-flow element — it used to sit below the
+   record controls and add its own height to the row, which nudged the record button (and
+   the Model/Audio/Language/Details buttons centered against it) upward every time
+   recording started. Taken out of flow entirely, it can never move anything else. */
 .live-waveform {
-  width: 100%; max-width: 420px; height: 72px; display: block; margin: 4px auto 0;
-  background: var(--bg); border-radius: 10px;
+  /* Anchored toward the bottom of .meeting-control-dock (near the label text under the
+     button) rather than dead-center through the button itself. */
+  position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); z-index: 0;
+  /* A fixed size (not width: 100%) since its containing block — .meeting-control-dock — is
+     only as wide as the record button/label, not the full page; a percentage width here
+     would shrink the bar down to that narrow column instead of spanning its intended
+     width behind it. */
+  width: min(420px, 90vw); height: 28px; display: block; pointer-events: none;
   animation: meeting-fade-in 200ms ease;
+  /* Fades both edges to transparent instead of cutting the line off with a hard edge. */
+  mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
 }
 
-.meeting-saved-notice { margin-top: 4px; animation: meeting-pop-in 260ms cubic-bezier(.2, .8, .2, 1); }
-@keyframes meeting-pop-in {
-  from { opacity: 0; transform: scale(.96); }
-  to { opacity: 1; transform: scale(1); }
-}
+.meeting-model-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 
-.meeting-model-badge {
-  background: var(--panel); border: 1px solid var(--border-strong); color: var(--muted);
-  font-size: 11px; padding: 5px 12px; border-radius: 999px; cursor: pointer;
-  transition: border-color 150ms ease, color 150ms ease, transform 150ms ease;
-}
-.meeting-model-badge:hover { border-color: var(--accent); color: var(--text); transform: translateY(-1px); }
-
-.meeting-chat { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 .meeting-bubble {
-  border-left: 3px solid var(--accent); background: var(--bg); border-radius: 0 10px 10px 0; padding: 8px 12px;
+  width: 100%; max-width: 640px; min-width: 0; box-sizing: border-box;
+  border-left: 3px solid var(--border-strong); background: var(--bg); border-radius: 0 10px 10px 0; padding: 8px 12px;
   animation: meeting-bubble-in 220ms cubic-bezier(.2, .8, .2, 1);
 }
 @keyframes meeting-bubble-in {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
-.meeting-bubble-speaker { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; margin-bottom: 2px; }
-.meeting-bubble p { margin: 0; font-size: 13px; }
+.meeting-bubble-time { display: block; font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+.meeting-bubble p { margin: 0; font-size: 13px; overflow-wrap: break-word; word-break: break-word; }
 .meeting-pending, .meeting-listening { font-size: 12px; }
 .meeting-listening::after {
   content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%;
-  background: #0284c7; animation: meeting-blink 1.2s ease-in-out infinite;
+  background: var(--muted); animation: meeting-blink 1.2s ease-in-out infinite;
 }
 @keyframes meeting-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
 
 @keyframes meeting-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
 @media (prefers-reduced-motion: reduce) {
-  .meeting-record-panel, .meeting-transcript-panel, .meeting-bubble, .meeting-saved-notice, .live-waveform {
+  .meeting-main-panel, .meeting-bubble, .live-waveform, .meeting-saved-popup, .meeting-saved-popup button {
     animation: none;
   }
 }

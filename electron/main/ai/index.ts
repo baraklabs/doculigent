@@ -21,7 +21,7 @@ export async function summarize(
 }
 
 export async function chat(
-  transcript: Transcript,
+  transcript: Transcript | null,
   history: ChatMessage[],
   question: string,
   config: LlmProviderConfig,

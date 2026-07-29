@@ -1,0 +1,37 @@
+.msg-content-wrap { position: relative; }
+
+/* Copy button — hidden until the message bubble is hovered/focused, top-right corner. */
+.msg-copy-btn {
+  position: absolute; top: -6px; right: -6px; opacity: 0; transition: opacity 100ms ease;
+  background: var(--panel); border: 1px solid var(--border); color: var(--muted);
+  border-radius: 6px; padding: 3px; cursor: pointer; line-height: 0;
+}
+.msg:hover .msg-copy-btn, .msg-copy-btn:focus-visible { opacity: 1; }
+.msg-copy-btn:hover { color: var(--text); border-color: var(--accent); }
+
+/* Markdown body — first/last child margins collapsed so a single-paragraph reply (the
+   common case) doesn't carry extra top/bottom padding beyond the bubble's own. */
+.markdown-body { font-size: 13px; line-height: 1.55; word-break: break-word; }
+.markdown-body > *:first-child { margin-top: 0; }
+.markdown-body > *:last-child { margin-bottom: 0; }
+.markdown-body p { margin: 6px 0; }
+.markdown-body strong { font-weight: 700; }
+.markdown-body em { font-style: italic; }
+.markdown-body ul, .markdown-body ol { margin: 6px 0; padding-left: 20px; }
+.markdown-body li { margin: 2px 0; }
+.markdown-body a { color: var(--accent); text-decoration: underline; }
+.markdown-body blockquote {
+  margin: 6px 0; padding: 2px 10px; border-left: 3px solid var(--border); color: var(--muted);
+}
+.markdown-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;
+  background: rgba(127, 127, 127, .16); padding: 1px 5px; border-radius: 4px;
+}
+.markdown-body pre {
+  margin: 8px 0; padding: 10px 12px; border-radius: 8px; background: rgba(127, 127, 127, .12);
+  overflow-x: auto;
+}
+.markdown-body pre code { background: none; padding: 0; font-size: 12px; }
+.markdown-body table { border-collapse: collapse; margin: 6px 0; width: 100%; font-size: 12px; }
+.markdown-body th, .markdown-body td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+.markdown-body hr { border: none; border-top: 1px solid var(--border); margin: 8px 0; }

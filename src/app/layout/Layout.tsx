@@ -4,6 +4,7 @@ import logo from "../../assets/logo.png";
 import { planLabel } from "@shared/constants/plans";
 import { useAuthStore } from "../../store/authStore";
 import { useSavingRecording, watchRecordingSaves } from "../../store/recordingStore";
+import { useMeetingRecordingStore } from "../../store/meetingRecordingStore";
 import { RecordingSaveToast } from "../../components/RecordingSaveToast";
 import { ToastStack } from "../../components/ToastStack";
 import { initials } from "../../lib/userDisplay";
@@ -14,6 +15,7 @@ const VERSION_ENDPOINT = `${SUPABASE_URL}/functions/v1/version`;
 const DOWNLOAD_URL = "https://doculigent.com";
 
 const SAVING_HINT = "Saving your recording — you can switch tabs once it's done";
+const MEETING_RECORDING_HINT = "Meeting is recording — stop it before switching tabs";
 
 function WindowGlyph({ d }: { d: string }) {
   return (
@@ -49,6 +51,9 @@ export function Layout() {
     initAuth();
   }, [initAuth]);
   const savingRecording = useSavingRecording();
+  const meetingRecording = useMeetingRecordingStore((s) => s.recording);
+  const navLocked = savingRecording || meetingRecording;
+  const navLockHint = savingRecording ? SAVING_HINT : meetingRecording ? MEETING_RECORDING_HINT : undefined;
   useEffect(() => {
     watchRecordingSaves();
   }, []);
@@ -105,12 +110,12 @@ export function Layout() {
               to={t.to}
               end={t.end}
               onClick={(e) => {
-                if (savingRecording) e.preventDefault();
+                if (navLocked) e.preventDefault();
               }}
-              aria-disabled={savingRecording || undefined}
-              title={savingRecording ? SAVING_HINT : undefined}
+              aria-disabled={navLocked || undefined}
+              title={navLockHint}
               className={({ isActive }) =>
-                [isActive ? "stage active" : "stage", savingRecording && !isActive && "stage-locked"]
+                [isActive ? "stage active" : "stage", navLocked && !isActive && "stage-locked"]
                   .filter(Boolean)
                   .join(" ")
               }
@@ -124,12 +129,12 @@ export function Layout() {
           <NavLink
             to="/account"
             onClick={(e) => {
-              if (savingRecording) e.preventDefault();
+              if (navLocked) e.preventDefault();
             }}
-            aria-disabled={savingRecording || undefined}
-            title={savingRecording ? SAVING_HINT : session ? session.user.name : "Sign in to doculigent.com"}
+            aria-disabled={navLocked || undefined}
+            title={navLocked ? navLockHint : session ? session.user.name : "Sign in to doculigent.com"}
             className={({ isActive }) =>
-              ["account-btn", isActive && "active", savingRecording && !isActive && "stage-locked"]
+              ["account-btn", isActive && "active", navLocked && !isActive && "stage-locked"]
                 .filter(Boolean)
                 .join(" ")
             }

@@ -42,7 +42,7 @@ export const WHISPER_MODELS: WhisperModelOption[] = [
     description: "Fastest, weakest non-English accuracy.",
     hfModelId: "Xenova/whisper-tiny",
     hasEnglishVariant: true,
-    approxDownloadMb: 41,
+    approxDownloadMb: 83,
     recommendedFor: "Any modern CPU, including low-power/older laptops.",
   },
   {
@@ -51,7 +51,7 @@ export const WHISPER_MODELS: WhisperModelOption[] = [
     description: "Balanced — recommended default.",
     hfModelId: "Xenova/whisper-base",
     hasEnglishVariant: true,
-    approxDownloadMb: 77,
+    approxDownloadMb: 151,
     recommendedFor: "Comfortable real-time captions on most 4+ core laptop CPUs from the last ~6 years.",
   },
   {
@@ -60,7 +60,7 @@ export const WHISPER_MODELS: WhisperModelOption[] = [
     description: "More accurate than base, slower to download and transcribe.",
     hfModelId: "Xenova/whisper-small",
     hasEnglishVariant: true,
-    approxDownloadMb: 249,
+    approxDownloadMb: 480,
     recommendedFor: "6+ core CPU recommended to keep up with live captions in real time; any CPU is fine for non-live transcription.",
   },
   {
@@ -69,7 +69,7 @@ export const WHISPER_MODELS: WhisperModelOption[] = [
     description: "High accuracy, especially for non-English languages.",
     hfModelId: "Xenova/whisper-medium",
     hasEnglishVariant: true,
-    approxDownloadMb: 776,
+    approxDownloadMb: 1044,
     recommendedFor: "A supported GPU (DirectML/CUDA/CoreML) for real-time captions; CPU-only is fine for non-live transcription but will lag behind live speech.",
   },
   {
@@ -78,7 +78,7 @@ export const WHISPER_MODELS: WhisperModelOption[] = [
     description: "Most accurate model available — no English-only variant (OpenAI never released one).",
     hfModelId: "Xenova/whisper-large-v3",
     hasEnglishVariant: false,
-    approxDownloadMb: 1560,
+    approxDownloadMb: 1491,
     recommendedFor: "A supported GPU is effectively required for real-time captions; CPU-only is only realistic for non-live transcription.",
   },
   {
@@ -87,7 +87,7 @@ export const WHISPER_MODELS: WhisperModelOption[] = [
     description: "Distilled from Large v3 — nearly the same accuracy at roughly Base-level speed. No English-only variant.",
     hfModelId: "onnx-community/whisper-large-v3-turbo",
     hasEnglishVariant: false,
-    approxDownloadMb: 1085,
+    approxDownloadMb: 710,
     recommendedFor: "A supported GPU for the best experience; a modern multi-core CPU can still keep up with live captions.",
   },
 ];
@@ -118,9 +118,14 @@ export function whisperModelHfIdEn(size: WhisperModelSize): string {
 
 /** Whether a model's files are on disk, and how big they are — see
  *  electron/main/transcription/modelCache.ts for how this gets computed and
- *  Settings > Transcription for where it's shown/managed. */
+ *  Settings > Transcription for where it's shown/managed. `downloading` is tracked in the
+ *  main process (not derived from disk), so it survives the Settings page's Transcription
+ *  tab — and the "Download" button's own click handler — unmounting mid-download: whoever
+ *  re-fetches statuses next (e.g. after navigating back) still sees the true in-progress
+ *  state instead of a misleading idle "Download" button. */
 export interface WhisperModelStatus {
   size: WhisperModelSize;
   downloaded: boolean;
   sizeBytes: number;
+  downloading: boolean;
 }

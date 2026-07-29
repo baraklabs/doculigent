@@ -1,22 +1,207 @@
 .ai-grid { display: grid; grid-template-columns: 1fr minmax(320px, 420px); gap: 16px; height: 100%; }
 
 /* Standalone AI Assistant tab (AiAssistantPage) — a full-height chat rather than the
-   two-column transcript workspace above. */
-.chat-page { flex: 1; min-height: 0; display: flex; flex-direction: column; width: 100%; }
-.chat-page-log { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; }
+   two-column transcript workspace above. Both the log and the composer share the same
+   centered max-width rather than stretching edge-to-edge across the whole page, so the
+   conversation reads like a normal chat app column instead of a full-bleed panel. */
+.chat-page-shell { flex: 1; min-height: 0; display: flex; width: 100%; }
+.chat-page { flex: 1; min-height: 0; display: flex; flex-direction: column; width: 100%; align-items: center; }
+
+/* Collapsible chat history rail, à la ChatGPT/Claude — see AiAssistantPage.tsx's
+   sidebarCollapsed/sessions state. Collapsed mode keeps just the toggle + New-chat icons
+   (no title/list text) as a slim rail rather than hiding entirely. */
+.chat-sidebar {
+  width: 220px; flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;
+  padding: 4px 8px 8px; margin-right: 12px; border-right: 1px solid var(--border);
+  transition: width 150ms ease;
+}
+.chat-sidebar.collapsed { width: 36px; padding: 4px 4px 8px; }
+.chat-sidebar-top { display: flex; align-items: center; gap: 8px; padding: 4px 2px 8px; }
+.chat-sidebar-title { font-size: 13px; font-weight: 600; }
+.chat-sidebar-new {
+  display: flex; align-items: center; gap: 8px; background: none; border: 1px solid var(--border);
+  border-radius: 8px; padding: 7px 10px; color: var(--text); font-size: 13px; cursor: pointer;
+  width: 100%; justify-content: flex-start;
+}
+.chat-sidebar.collapsed .chat-sidebar-new { justify-content: center; padding: 7px; }
+.chat-sidebar-new:hover { border-color: var(--accent); color: var(--accent); }
+.chat-sidebar-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.chat-sidebar-empty { font-size: 12px; padding: 4px 2px; }
+.chat-sidebar-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 7px 8px; border-radius: 8px; cursor: pointer; font-size: 12px; color: var(--muted);
+}
+.chat-sidebar-item:hover { background: var(--bg); color: var(--text); }
+.chat-sidebar-item.active { background: rgba(91, 75, 245, .12); color: var(--text); font-weight: 600; }
+.chat-sidebar-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-sidebar-item-rename, .chat-sidebar-item-delete {
+  flex-shrink: 0; background: none; border: none; color: var(--muted); cursor: pointer; padding: 2px;
+  border-radius: 4px; opacity: 0; transition: opacity 100ms ease;
+}
+.chat-sidebar-item:hover .chat-sidebar-item-rename, .chat-sidebar-item:hover .chat-sidebar-item-delete { opacity: 1; }
+.chat-sidebar-item-rename:hover { color: var(--text); }
+.chat-sidebar-item-delete:hover { color: var(--danger); }
+
+/* Swaps the row for a plain text input while renaming (see AiAssistantPage.tsx's
+   renamingSessionId) — no hover/active/cursor chrome since it isn't clickable like the
+   other rows. */
+.chat-sidebar-item-renaming { padding: 2px 8px; cursor: default; }
+.chat-sidebar-item-rename-input {
+  width: 100%; font-size: 12px; padding: 5px 6px; border-radius: 6px;
+  border: 1px solid var(--accent); background: var(--panel); color: var(--text);
+}
+/* Full-width scroll container — its scrollbar sits at the actual right edge of the page;
+   .chat-page-log-inner below is what actually carries the centered max-width. Slim
+   scrollbar (both the standard property and the WebKit fallback Chromium/Electron use)
+   rather than the browser default. */
+.chat-page-log {
+  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; width: 100%;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 4px 2px; scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+.chat-page-log::-webkit-scrollbar { width: 6px; }
+.chat-page-log::-webkit-scrollbar-track { background: transparent; }
+.chat-page-log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+.chat-page-log::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+.chat-page-log-inner { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 760px; }
 .chat-page-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 48px 0; text-align: center; }
 
+/* Stuck to the right edge of the app (position: fixed, same bottom:24px;right:24px
+   convention the toast system uses elsewhere — see base.css's .toast — just anchored from
+   the top instead) rather than living inline in the scrollable log, so it stays reachable
+   no matter how far down the conversation you've scrolled. Slides/fades in on mount and
+   whenever the attachment changes (see AiAssistantPage.tsx's key={video.id}). Click toggles
+   .expanded, which reveals .chat-resource-expanded below the summary row. */
 .chat-resource-card {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-  padding: 10px 14px; position: sticky; top: 0;
+  position: fixed; top: 56px; right: 24px; z-index: 40;
+  width: min(340px, calc(100vw - 48px));
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(20, 20, 40, .14);
+  padding: 10px 14px; cursor: pointer; box-sizing: border-box;
+  animation: chat-resource-in 220ms cubic-bezier(.2, .8, .2, 1);
+  transition: box-shadow 150ms ease, width 380ms cubic-bezier(.4, 0, .2, 1), padding 380ms ease;
 }
-.chat-resource-title { font-weight: 600; font-size: 13px; }
+.chat-resource-card:hover { box-shadow: 0 14px 34px rgba(20, 20, 40, .2); }
+/* The box itself shrinks down to just fit the green transcribe icon — not just its inner
+   content fading away inside a still-full-width box, which left the icon looking stranded
+   at the left edge of a big empty white card. `right: 24px` stays fixed, so as width
+   shrinks the box collapses in toward that anchor rather than drifting. */
+.chat-resource-card.collapsed { width: 40px; padding: 10px; }
+@keyframes chat-resource-in {
+  from { opacity: 0; transform: translateX(18px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+/* No `gap` here either, same reason as .chat-transcribe-status below — the icon and title
+   both collapse away too (see .collapsed below), and a static flex gap would leave dead
+   space once they're gone. Their spacing lives on each one's own margin-right instead. */
+.chat-resource-summary { display: flex; align-items: center; }
+/* The source-type icon (Video/Mic, see AiAssistantPage.tsx) — collapses away alongside the
+   title once transcribedBadgeCollapsed flips (see .chat-resource-summary.collapsed),
+   leaving only the green transcribe icon in the status pill. */
+.chat-resource-icon {
+  display: inline-flex; flex-shrink: 0; color: var(--muted); overflow: hidden;
+  max-width: 20px; margin-right: 8px; opacity: 1; transform: scale(1);
+  transition: max-width 380ms cubic-bezier(.4, 0, .2, 1), opacity 260ms ease,
+    margin-right 380ms ease, transform 320ms ease;
+}
+.chat-resource-summary.collapsed .chat-resource-icon {
+  max-width: 0; opacity: 0; margin-right: 0; transform: scale(.6);
+}
+.chat-resource-title {
+  font-weight: 600; font-size: 13px; min-width: 0; flex-shrink: 1;
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  opacity: 1; margin-right: 8px;
+  transition: max-width 380ms cubic-bezier(.4, 0, .2, 1), opacity 220ms ease, margin-right 380ms ease;
+}
+.chat-resource-summary.collapsed .chat-resource-title {
+  max-width: 0; opacity: 0; margin-right: 0;
+}
 
-.chat-page-composer {
-  flex-shrink: 0; display: flex; flex-direction: column; gap: 8px;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
-  padding: 10px 14px; margin-top: 10px; box-shadow: 0 8px 24px rgba(30, 30, 60, .06);
+/* Transcribed-status pill at the end of the summary row. No `gap` here on purpose — a flex
+   gap doesn't shrink away when .chat-transcribe-status-text collapses to 0 width, which
+   left a small dead space between the (invisible) text and the transcribe icon; all the
+   animatable spacing lives on the text's own margin-right instead. */
+.chat-transcribe-status {
+  display: flex; align-items: center; flex-shrink: 0;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
 }
-.chat-page-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.chat-page-toolbar select { font-size: 12px; padding: 6px 26px 6px 10px; }
+.chat-transcribe-status.ok { color: #16a34a; }
+/* Collapses down to just the green transcribe icon a beat after mounting (see
+   transcribedBadgeCollapsed) — the label's own box shrinks/fades/scales down rather than
+   being removed from the DOM, so the collapse itself is what animates, and the icon
+   gets a small delayed "pop" as it takes over. */
+.chat-transcribe-status-text {
+  display: inline-block; max-width: 90px; overflow: hidden; white-space: nowrap;
+  opacity: 1; transform: scale(1); transform-origin: right center; margin-right: 5px;
+  transition: max-width 380ms cubic-bezier(.4, 0, .2, 1), opacity 260ms ease,
+    margin-right 380ms ease, transform 320ms ease;
+}
+.chat-transcribe-status.ok.collapsed .chat-transcribe-status-text {
+  max-width: 0; opacity: 0; margin-right: 0; transform: scale(.6);
+}
+.chat-transcribe-status.ok svg { transition: transform 220ms ease 140ms; }
+.chat-transcribe-status.ok.collapsed svg { transform: scale(1.2); }
+.chat-transcribe-status.warn { color: var(--danger); }
+
+/* The card's expanded content (Transcribe with.../actions/segments) — cursor: default and
+   its own click stopPropagation (see AiAssistantPage.tsx) keep clicking inside it from
+   toggling the card closed. */
+.chat-resource-expanded {
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+  cursor: default; max-height: min(70vh, 520px); overflow-y: auto;
+  animation: chat-resource-expand-in 180ms ease;
+}
+@keyframes chat-resource-expand-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-resource-card, .chat-resource-expanded, .chat-transcribe-status-text, .chat-transcribe-status.ok svg,
+  .chat-resource-icon, .chat-resource-title {
+    animation: none; transition: none;
+  }
+}
+
+/* No panel background/border/shadow here on purpose — it sits directly on the page rather
+   than reading as a separate boxed block. */
+.chat-page-composer {
+  flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  width: 100%; max-width: 760px; margin-top: 10px;
+}
+/* Stays full-width despite the composer's align-items:center above (which is there to
+   center the quick actions row and meta line — see below — not to shrink the input). */
+.chat-page-composer .chat-input { width: 100%; }
+.chat-page-composer .chat-input input {
+  padding: 13px 16px; font-size: 15px; border-radius: 12px;
+}
+.chat-page-composer .chat-input button {
+  padding: 0 22px; font-size: 14px; border-radius: 12px;
+}
+/* Tiny status line under the composer — which model/recording the next question actually
+   uses, now that picking them moved into the settings popup (see AiAssistantPage.tsx's
+   settingsOpen) instead of always-visible toolbar dropdowns. Centered, like the quick
+   actions below, rather than aligned to either edge of the input row. */
+.chat-page-meta { font-size: 10px; margin: 4px 0 0; line-height: 1.4; text-align: center; }
+
+/* Summarize/Generate Notes quick actions — only shown just above the input for a
+   transcribed attachment on a fresh conversation (see AiAssistantPage.tsx). Pops in with a
+   small slide+fade rather than just appearing, since it comes and goes as the attachment/
+   conversation state changes. Centered above the input rather than aligned to either edge. */
+.chat-quick-actions {
+  display: flex; gap: 8px; justify-content: center;
+  animation: chat-quick-actions-in 180ms cubic-bezier(.2, .8, .2, 1);
+}
+.chat-quick-actions button {
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  font-size: 12px; font-weight: 600; padding: 7px 14px; border-radius: 999px; cursor: pointer;
+  box-shadow: 0 4px 12px rgba(20, 20, 40, .08);
+}
+.chat-quick-actions button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.chat-quick-actions button:disabled { opacity: .5; cursor: not-allowed; }
+@keyframes chat-quick-actions-in {
+  from { opacity: 0; transform: translateY(6px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-quick-actions { animation: none; }
+}

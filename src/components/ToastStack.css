@@ -1,5 +1,5 @@
 .toast-stack {
-  position: fixed; top: 20px; right: 20px; z-index: 80;
+  position: fixed; bottom: 20px; right: 20px; z-index: 80;
   display: flex; flex-direction: column; gap: 10px; max-width: 360px;
 }
 

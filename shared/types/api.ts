@@ -111,10 +111,8 @@ export interface DoculigentApi {
     pickSaveDir(): Promise<string | null>;
     showItemInFolder(filePath: string): Promise<void>;
     listLlmProfiles(): Promise<LlmModelProfile[]>;
-    getActiveLlmProfileId(): Promise<string | null>;
     saveLlmProfile(profile: LlmModelProfile, apiKey?: string | null): Promise<void>;
     deleteLlmProfile(id: string): Promise<void>;
-    setActiveLlmProfile(id: string): Promise<void>;
     defaultProfileTemplate(kind: LlmProviderKind): Promise<LlmModelProfile>;
     getRecordSettings(): Promise<{ overlay: OverlayConfig | null; targetId: string | null; mic: MicConfig | null }>;
     setRecordSettings(overlay: OverlayConfig, targetId: string | null, mic: MicConfig | null): Promise<void>;
@@ -132,21 +130,25 @@ export interface DoculigentApi {
       systemAudioEnabled: boolean,
       systemAudioSourceId: string | null
     ): Promise<void>;
-    getWhisperModel(): Promise<WhisperModelSize>;
-    setWhisperModel(size: WhisperModelSize): Promise<void>;
+    getWhisperModel(): Promise<WhisperModelSize | null>;
+    setWhisperModel(size: WhisperModelSize | null): Promise<void>;
     getWhisperModelStatuses(): Promise<WhisperModelStatus[]>;
     downloadWhisperModel(size: WhisperModelSize): Promise<void>;
     deleteWhisperModel(size: WhisperModelSize): Promise<void>;
     getWhisperModelsDir(): Promise<string>;
     openWhisperModelsDir(): Promise<void>;
+    getUseDoculigentModel(): Promise<boolean>;
+    setUseDoculigentModel(use: boolean): Promise<void>;
+    getTranscriptionByokProfileId(): Promise<string | null>;
+    setTranscriptionByokProfileId(id: string | null): Promise<void>;
   };
   ai: {
     summarize(transcript: Transcript, profileId?: string): Promise<Summary>;
-    chat(transcript: Transcript, history: ChatMessage[], question: string, profileId?: string): Promise<ChatMessage>;
+    chat(transcript: Transcript | null, history: ChatMessage[], question: string, profileId?: string): Promise<ChatMessage>;
     testConnection(profile: LlmModelProfile, apiKey?: string | null): Promise<{ ok: boolean; message: string }>;
   };
   transcription: {
-    transcribe(filePath: string, language?: string, modelSize?: WhisperModelSize): Promise<Transcript>;
+    transcribe(filePath: string, language?: string, modelSize?: WhisperModelSize, byokProfileId?: string): Promise<Transcript>;
     transcribePcm(samples: number[], language?: string): Promise<Transcript>;
     cancel(): Promise<void>;
   };
