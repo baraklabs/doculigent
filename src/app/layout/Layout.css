@@ -68,3 +68,5 @@
 .footer-plan-tier { color: var(--accent); font-weight: 600; }
 .update-available { color: #b45309; font-weight: 600; text-decoration: none; }
 .update-available:hover { text-decoration: underline; }
+.footer-link { color: var(--muted); text-decoration: none; }
+.footer-link:hover { color: var(--accent); text-decoration: underline; }

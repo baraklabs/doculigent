@@ -38,7 +38,7 @@ export interface WhisperModelOption {
 export const WHISPER_MODELS: WhisperModelOption[] = [
   {
     size: "tiny",
-    label: "Tiny",
+    label: "Whisper Tiny",
     description: "Fastest, weakest non-English accuracy.",
     hfModelId: "Xenova/whisper-tiny",
     hasEnglishVariant: true,
@@ -47,7 +47,7 @@ export const WHISPER_MODELS: WhisperModelOption[] = [
   },
   {
     size: "base",
-    label: "Base",
+    label: "Whisper Base",
     description: "Balanced — recommended default.",
     hfModelId: "Xenova/whisper-base",
     hasEnglishVariant: true,
@@ -56,7 +56,7 @@ export const WHISPER_MODELS: WhisperModelOption[] = [
   },
   {
     size: "small",
-    label: "Small",
+    label: "Whisper Small",
     description: "More accurate than base, slower to download and transcribe.",
     hfModelId: "Xenova/whisper-small",
     hasEnglishVariant: true,
@@ -65,7 +65,7 @@ export const WHISPER_MODELS: WhisperModelOption[] = [
   },
   {
     size: "medium",
-    label: "Medium",
+    label: "Whisper Medium",
     description: "High accuracy, especially for non-English languages.",
     hfModelId: "Xenova/whisper-medium",
     hasEnglishVariant: true,
@@ -74,7 +74,7 @@ export const WHISPER_MODELS: WhisperModelOption[] = [
   },
   {
     size: "large-v3",
-    label: "Large v3",
+    label: "Whisper Large v3",
     description: "Most accurate model available — no English-only variant (OpenAI never released one).",
     hfModelId: "Xenova/whisper-large-v3",
     hasEnglishVariant: false,
@@ -83,7 +83,7 @@ export const WHISPER_MODELS: WhisperModelOption[] = [
   },
   {
     size: "turbo",
-    label: "Turbo",
+    label: "Whisper Turbo",
     description: "Distilled from Large v3 — nearly the same accuracy at roughly Base-level speed. No English-only variant.",
     hfModelId: "onnx-community/whisper-large-v3-turbo",
     hasEnglishVariant: false,

@@ -13,6 +13,7 @@ import "./Layout.css";
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL).replace(/\/+$/, "");
 const VERSION_ENDPOINT = `${SUPABASE_URL}/functions/v1/version`;
 const DOWNLOAD_URL = "https://doculigent.com";
+const DOCS_URL = "https://doculigent.com";
 
 const SAVING_HINT = "Saving your recording — you can switch tabs once it's done";
 const MEETING_RECORDING_HINT = "Meeting is recording — stop it before switching tabs";
@@ -200,6 +201,9 @@ export function Layout() {
               New version v{latestVersion} available
             </a>
           )}
+          <a href={DOCS_URL} target="_blank" rel="noreferrer" className="footer-link">
+            Read docs
+          </a>
         </div>
         {session?.user.plan && (
           <div className="footer-plan">

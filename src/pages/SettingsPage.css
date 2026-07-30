@@ -77,34 +77,44 @@
 /* Not-yet-downloaded Whisper sizes stay boxed cards (unlike the list rows above) — a
    deliberately different shape so "things I could still get" reads as a distinct picker
    rather than more rows in the same list. */
-.model-size-options { display: flex; flex-direction: row; gap: 8px; flex-wrap: wrap; }
+.model-size-options { display: flex; flex-direction: row; gap: 10px; flex-wrap: wrap; }
 .model-size-card {
-  display: flex; flex-direction: column; align-items: stretch; gap: 4px;
-  border: 1px solid var(--border); border-radius: 10px; padding: 4px; background: var(--bg);
-  transition: border-color 150ms ease, background 150ms ease;
+  display: flex; flex-direction: column; align-items: stretch; gap: 6px;
+  border: 1px solid var(--border); border-radius: 12px; padding: 6px; background: var(--bg);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04);
+  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease, transform 150ms ease;
   /* Fixed rather than content-sized — otherwise the whole row reflows every time a
      card's status text changes length (e.g. "~1560MB" vs "Downloading…"), most
      noticeably while a download is actually in progress. */
   width: 190px; flex-shrink: 0;
 }
+.model-size-card:hover { border-color: var(--accent); box-shadow: 0 4px 12px rgba(91, 75, 245, .12); transform: translateY(-1px); }
 /* Clicking a card (its label area) previews that size's description/hardware
    recommendation below the grid — see SettingsPage.tsx's previewedSize. */
 .model-size-card.previewed { border-color: var(--accent); background: rgba(91, 75, 245, .1); }
 .model-size-card-main {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; width: 100%;
-  background: none; border: none; color: var(--muted); cursor: pointer; padding: 6px 12px; border-radius: 7px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; width: 100%;
+  background: none; border: none; color: var(--muted); cursor: pointer; padding: 8px 10px 4px; border-radius: 7px;
   transition: color 150ms ease;
 }
 .model-size-card-main:hover { color: var(--text); }
 .model-size-card.previewed .model-size-card-main { color: var(--text); }
-.model-size-card-label { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.model-size-card-label { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 6px; color: var(--text); }
 .model-size-card-status {
-  font-size: 11px; opacity: .8; max-width: 100%;
+  font-size: 11px; opacity: .75; max-width: 100%;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .model-size-card-action {
-  font-size: 11px; background: none; border: 1px solid var(--border); color: var(--muted);
-  padding: 3px 8px; border-radius: 6px; cursor: pointer; align-self: stretch;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  font-size: 12px; font-weight: 600; color: #fff;
+  background: var(--accent); border: 1px solid var(--accent);
+  padding: 7px 10px; border-radius: 8px; cursor: pointer; align-self: stretch;
+  transition: background 150ms ease, box-shadow 150ms ease, transform 100ms ease;
 }
-.model-size-card-action:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
-.model-size-card-action:disabled { opacity: .5; cursor: not-allowed; }
+.model-size-card-action:hover:not(:disabled) {
+  background: #4a3ce0; border-color: #4a3ce0; box-shadow: 0 2px 8px rgba(91, 75, 245, .35);
+}
+.model-size-card-action:active:not(:disabled) { transform: translateY(1px); }
+.model-size-card-action:disabled {
+  opacity: .6; cursor: not-allowed; background: var(--muted); border-color: var(--muted); box-shadow: none;
+}

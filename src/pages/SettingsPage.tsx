@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Download } from "lucide-react";
 import type { LlmCapability, LlmModelProfile, LlmProviderKind } from "@shared/types/models";
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
 import { WHISPER_MODELS } from "@shared/constants/whisperModels";
@@ -513,6 +514,7 @@ export function SettingsPage() {
                       onClick={() => whisper.handleDownload(m.size)}
                       disabled={downloading}
                     >
+                      <Download size={13} />
                       {downloading ? "Downloading…" : "Download"}
                     </button>
                   </div>

@@ -6,6 +6,7 @@ import { mediaUrl } from "@shared/constants/media";
 import { DEFAULT_TRANSCRIPTION_LANGUAGE, TRANSCRIPTION_LANGUAGES } from "@shared/constants/languages";
 import { WHISPER_MODELS } from "@shared/constants/whisperModels";
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
+import { isBilledTier } from "@shared/constants/plans";
 import { useDeleteVideo, useDeleteVideos, useRenameVideo, useSetVideoTranscript, useVideos } from "../hooks/useVideos";
 import { useLlmProfiles } from "../hooks/useLlmProfiles";
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
@@ -69,6 +70,9 @@ export function LibraryPage() {
   const [deleteTarget, setDeleteTarget] = useState<Video | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const session = useAuthStore((s) => s.session);
+  // Same gating as the Meeting tab's model picker (see MeetingPage.tsx's cloudEnabled) —
+  // only offer the hosted Doculigent option to accounts on a paid plan.
+  const cloudEnabled = !!session?.user.plan && isBilledTier(session.user.plan.tier);
 
  
   async function showInFolder(v: Video) {
@@ -110,6 +114,11 @@ export function LibraryPage() {
   // rather than one of the profiles from llmProfiles. Not persisted anywhere (unlike the
   // Meeting tab's global BYOK selection); it only applies to the next transcribe click.
   const [retranscribeByokId, setRetranscribeByokId] = useState<string | null>(null);
+  // Whether the picker below is set to the hosted Doculigent option rather than a local
+  // size or BYOK profile — same "not implemented yet" status as the Meeting tab's cloud
+  // option (see MeetingPage.tsx's useDoculigent), so selecting it here just disables the
+  // (Re-)transcribe button below instead of firing a request nothing can serve yet.
+  const [retranscribeUseCloud, setRetranscribeUseCloud] = useState(false);
   const [modelStatuses, setModelStatuses] = useState<WhisperModelStatus[] | null>(null);
   useEffect(() => {
     SettingsService.getWhisperModel().then(setRetranscribeModel).catch(() => {});
@@ -132,12 +141,18 @@ export function LibraryPage() {
   const { data: llmProfiles = [] } = useLlmProfiles();
   const byokProfiles = llmProfiles.filter((p) => p.capabilities.includes("transcribe"));
   const usingByok = retranscribeByokId !== null && byokProfiles.some((p) => p.id === retranscribeByokId);
-  const hasAnyModel = downloadedModels.length > 0 || byokProfiles.length > 0;
+  const usingCloud = retranscribeUseCloud && cloudEnabled;
+  const hasAnyModel = downloadedModels.length > 0 || byokProfiles.length > 0 || cloudEnabled;
 
   function handleRetranscribeModelSelectChange(value: string) {
-    if (value.startsWith("byok:")) {
+    if (value === "doculigent") {
+      setRetranscribeUseCloud(true);
+      setRetranscribeByokId(null);
+    } else if (value.startsWith("byok:")) {
+      setRetranscribeUseCloud(false);
       setRetranscribeByokId(value.slice("byok:".length));
     } else {
+      setRetranscribeUseCloud(false);
       setRetranscribeByokId(null);
       setRetranscribeModel(value as WhisperModelSize);
     }
@@ -552,9 +567,10 @@ export function LibraryPage() {
                   <span>Model</span>
                   {hasAnyModel ? (
                     <select
-                      value={usingByok ? `byok:${retranscribeByokId}` : (effectiveRetranscribeModel ?? "")}
+                      value={usingCloud ? "doculigent" : usingByok ? `byok:${retranscribeByokId}` : (effectiveRetranscribeModel ?? "")}
                       onChange={(e) => handleRetranscribeModelSelectChange(e.target.value)}
                     >
+                      {cloudEnabled && <option value="doculigent">Doculigent (cloud)</option>}
                       {downloadedModels.map((m) => (
                         <option key={m.size} value={m.size}>
                           {m.label}

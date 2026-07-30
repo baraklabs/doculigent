@@ -5,11 +5,13 @@ import type { ChatMessage, Transcript, TranscriptSegment } from "@shared/types/m
 import { DEFAULT_TRANSCRIPTION_LANGUAGE, TRANSCRIPTION_LANGUAGES } from "@shared/constants/languages";
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
 import { WHISPER_MODELS } from "@shared/constants/whisperModels";
+import { isBilledTier } from "@shared/constants/plans";
 import { useVideo, useVideos, useSetVideoTranscript } from "../hooks/useVideos";
 import { useLlmProfiles } from "../hooks/useLlmProfiles";
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
 import { SettingsService } from "../services/settings/SettingsService";
 import { AiService } from "../services/ai/AiService";
+import { useAuthStore } from "../store/authStore";
 import { ChatMessageContent } from "../components/ChatMessageContent";
 import "./AiPage.css";
 
@@ -82,6 +84,10 @@ function deriveTitle(messages: ChatMessage[]): string {
 export function AiAssistantPage() {
   const { data: videos = [] } = useVideos("");
   const { data: profiles = [] } = useLlmProfiles();
+  const session = useAuthStore((s) => s.session);
+  // Same gating as the Meeting tab's model picker (see MeetingPage.tsx's cloudEnabled) —
+  // only offer the hosted Doculigent option to accounts on a paid plan.
+  const cloudEnabled = !!session?.user.plan && isBilledTier(session.user.plan.tier);
 
   // The Library tab's per-card AI icon, and the Meeting tab's post-save "Summarize/
   // Generate Notes/Quick Chat" quick actions, navigate here with the recording/meeting
@@ -97,7 +103,11 @@ export function AiAssistantPage() {
   const [pendingAction, setPendingAction] = useState(() => initialNavState?.action ?? null);
   const { data: video } = useVideo(videoId || undefined);
   const [profileOverride, setProfileOverride] = useState(() => localStorage.getItem(LAST_PROFILE_KEY) ?? "");
-  const profileId = profileOverride || undefined;
+  // Same "not implemented yet" hosted option as the Meeting/Library/transcribe pickers
+  // (see MeetingPage.tsx's useDoculigent) — a sentinel value in profileOverride rather
+  // than a separate flag, since this picker only ever has one selection at a time anyway.
+  const usingCloudChat = profileOverride === "doculigent" && cloudEnabled;
+  const profileId = profileOverride && !usingCloudChat ? profileOverride : undefined;
   const selectedProfile = profiles.find((p) => p.id === profileId);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -106,6 +116,15 @@ export function AiAssistantPage() {
   // the picker doesn't sit on a phantom selection nothing can actually use.
   useEffect(() => {
     if (!profileOverride) return;
+    if (profileOverride === "doculigent") {
+      if (cloudEnabled) {
+        localStorage.setItem(LAST_PROFILE_KEY, profileOverride);
+      } else {
+        setProfileOverride("");
+        localStorage.removeItem(LAST_PROFILE_KEY);
+      }
+      return;
+    }
     if (profiles.length === 0) return; // still loading — don't judge it yet
     if (profiles.some((p) => p.id === profileOverride)) {
       localStorage.setItem(LAST_PROFILE_KEY, profileOverride);
@@ -113,7 +132,7 @@ export function AiAssistantPage() {
       setProfileOverride("");
       localStorage.removeItem(LAST_PROFILE_KEY);
     }
-  }, [profileOverride, profiles]);
+  }, [profileOverride, profiles, cloudEnabled]);
 
   const [transcript, setTranscript] = useState<Transcript | null>(null);
 
@@ -143,6 +162,11 @@ export function AiAssistantPage() {
   const [drawerLanguage, setDrawerLanguage] = useState(DEFAULT_TRANSCRIPTION_LANGUAGE);
   const [drawerModel, setDrawerModel] = useState<WhisperModelSize | null>(null);
   const [drawerByokId, setDrawerByokId] = useState<string | null>(null);
+  // Whether the picker below is set to the hosted Doculigent option rather than a local
+  // size or BYOK profile — same "not implemented yet" status as the Meeting tab's cloud
+  // option (see MeetingPage.tsx's useDoculigent), so selecting it here just disables the
+  // (Re-)transcribe button below instead of firing a request nothing can serve yet.
+  const [drawerUseCloud, setDrawerUseCloud] = useState(false);
   const [modelStatuses, setModelStatuses] = useState<WhisperModelStatus[] | null>(null);
   useEffect(() => {
     SettingsService.getWhisperModel().then(setDrawerModel).catch(() => {});
@@ -158,12 +182,18 @@ export function AiAssistantPage() {
   // Transcribe-capable profiles from the same Settings > Models list used for chat above.
   const byokProfiles = profiles.filter((p) => p.capabilities.includes("transcribe"));
   const usingDrawerByok = drawerByokId !== null && byokProfiles.some((p) => p.id === drawerByokId);
-  const hasAnyTranscribeModel = downloadedModels.length > 0 || byokProfiles.length > 0;
+  const usingDrawerCloud = drawerUseCloud && cloudEnabled;
+  const hasAnyTranscribeModel = downloadedModels.length > 0 || byokProfiles.length > 0 || cloudEnabled;
 
   function handleDrawerModelSelectChange(value: string) {
-    if (value.startsWith("byok:")) {
+    if (value === "doculigent") {
+      setDrawerUseCloud(true);
+      setDrawerByokId(null);
+    } else if (value.startsWith("byok:")) {
+      setDrawerUseCloud(false);
       setDrawerByokId(value.slice("byok:".length));
     } else {
+      setDrawerUseCloud(false);
       setDrawerByokId(null);
       setDrawerModel(value as WhisperModelSize);
     }
@@ -534,7 +564,7 @@ export function AiAssistantPage() {
           </div>
 
           <p className="chat-page-meta muted">
-            Model: {selectedProfile?.name ?? "none"} · Attachment: {video?.title ?? "none"}
+            Model: {usingCloudChat ? "Doculigent (cloud)" : (selectedProfile?.name ?? "none")} · Attachment: {video?.title ?? "none"}
           </p>
         </div>
 
@@ -553,17 +583,18 @@ export function AiAssistantPage() {
                 <select
                   value={profileOverride}
                   onChange={(e) => setProfileOverride(e.target.value)}
-                  disabled={profiles.length === 0}
+                  disabled={profiles.length === 0 && !cloudEnabled}
                 >
-                  {profiles.length === 0 && <option value="">No models configured</option>}
-                  {profiles.length > 0 && <option value="">Select a model…</option>}
+                  {profiles.length === 0 && !cloudEnabled && <option value="">No models configured</option>}
+                  {(profiles.length > 0 || cloudEnabled) && <option value="">Select a model…</option>}
+                  {cloudEnabled && <option value="doculigent">Doculigent (cloud)</option>}
                   {profiles.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
                     </option>
                   ))}
                 </select>
-                {profiles.length === 0 && (
+                {profiles.length === 0 && !cloudEnabled && (
                   <small className="field-hint">
                     <Link to="/settings">Add a model in Settings</Link>
                   </small>
@@ -670,9 +701,10 @@ export function AiAssistantPage() {
                       <span>Model</span>
                       {hasAnyTranscribeModel ? (
                         <select
-                          value={usingDrawerByok ? `byok:${drawerByokId}` : (effectiveDrawerModel ?? "")}
+                          value={usingDrawerCloud ? "doculigent" : usingDrawerByok ? `byok:${drawerByokId}` : (effectiveDrawerModel ?? "")}
                           onChange={(e) => handleDrawerModelSelectChange(e.target.value)}
                         >
+                          {cloudEnabled && <option value="doculigent">Doculigent (cloud)</option>}
                           {downloadedModels.map((m) => (
                             <option key={m.size} value={m.size}>
                               {m.label}
