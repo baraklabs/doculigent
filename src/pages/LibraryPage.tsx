@@ -1,20 +1,41 @@
 import { useEffect, useRef, useState, type CSSProperties, type SyntheticEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Bot, Clapperboard, Mic, FolderKanban, Link2, FileText, Check, X, FolderOpen, Pencil, Trash2 } from "lucide-react";
+import {
+  Bot,
+  Clapperboard,
+  Mic,
+  Users,
+  Link2,
+  FileText,
+  Check,
+  X,
+  FolderOpen,
+  Pencil,
+  Trash2,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from "lucide-react";
 import type { TranscriptSegment, Video } from "@shared/types/models";
 import { mediaUrl } from "@shared/constants/media";
 import { DEFAULT_TRANSCRIPTION_LANGUAGE, TRANSCRIPTION_LANGUAGES } from "@shared/constants/languages";
 import { WHISPER_MODELS } from "@shared/constants/whisperModels";
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
 import { isBilledTier } from "@shared/constants/plans";
-import { useDeleteVideo, useDeleteVideos, useRenameVideo, useSetVideoTranscript, useVideos } from "../hooks/useVideos";
+import {
+  useDeleteVideo,
+  useDeleteVideos,
+  useImportVideos,
+  useRenameVideo,
+  useSetVideoTranscript,
+  useVideos,
+} from "../hooks/useVideos";
 import { useLlmProfiles } from "../hooks/useLlmProfiles";
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
+import { LibraryService } from "../services/library/LibraryService";
 import { SettingsService } from "../services/settings/SettingsService";
 import { useAuthStore } from "../store/authStore";
 import { useToast } from "../hooks/useToast";
 import { friendlyErrorMessage } from "../utils/errors";
-import { ComingSoon } from "../components/ComingSoon";
 import "./LibraryPage.css";
 
 function fileName(filePath: string): string {
@@ -35,7 +56,7 @@ function showThumbnailFrame(e: SyntheticEvent<HTMLVideoElement>): void {
 const SECTIONS = [
   { id: "videos", label: "Videos", icon: <Clapperboard size={16} />, accent: "#5b4bf5", tint: "rgba(91, 75, 245, .09)" },
   { id: "meeting", label: "Meeting", icon: <Mic size={16} />, accent: "#0284c7", tint: "rgba(14, 165, 233, .11)" },
-  { id: "projects", label: "Projects", icon: <FolderKanban size={16} />, accent: "#0f766e", tint: "rgba(15, 118, 110, .1)" },
+  { id: "team", label: "Team", icon: <Users size={16} />, accent: "#0f766e", tint: "rgba(15, 118, 110, .1)" },
   { id: "shared", label: "Shared", icon: <Link2 size={16} />, accent: "#db2777", tint: "rgba(236, 72, 153, .1)" },
   { id: "transcribed", label: "Transcribed", icon: <FileText size={16} />, accent: "#b45309", tint: "rgba(245, 158, 11, .13)" },
 ] as const;
@@ -43,12 +64,16 @@ type SectionId = (typeof SECTIONS)[number]["id"];
 
 const SHARED_TABS = [
   { id: "mine", label: "Shared by you" },
-  { id: "team", label: "Shared with your team" },
+  { id: "team", label: "Shared with you" },
 ] as const;
 type SharedTabId = (typeof SHARED_TABS)[number]["id"];
 
 
 const SECTION_IDS = SECTIONS.map((s) => s.id) as readonly string[];
+
+// Same per-renderer-preference pattern as AiAssistantPage's sidebarCollapsed — persisted
+// to localStorage rather than the settings store since it's just a UI layout choice.
+const NAV_COLLAPSED_KEY = "library.navCollapsed";
 
 export function LibraryPage() {
   const navigate = useNavigate();
@@ -57,6 +82,10 @@ export function LibraryPage() {
     const requested = searchParams.get("section");
     return requested && SECTION_IDS.includes(requested) ? (requested as SectionId) : "videos";
   });
+  const [navCollapsed, setNavCollapsed] = useState(() => localStorage.getItem(NAV_COLLAPSED_KEY) === "1");
+  useEffect(() => {
+    localStorage.setItem(NAV_COLLAPSED_KEY, navCollapsed ? "1" : "0");
+  }, [navCollapsed]);
   const [query, setQuery] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
@@ -68,7 +97,12 @@ export function LibraryPage() {
   const [sharedTab, setSharedTab] = useState<SharedTabId>("mine");
   const [folderError, setFolderError] = useState<{ id: string; message: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Video | null>(null);
-  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeleteScope, setBulkDeleteScope] = useState<"all" | "selected" | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [uploadingKind, setUploadingKind] = useState<"video" | "audio" | null>(null);
+  const [importProgress, setImportProgress] = useState<{ percent: number; fileIndex: number; totalFiles: number } | null>(
+    null
+  );
   const session = useAuthStore((s) => s.session);
   // Same gating as the Meeting tab's model picker (see MeetingPage.tsx's cloudEnabled) —
   // only offer the hosted Doculigent option to accounts on a paid plan.
@@ -89,6 +123,7 @@ export function LibraryPage() {
   const deleteVideos = useDeleteVideos();
   const renameVideo = useRenameVideo();
   const setVideoTranscript = useSetVideoTranscript();
+  const importVideos = useImportVideos();
 
   const sectionVideos =
     section === "transcribed"
@@ -97,6 +132,11 @@ export function LibraryPage() {
         ? videos.filter((v) => v.source === "meeting")
         : videos.filter((v) => v.source === "record");
   const viewingVideo = videos.find((v) => v.id === viewingId) ?? null;
+  // A transcript with this engine tag has no real speech-to-text run behind it to redo
+  // (legacy data only — the feature that produced it has been removed) — only transcripts
+  // actually produced by transcribing the video/audio itself (or no transcript yet, the
+  // first-time case) get the (Re-)transcribe controls.
+  const canRetranscribe = !viewingVideo?.transcript || viewingVideo.transcript.engine !== "transcript-import";
 
   useEffect(() => {
     if (!viewingId) return;
@@ -106,6 +146,14 @@ export function LibraryPage() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [viewingId]);
+
+  // Selection is scoped to whichever section/search results are visible — switching
+  // sections or re-searching clears it rather than keeping ids the user can no longer see.
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [section, query]);
+
+  useEffect(() => LibraryService.onImportProgress(setImportProgress), []);
 
   const [retranscribeLanguage, setRetranscribeLanguage] = useState(DEFAULT_TRANSCRIPTION_LANGUAGE);
   const [retranscribeModel, setRetranscribeModel] = useState<WhisperModelSize | null>(null);
@@ -211,6 +259,22 @@ export function LibraryPage() {
     await TranscriptionService.cancel();
   }
 
+  async function handleImport(kind: "video" | "audio") {
+    const filePaths = await LibraryService.pickFiles(kind);
+    if (filePaths.length === 0) return;
+    setUploadingKind(kind);
+    setImportProgress({ percent: 0, fileIndex: 0, totalFiles: filePaths.length });
+    try {
+      const imported = await importVideos.mutateAsync({ filePaths, kind });
+      toast.success(`${imported.length} file${imported.length === 1 ? "" : "s"} imported`);
+    } catch (e) {
+      toast.error(friendlyErrorMessage(e), { title: "Import failed" });
+    } finally {
+      setUploadingKind(null);
+      setImportProgress(null);
+    }
+  }
+
   async function handleTranscribeClick(v: Video) {
     setViewingId(v.id);
     if (v.transcript) return;
@@ -239,11 +303,7 @@ export function LibraryPage() {
   }
 
   function handleDelete(v: Video) {
-    if (section === "transcribed") {
-      setVideoTranscript.mutate({ id: v.id, transcript: null });
-    } else {
-      setDeleteTarget(v);
-    }
+    setDeleteTarget(v);
   }
 
   function confirmDelete(keepFile: boolean) {
@@ -252,29 +312,74 @@ export function LibraryPage() {
     setDeleteTarget(null);
   }
 
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    setSelectedIds(new Set(sectionVideos.map((v) => v.id)));
+  }
+
+  function deselectAll() {
+    setSelectedIds(new Set());
+  }
+
+  function handleBulkDelete(scope: "all" | "selected") {
+    const hasTargets =
+      scope === "all" ? sectionVideos.length > 0 : sectionVideos.some((v) => selectedIds.has(v.id));
+    if (!hasTargets) return;
+    setBulkDeleteScope(scope);
+  }
+
+  const bulkDeleteTargetIds =
+    bulkDeleteScope === "all"
+      ? sectionVideos.map((v) => v.id)
+      : bulkDeleteScope === "selected"
+        ? sectionVideos.filter((v) => selectedIds.has(v.id)).map((v) => v.id)
+        : [];
+
   function confirmBulkDelete(keepFile: boolean) {
-    if (sectionVideos.length === 0) return;
-    deleteVideos.mutate({ ids: sectionVideos.map((v) => v.id), keepFile });
-    setBulkDeleteOpen(false);
+    if (bulkDeleteTargetIds.length === 0) {
+      setBulkDeleteScope(null);
+      return;
+    }
+    deleteVideos.mutate({ ids: bulkDeleteTargetIds, keepFile });
+    setSelectedIds(new Set());
+    setBulkDeleteScope(null);
   }
 
   const activeSection = SECTIONS.find((s) => s.id === section)!;
   const canBulkDelete = section === "videos" || section === "meeting";
+  const selectedCount = sectionVideos.filter((v) => selectedIds.has(v.id)).length;
 
   return (
     <div className="library-layout">
       <div className="library-body">
-        <nav className="library-nav">
+        <nav className={navCollapsed ? "library-nav collapsed" : "library-nav"}>
+          <button
+            type="button"
+            className="library-nav-toggle"
+            title={navCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={() => setNavCollapsed((c) => !c)}
+          >
+            {navCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          </button>
           {SECTIONS.map((s) => (
             <button
               key={s.id}
               type="button"
               className={s.id === section ? "library-nav-item active" : "library-nav-item"}
               style={{ "--nav-accent": s.accent, "--nav-tint": s.tint } as CSSProperties}
+              title={navCollapsed ? s.label : undefined}
               onClick={() => setSection(s.id)}
             >
               <span className="library-nav-icon">{s.icon}</span>
-              {s.label}
+              {!navCollapsed && s.label}
             </button>
           ))}
         </nav>
@@ -311,7 +416,7 @@ export function LibraryPage() {
                   <p className="muted">
                     {sharedTab === "mine"
                       ? "Nothing shared yet. Sharing (the share icon on a recording) is still being built for doculigent.com accounts."
-                      : "Your team's shared recordings will show up here once doculigent.com sharing is live."}
+                      : "Recordings shared with you will show up here once doculigent.com sharing is live."}
                   </p>
                 ) : (
                   <p className="muted">
@@ -320,11 +425,12 @@ export function LibraryPage() {
                 )}
               </div>
             </>
-          ) : section === "projects" ? (
-            <ComingSoon
-              icon={<FolderKanban size={36} />}
-              title="Projects is coming soon"
-            />
+          ) : section === "team" ? (
+            <div className="shared-empty">
+              <p className="muted">
+                Sign in with doculigent.com to collaborate with teams — <Link to="/account">go to Account</Link>.
+              </p>
+            </div>
           ) : (
             <>
               <div className="library-section-head">
@@ -335,6 +441,28 @@ export function LibraryPage() {
                     {section === "meeting" ? "Audio recorded from the Meeting tab." : "Every recording, stored locally."}
                   </p>
                 </div>
+                {section === "videos" && (
+                  <button
+                    type="button"
+                    className="library-upload-btn"
+                    disabled={uploadingKind !== null}
+                    onClick={() => handleImport("video")}
+                  >
+                    <Clapperboard size={16} />
+                    {uploadingKind === "video" ? "Importing…" : "Import Video"}
+                  </button>
+                )}
+                {section === "meeting" && (
+                  <button
+                    type="button"
+                    className="library-upload-btn"
+                    disabled={uploadingKind !== null}
+                    onClick={() => handleImport("audio")}
+                  >
+                    <Mic size={16} />
+                    {uploadingKind === "audio" ? "Importing…" : "Import Meeting / Audio"}
+                  </button>
+                )}
               </div>
 
               <div className="library-toolbar">
@@ -345,14 +473,33 @@ export function LibraryPage() {
                   onChange={(e) => setQuery(e.target.value)}
                 />
                 {canBulkDelete && (
-                  <button
-                    type="button"
-                    className="danger library-delete-all"
-                    disabled={sectionVideos.length === 0}
-                    onClick={() => setBulkDeleteOpen(true)}
-                  >
-                    Delete All
-                  </button>
+                  <>
+                    <button type="button" onClick={selectAll} disabled={sectionVideos.length === 0}>
+                      Select All
+                    </button>
+                    <button type="button" onClick={deselectAll} disabled={selectedCount === 0}>
+                      Deselect All
+                    </button>
+                    <span className="muted library-selection-count">
+                      {selectedCount > 0 ? `${selectedCount} selected` : ""}
+                    </span>
+                    <button
+                      type="button"
+                      className="danger"
+                      disabled={selectedCount === 0}
+                      onClick={() => handleBulkDelete("selected")}
+                    >
+                      Delete Selected
+                    </button>
+                    <button
+                      type="button"
+                      className="danger library-delete-all"
+                      disabled={sectionVideos.length === 0}
+                      onClick={() => handleBulkDelete("all")}
+                    >
+                      Delete All
+                    </button>
+                  </>
                 )}
               </div>
 
@@ -369,8 +516,17 @@ export function LibraryPage() {
 
               <div className="library-grid">
                 {sectionVideos.map((v) => (
-                  <div key={v.id} className="video-card">
+                  <div key={v.id} className={selectedIds.has(v.id) ? "video-card selected" : "video-card"}>
                     <div className="thumb">
+                      {canBulkDelete && (
+                        <label className="video-card-select" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(v.id)}
+                            onChange={() => toggleSelect(v.id)}
+                          />
+                        </label>
+                      )}
                       {v.source === "meeting" ? (
                         <div className="thumb-audio">
                           <Mic size={32} />
@@ -456,14 +612,20 @@ export function LibraryPage() {
                           <button type="button" title="Share" className="icon-btn icon-btn-share" onClick={() => {}}>
                             <Link2 size={20} />
                           </button>
-                          <button
-                            type="button"
-                            title={section === "transcribed" ? "Delete transcript" : "Delete recording"}
-                            className="icon-btn icon-btn-delete"
-                            onClick={() => handleDelete(v)}
-                          >
-                            <Trash2 size={20} />
-                          </button>
+                          {/* Not shown on the Transcribed tab — it's a filtered view of
+                              recordings that live in Videos/Meeting, so deleting happens
+                              from there rather than offering a second, easily-confused
+                              "delete" here that only used to clear the transcript. */}
+                          {section !== "transcribed" && (
+                            <button
+                              type="button"
+                              title="Delete recording"
+                              className="icon-btn icon-btn-delete"
+                              onClick={() => handleDelete(v)}
+                            >
+                              <Trash2 size={20} />
+                            </button>
+                          )}
                           {/* Pushed to the far right (see .icon-btn-ai's margin-left:auto)
                               rather than sitting in the same cluster as the other actions —
                               jumps to the AI Assistant tab with this recording already
@@ -512,31 +674,53 @@ export function LibraryPage() {
         </div>
       )}
 
-      {bulkDeleteOpen && (
-        <div className="modal-backdrop" onClick={() => setBulkDeleteOpen(false)}>
+      {bulkDeleteScope && (
+        <div className="modal-backdrop" onClick={() => setBulkDeleteScope(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h2>
-              Delete all {sectionVideos.length} {sectionVideos.length === 1 ? "recording" : "recordings"}?
+              Delete {bulkDeleteTargetIds.length}{" "}
+              {bulkDeleteTargetIds.length === 1 ? "recording" : "recordings"}?
             </h2>
             <p className="muted">
-              You can clear every recording from your library and keep the files on disk, or delete both the
-              library entries and the files themselves. This can't be undone.
+              You can remove {bulkDeleteScope === "all" ? "every recording" : "the selected recordings"} from
+              your library and keep the files on disk, or delete both the library entries and the files
+              themselves. This can't be undone.
             </p>
             <div className="actions modal-actions">
-              <button type="button" onClick={() => setBulkDeleteOpen(false)}>
+              <button type="button" onClick={() => setBulkDeleteScope(null)}>
                 Cancel
               </button>
               <button type="button" onClick={() => confirmBulkDelete(true)}>
-                Delete All from Library
+                Delete from Library
               </button>
               <button type="button" className="danger" onClick={() => confirmBulkDelete(false)}>
-                Delete All from Disk
+                Delete from Disk
               </button>
             </div>
           </div>
         </div>
       )}
 
+      {/* No onClick-to-dismiss on the backdrop (unlike the modals above) — closing it
+          wouldn't stop the import running in the main process, so letting it be dismissed
+          would just make the page lie about whether anything's still happening. */}
+      {importProgress && (
+        <div className="modal-backdrop">
+          <div className="modal import-progress-modal">
+            <h2>Importing…</h2>
+            {importProgress.totalFiles > 1 && (
+              <p className="muted">
+                File {Math.min(importProgress.fileIndex + 1, importProgress.totalFiles)} of{" "}
+                {importProgress.totalFiles}
+              </p>
+            )}
+            <div className="progress-bar-track">
+              <div className="progress-bar-fill" style={{ width: `${importProgress.percent}%` }} />
+            </div>
+            <p className="muted progress-bar-label">{importProgress.percent}%</p>
+          </div>
+        </div>
+      )}
 
       {viewingVideo && (
         <div className="transcript-drawer-backdrop" onClick={() => setViewingId(null)}>
@@ -548,74 +732,78 @@ export function LibraryPage() {
               </button>
             </div>
 
-            <fieldset className="field retranscribe-controls" disabled={transcribingId === viewingVideo.id}>
-              <legend>Transcribe with</legend>
+            {canRetranscribe && (
+              <>
+                <fieldset className="field retranscribe-controls" disabled={transcribingId === viewingVideo.id}>
+                  <legend>Transcribe with</legend>
 
-              <div className="retranscribe-row">
-                <label className="field">
-                  <span>Language</span>
-                  <select value={retranscribeLanguage} onChange={(e) => setRetranscribeLanguage(e.target.value)}>
-                    {TRANSCRIPTION_LANGUAGES.map((l) => (
-                      <option key={l.code} value={l.code}>
-                        {l.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  <div className="retranscribe-row">
+                    <label className="field">
+                      <span>Language</span>
+                      <select value={retranscribeLanguage} onChange={(e) => setRetranscribeLanguage(e.target.value)}>
+                        {TRANSCRIPTION_LANGUAGES.map((l) => (
+                          <option key={l.code} value={l.code}>
+                            {l.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
 
-                <label className="field">
-                  <span>Model</span>
-                  {hasAnyModel ? (
-                    <select
-                      value={usingCloud ? "doculigent" : usingByok ? `byok:${retranscribeByokId}` : (effectiveRetranscribeModel ?? "")}
-                      onChange={(e) => handleRetranscribeModelSelectChange(e.target.value)}
-                    >
-                      {cloudEnabled && <option value="doculigent">Doculigent (cloud)</option>}
-                      {downloadedModels.map((m) => (
-                        <option key={m.size} value={m.size}>
-                          {m.label}
-                        </option>
-                      ))}
-                      {byokProfiles.map((p) => (
-                        <option key={p.id} value={`byok:${p.id}`}>
-                          {p.name || "BYOK"}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    modelStatuses && (
-                      <span className="muted field-hint-inline">
-                        No models configured — set one up in{" "}
-                        <Link to="/settings">Settings &gt; Models</Link>.
-                      </span>
-                    )
+                    <label className="field">
+                      <span>Model</span>
+                      {hasAnyModel ? (
+                        <select
+                          value={usingCloud ? "doculigent" : usingByok ? `byok:${retranscribeByokId}` : (effectiveRetranscribeModel ?? "")}
+                          onChange={(e) => handleRetranscribeModelSelectChange(e.target.value)}
+                        >
+                          {cloudEnabled && <option value="doculigent">Doculigent (cloud)</option>}
+                          {downloadedModels.map((m) => (
+                            <option key={m.size} value={m.size}>
+                              {m.label}
+                            </option>
+                          ))}
+                          {byokProfiles.map((p) => (
+                            <option key={p.id} value={`byok:${p.id}`}>
+                              {p.name || "BYOK"}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        modelStatuses && (
+                          <span className="muted field-hint-inline">
+                            No models configured — set one up in{" "}
+                            <Link to="/settings">Settings &gt; Models</Link>.
+                          </span>
+                        )
+                      )}
+                    </label>
+                  </div>
+                </fieldset>
+
+                {/* Deliberately outside the fieldset above — its `disabled` while transcribing
+                    is meant to lock the language/model pickers, not the Stop button, which
+                    needs to stay clickable for exactly that duration. */}
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={() => handleRetranscribeClick(viewingVideo)}
+                    disabled={transcribingId === viewingVideo.id || !hasAnyModel}
+                  >
+                    {transcribingId === viewingVideo.id
+                      ? "Transcribing…"
+                      : viewingVideo.transcript
+                        ? "Re-transcribe"
+                        : "Transcribe"}
+                  </button>
+                  {transcribingId === viewingVideo.id && (
+                    <button type="button" className="danger" onClick={handleStopTranscribe}>
+                      Stop
+                    </button>
                   )}
-                </label>
-              </div>
-            </fieldset>
-
-            {/* Deliberately outside the fieldset above — its `disabled` while transcribing
-                is meant to lock the language/model pickers, not the Stop button, which
-                needs to stay clickable for exactly that duration. */}
-            <div className="actions">
-              <button
-                type="button"
-                className="primary"
-                onClick={() => handleRetranscribeClick(viewingVideo)}
-                disabled={transcribingId === viewingVideo.id || !hasAnyModel}
-              >
-                {transcribingId === viewingVideo.id
-                  ? "Transcribing…"
-                  : viewingVideo.transcript
-                    ? "Re-transcribe"
-                    : "Transcribe"}
-              </button>
-              {transcribingId === viewingVideo.id && (
-                <button type="button" className="danger" onClick={handleStopTranscribe}>
-                  Stop
-                </button>
-              )}
-            </div>
+                </div>
+              </>
+            )}
 
             {errorFor?.id === viewingVideo.id && <p className="error">{errorFor.message}</p>}
 

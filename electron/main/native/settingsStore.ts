@@ -1,13 +1,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { LlmModelProfile, MicConfig, OverlayConfig } from "@shared/types/models";
+import type { AppIntegration, LlmModelProfile, MicConfig, OverlayConfig } from "@shared/types/models";
 import type { AuthUser } from "@shared/types/auth";
 import type { WhisperModelSize } from "@shared/constants/whisperModels";
 import { settingsFilePath } from "./paths";
 
 interface StoredSettings {
   llmProfiles?: LlmModelProfile[];
+  appIntegrations?: AppIntegration[];
   authUser?: AuthUser;
   authExpiresAt?: string | null;
   recordOverlay?: OverlayConfig;
@@ -63,6 +64,28 @@ export function deleteLlmProfile(id: string): void {
   const transcriptionByokProfileId =
     stored.transcriptionByokProfileId === id ? null : stored.transcriptionByokProfileId;
   writeStored({ ...stored, llmProfiles, transcriptionByokProfileId });
+}
+
+export function listAppIntegrations(): AppIntegration[] {
+  return readStored().appIntegrations ?? [];
+}
+
+export function getAppIntegration(id: string): AppIntegration | null {
+  return listAppIntegrations().find((a) => a.id === id) ?? null;
+}
+
+export function saveAppIntegration(integration: AppIntegration): void {
+  const stored = readStored();
+  const existing = stored.appIntegrations ?? [];
+  const idx = existing.findIndex((a) => a.id === integration.id);
+  const appIntegrations = idx >= 0 ? existing.map((a, i) => (i === idx ? integration : a)) : [...existing, integration];
+  writeStored({ ...stored, appIntegrations });
+}
+
+export function deleteAppIntegration(id: string): void {
+  const stored = readStored();
+  const appIntegrations = (stored.appIntegrations ?? []).filter((a) => a.id !== id);
+  writeStored({ ...stored, appIntegrations });
 }
 
 export function getAuthProfile(): { user: AuthUser; expiresAt: string | null } | null {

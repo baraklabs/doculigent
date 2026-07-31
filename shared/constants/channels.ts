@@ -48,6 +48,9 @@ export const Channels = {
     search: "library:search",
     rename: "library:rename",
     setTranscript: "library:setTranscript",
+    pickFiles: "library:pickFiles",
+    importFiles: "library:importFiles",
+    importProgress: "library:importProgress",
   },
   settings: {
     getSaveDir: "settings:getSaveDir",
@@ -78,6 +81,12 @@ export const Channels = {
     summarize: "ai:summarize",
     chat: "ai:chat",
     testConnection: "ai:testConnection",
+  },
+  apps: {
+    list: "apps:list",
+    save: "apps:save",
+    delete: "apps:delete",
+    testConnection: "apps:testConnection",
   },
   transcription: {
     transcribe: "transcription:transcribe",

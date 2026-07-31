@@ -5,6 +5,7 @@ import { registerAnnotationIpc } from "./annotation";
 import { registerRecordingIpc } from "./recording";
 import { registerLibraryIpc } from "./library";
 import { registerSettingsIpc } from "./settings";
+import { registerAppsIpc } from "./apps";
 import { registerAiIpc } from "./ai";
 import { registerTranscriptionIpc } from "./transcription";
 import { registerWindowIpc } from "./window";
@@ -18,6 +19,7 @@ export function registerIpcHandlers(): void {
   registerRecordingIpc();
   registerLibraryIpc();
   registerSettingsIpc();
+  registerAppsIpc();
   registerAiIpc();
   registerTranscriptionIpc();
   registerWindowIpc();

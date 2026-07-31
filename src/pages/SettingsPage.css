@@ -1,9 +1,26 @@
 .settings-layout { display: flex; gap: 16px; align-items: flex-start; width: 100%; }
-.settings-nav { display: flex; flex-direction: column; gap: 4px; width: 160px; flex-shrink: 0; }
+/* Sticky rather than fixed — same reasoning as LibraryPage's .library-nav: .workspace (see
+   Layout.css) is already the nearest scrolling ancestor, so this stays in place as the
+   settings content on the right scrolls, without needing its own left-offset math or
+   floating over the footer. */
+.settings-nav {
+  display: flex; flex-direction: column; gap: 4px; width: 160px; flex-shrink: 0;
+  position: sticky; top: 0; transition: width 150ms ease;
+}
+.settings-nav.collapsed { width: 40px; }
+.settings-nav-toggle {
+  display: flex; align-items: center; justify-content: center;
+  padding: 7px; margin-bottom: 2px; border-radius: 8px; align-self: flex-start;
+  background: none; border: none; color: var(--muted); cursor: pointer;
+}
+.settings-nav-toggle:hover { background: rgba(91, 75, 245, .12); color: var(--text); }
 .settings-nav-item {
+  display: flex; align-items: center; gap: 9px;
   padding: 8px 12px; border-radius: 8px; color: var(--muted); font-size: 13px; cursor: pointer;
   background: none; border: none; font: inherit; text-align: left; width: 100%;
 }
+.settings-nav.collapsed .settings-nav-item { justify-content: center; padding: 8px; }
+.settings-nav-icon { display: flex; font-size: 15px; line-height: 1; }
 .settings-nav-item:hover { color: var(--text); }
 .settings-nav-item.active { color: var(--text); background: rgba(91, 75, 245,.12); font-weight: 600; }
 .settings-content { flex: 1; min-width: 0; }
@@ -118,3 +135,27 @@
 .model-size-card-action:disabled {
   opacity: .6; cursor: not-allowed; background: var(--muted); border-color: var(--muted); box-shadow: none;
 }
+
+/* "+ Add an app" cards (GitHub/Slack/Teams) — each opens AppIntegrationForm pre-fixed to
+   that kind, so unlike the Models tab there's no separate "+ Add" button + kind dropdown. */
+.app-add-grid { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.app-add-card {
+  display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+.app-add-card:hover { border-color: var(--accent); box-shadow: 0 4px 12px rgba(91, 75, 245, .12); transform: translateY(-1px); }
+/* A colored badge (brand background, white glyph) rather than a flat tinted line-icon —
+   reads as the app's actual icon at a glance instead of a generic monochrome symbol. */
+.app-icon {
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 22px; height: 22px; border-radius: 6px; color: #fff; font-size: 13px; line-height: 1;
+}
+/* Slack's mark already carries its own four real brand colors (see SlackMark in
+   src/providers/apps) — no background tint, just enough padding to keep its squares off
+   the badge's own rounded corners. */
+.app-icon.multicolor { padding: 2px; }
+.app-icon.multicolor svg { width: 100%; height: 100%; }
+.app-add-card .app-icon { width: 26px; height: 26px; font-size: 15px; }
+.app-form-kind { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.app-form-kind .app-icon { width: 28px; height: 28px; font-size: 16px; border-radius: 7px; }

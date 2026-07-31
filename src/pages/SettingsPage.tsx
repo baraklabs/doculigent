@@ -1,14 +1,27 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Download } from "lucide-react";
-import type { LlmCapability, LlmModelProfile, LlmProviderKind } from "@shared/types/models";
+import { AppWindow, Cpu, Download, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import type {
+  AppIntegration,
+  AppIntegrationKind,
+  LlmCapability,
+  LlmModelProfile,
+  LlmProviderKind,
+} from "@shared/types/models";
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
 import { WHISPER_MODELS } from "@shared/constants/whisperModels";
 import { isBilledTier } from "@shared/constants/plans";
 import { AI_PROVIDERS, LOCAL_LLM_PROVIDERS } from "../providers/ai";
+import { APP_PROVIDERS, appProviderMeta } from "../providers/apps";
 import { SettingsService } from "../services/settings/SettingsService";
 import { useAuthStore } from "../store/authStore";
 import { useDeleteLlmProfile, useLlmProfiles, useSaveLlmProfile, useTestLlmConnection } from "../hooks/useLlmProfiles";
+import {
+  useAppIntegrations,
+  useDeleteAppIntegration,
+  useSaveAppIntegration,
+  useTestAppConnection,
+} from "../hooks/useAppIntegrations";
 import "./SettingsPage.css";
 
 function providerLabel(kind: LlmProviderKind): string {
@@ -147,6 +160,97 @@ function ModelForm({ initial, isNew, onCancel, onSaved }: ModelFormProps) {
         </button>
         <button type="button" className="primary" onClick={handleSave} disabled={saveProfile.isPending || !profile.name.trim()}>
           {saveProfile.isPending ? "Saving…" : "Save"}
+        </button>
+        <button type="button" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+
+      {testResult && <p className={testResult.ok ? "muted" : "error"}>{testResult.ok ? "✓ " : "✗ "}{testResult.message}</p>}
+    </div>
+  );
+}
+
+interface AppIntegrationFormProps {
+  kind: AppIntegrationKind;
+  initial: AppIntegration | null;
+  onCancel: () => void;
+  onSaved: () => void;
+}
+
+/** Add/edit form for one connected app. Unlike ModelForm there's no kind picker — the kind
+ *  is fixed by which app card (GitHub/Slack/Teams) the user clicked "+ Add" on, and stays
+ *  fixed while editing too. Multiple integrations of the same kind are just multiple saved
+ *  records with different `name`s (e.g. two GitHub orgs), same as LLM profiles. */
+function AppIntegrationForm({ kind, initial, onCancel, onSaved }: AppIntegrationFormProps) {
+  const meta = appProviderMeta(kind);
+  const isNew = !initial;
+  const [name, setName] = useState(initial?.name ?? meta.label);
+  const [secret, setSecret] = useState("");
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const saveIntegration = useSaveAppIntegration();
+  const testConnection = useTestAppConnection();
+
+  async function handleTest() {
+    setTestResult(null);
+    const result = await testConnection.mutateAsync({
+      kind,
+      integrationId: initial?.id ?? null,
+      secret: secret || undefined,
+    });
+    setTestResult(result);
+  }
+
+  async function handleSave() {
+    const integration: AppIntegration = { id: initial?.id ?? crypto.randomUUID(), kind, name: name.trim() };
+    await saveIntegration.mutateAsync({ integration, secret: secret || undefined });
+    onSaved();
+  }
+
+  return (
+    <div className="model-form">
+      <p className="muted app-form-kind">
+        <span
+          className={meta.multicolor ? "app-icon multicolor" : "app-icon"}
+          style={meta.multicolor ? undefined : { background: meta.accent }}
+        >
+          {meta.icon}
+        </span>
+        {meta.label}
+      </p>
+
+      <label className="field">
+        <span>Title</span>
+        <input value={name} onChange={(e) => setName(e.target.value)} />
+        <small className="field-hint">
+          A name you'll recognize — handy if you connect more than one {meta.label} account.
+        </small>
+      </label>
+
+      <label className="field">
+        <span>
+          {meta.secretLabel} <span className="field-hint-inline">— stored in your OS keychain</span>
+        </span>
+        <input
+          type="password"
+          value={secret}
+          placeholder={isNew ? meta.secretPlaceholder : "Leave blank to keep the saved value"}
+          onChange={(e) => setSecret(e.target.value)}
+        />
+        <small className="field-hint">{meta.testHint}</small>
+      </label>
+
+      <div className="actions">
+        <button type="button" onClick={handleTest} disabled={testConnection.isPending || (isNew && !secret)}>
+          {testConnection.isPending ? "Testing…" : "Test connection"}
+        </button>
+        <button
+          type="button"
+          className="primary"
+          onClick={handleSave}
+          disabled={saveIntegration.isPending || !name.trim() || (isNew && !secret)}
+        >
+          {saveIntegration.isPending ? "Saving…" : "Save"}
         </button>
         <button type="button" onClick={onCancel}>
           Cancel
@@ -315,10 +419,23 @@ function useWhisperModels() {
   return { loading, cacheDir, entries, handleDownload, handleDelete };
 }
 
-const SECTIONS = [{ id: "models", label: "Models" }] as const;
+const SECTIONS = [
+  { id: "models", label: "Models", icon: <Cpu size={16} /> },
+  { id: "apps", label: "Apps", icon: <AppWindow size={16} /> },
+] as const;
+type SettingsSectionId = (typeof SECTIONS)[number]["id"];
+
+// Same per-renderer-preference pattern as LibraryPage's navCollapsed — persisted to
+// localStorage rather than the settings store since it's just a UI layout choice.
+const NAV_COLLAPSED_KEY = "settings.navCollapsed";
 
 export function SettingsPage() {
   const navigate = useNavigate();
+  const [section, setSection] = useState<SettingsSectionId>("models");
+  const [navCollapsed, setNavCollapsed] = useState(() => localStorage.getItem(NAV_COLLAPSED_KEY) === "1");
+  useEffect(() => {
+    localStorage.setItem(NAV_COLLAPSED_KEY, navCollapsed ? "1" : "0");
+  }, [navCollapsed]);
   const session = useAuthStore((s) => s.session);
   const authReady = useAuthStore((s) => s.ready);
   const isPaid = !!session?.user.plan && isBilledTier(session.user.plan.tier);
@@ -349,16 +466,111 @@ export function SettingsPage() {
   const isLoadingAny = isLoading || whisper.loading;
   const readyCount = filteredProfiles.length + downloadedWhisper.length + (doculigentVisible ? 1 : 0);
 
+  const { data: integrations = [], isLoading: integrationsLoading } = useAppIntegrations();
+  const deleteIntegration = useDeleteAppIntegration();
+  // Which app card's "+ Add" was clicked (drives the form's fixed kind) — separate from
+  // editingIntegration since an add has no existing record yet to derive the kind from.
+  const [addingKind, setAddingKind] = useState<AppIntegrationKind | null>(null);
+  const [editingIntegration, setEditingIntegration] = useState<AppIntegration | null>(null);
+  function closeIntegrationModal() {
+    setAddingKind(null);
+    setEditingIntegration(null);
+  }
+
   return (
     <div className="settings-layout">
-      <nav className="settings-nav">
+      <nav className={navCollapsed ? "settings-nav collapsed" : "settings-nav"}>
+        <button
+          type="button"
+          className="settings-nav-toggle"
+          title={navCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          onClick={() => setNavCollapsed((c) => !c)}
+        >
+          {navCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+        </button>
         {SECTIONS.map((s) => (
-          <button key={s.id} type="button" className="settings-nav-item active">
-            {s.label}
+          <button
+            key={s.id}
+            type="button"
+            className={s.id === section ? "settings-nav-item active" : "settings-nav-item"}
+            title={navCollapsed ? s.label : undefined}
+            onClick={() => setSection(s.id)}
+          >
+            <span className="settings-nav-icon">{s.icon}</span>
+            {!navCollapsed && s.label}
           </button>
         ))}
       </nav>
 
+      {section === "apps" ? (
+        <section className="panel settings-content">
+          <p className="muted">
+            Connect external apps so Doculigent can work with the tools your team already uses.
+          </p>
+
+          <div className="field">
+            <span>Add an app</span>
+            <div className="app-add-grid">
+              {APP_PROVIDERS.map((p) => (
+                <button key={p.kind} type="button" className="app-add-card" onClick={() => setAddingKind(p.kind)}>
+                  <span
+                    className={p.multicolor ? "app-icon multicolor" : "app-icon"}
+                    style={p.multicolor ? undefined : { background: p.accent }}
+                  >
+                    {p.icon}
+                  </span>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="field">
+            <span>Connected apps</span>
+
+            {integrationsLoading && <p className="muted">Loading…</p>}
+
+            <div className="model-list">
+              {integrations.map((a) => {
+                const meta = appProviderMeta(a.kind);
+                return (
+                  <div key={a.id} className="model-row">
+                    <div className="model-row-info">
+                      <h3>
+                        <span
+                          className={meta.multicolor ? "app-icon multicolor" : "app-icon"}
+                          style={meta.multicolor ? undefined : { background: meta.accent }}
+                        >
+                          {meta.icon}
+                        </span>
+                        {a.name}
+                      </h3>
+                      <p className="muted sub">{meta.label}</p>
+                    </div>
+                    <div className="actions">
+                      <button type="button" onClick={() => setEditingIntegration(a)}>
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="danger"
+                        onClick={() => deleteIntegration.mutate(a.id)}
+                        disabled={deleteIntegration.isPending}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {!integrationsLoading && integrations.length === 0 && (
+                <p className="muted">No apps connected yet.</p>
+              )}
+            </div>
+          </div>
+        </section>
+      ) : (
       <section className="panel settings-content">
         <p className="muted">
           Models available across the app — run locally (Ollama, LM Studio, on-device Whisper) or bring your own key
@@ -539,6 +751,7 @@ export function SettingsPage() {
           )}
         </div>
       </section>
+      )}
 
       {editing && (
         <div className="modal-backdrop" onClick={() => setEditing(null)}>
@@ -549,6 +762,24 @@ export function SettingsPage() {
               isNew={editing.isNew}
               onCancel={() => setEditing(null)}
               onSaved={() => setEditing(null)}
+            />
+          </div>
+        </div>
+      )}
+
+      {(addingKind || editingIntegration) && (
+        <div className="modal-backdrop" onClick={closeIntegrationModal}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>
+              {editingIntegration
+                ? `Edit ${appProviderMeta(editingIntegration.kind).label}`
+                : `Add ${appProviderMeta(addingKind!).label}`}
+            </h2>
+            <AppIntegrationForm
+              kind={editingIntegration?.kind ?? addingKind!}
+              initial={editingIntegration}
+              onCancel={closeIntegrationModal}
+              onSaved={closeIntegrationModal}
             />
           </div>
         </div>

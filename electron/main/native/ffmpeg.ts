@@ -71,8 +71,38 @@ export function remuxToMp4(
   );
 }
 
-export function convertToWav(inputWebmPath: string, outputWavPath: string): Promise<void> {
-  return run(["-y", "-i", inputWebmPath, "-c:a", "pcm_s16le", outputWavPath]);
+export function convertToWav(
+  inputWebmPath: string,
+  outputWavPath: string,
+  onProgress?: ProgressHandler,
+  signal?: AbortSignal
+): Promise<void> {
+  return run(["-y", "-i", inputWebmPath, "-c:a", "pcm_s16le", outputWavPath], onProgress, signal);
+}
+
+/** Reads a media file's duration by asking ffmpeg to open it with no output and scraping
+ *  the "Duration: HH:MM:SS.ms" line it prints to stderr while probing the container —
+ *  there's no ffprobe binary bundled (only ffmpeg-static), so this avoids adding a second
+ *  dependency just for a duration lookup. ffmpeg always exits non-zero for this invocation
+ *  (no output specified), so the exit code is ignored and only stderr is parsed. */
+export function probeDuration(filePath: string): Promise<number> {
+  return new Promise((resolve) => {
+    const proc = spawn(ffmpegPath, ["-i", filePath]);
+    let stderr = "";
+    proc.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    proc.on("error", () => resolve(0));
+    proc.on("close", () => {
+      const match = stderr.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+      if (!match) {
+        resolve(0);
+        return;
+      }
+      const [, hours, minutes, seconds] = match;
+      resolve(Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds));
+    });
+  });
 }
 
 /** Screen-only gdigrab output (see native/screenCapture.ts), no camera/mic side clip to

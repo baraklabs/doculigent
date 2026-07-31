@@ -92,7 +92,7 @@ export interface TranscriptSegment {
 
 export interface Transcript {
   language: string;
-  engine: "whisper-local" | "whisper.cpp" | "assemblyai" | "deepgram";
+  engine: "whisper-local" | "whisper.cpp" | "assemblyai" | "deepgram" | "transcript-import";
   segments: TranscriptSegment[];
 }
 
@@ -129,5 +129,18 @@ export interface LlmProviderConfig {
 
 export interface LlmModelProfile extends LlmProviderConfig {
   id: string;
+  name: string;
+}
+
+export type AppIntegrationKind = "github" | "slack" | "teams";
+
+/** A connected external app — GitHub, Slack, or Microsoft Teams. Unlike LlmModelProfile
+ *  there's no per-kind config beyond the kind itself (no baseUrl/model): each kind's single
+ *  credential (PAT / bot token / webhook URL) is stored separately in the OS keychain, same
+ *  as an LLM profile's API key — see electron/main/native/keyring.ts. Multiple integrations
+ *  of the same kind are supported (e.g. two GitHub orgs), distinguished by `name`. */
+export interface AppIntegration {
+  id: string;
+  kind: AppIntegrationKind;
   name: string;
 }

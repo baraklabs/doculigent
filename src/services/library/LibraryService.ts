@@ -20,4 +20,13 @@ export const LibraryService = {
   setTranscript(id: string, transcript: Transcript | null): Promise<Video> {
     return StorageProvider.setTranscript(id, transcript);
   },
+  pickFiles(kind: "video" | "audio", multi?: boolean): Promise<string[]> {
+    return StorageProvider.pickFiles(kind, multi);
+  },
+  importFiles(filePaths: string[], kind: "video" | "audio"): Promise<Video[]> {
+    return StorageProvider.importFiles(filePaths, kind);
+  },
+  onImportProgress(callback: (progress: { percent: number; fileIndex: number; totalFiles: number }) => void): () => void {
+    return StorageProvider.onImportProgress(callback);
+  },
 };

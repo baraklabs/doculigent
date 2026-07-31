@@ -22,4 +22,13 @@ export const StorageProvider = {
   setTranscript(id: string, transcript: Transcript | null): Promise<Video> {
     return window.api.library.setTranscript(id, transcript);
   },
+  pickFiles(kind: "video" | "audio", multi?: boolean): Promise<string[]> {
+    return window.api.library.pickFiles(kind, multi);
+  },
+  importFiles(filePaths: string[], kind: "video" | "audio"): Promise<Video[]> {
+    return window.api.library.importFiles(filePaths, kind);
+  },
+  onImportProgress(callback: (progress: { percent: number; fileIndex: number; totalFiles: number }) => void): () => void {
+    return window.api.library.onImportProgress(callback);
+  },
 };

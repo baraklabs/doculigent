@@ -1,4 +1,6 @@
 import type {
+  AppIntegration,
+  AppIntegrationKind,
   CaptureTarget,
   ChatMessage,
   CursorHighlightStyle,
@@ -104,6 +106,16 @@ export interface DoculigentApi {
     search(query: string): Promise<Video[]>;
     rename(id: string, title: string): Promise<Video>;
     setTranscript(id: string, transcript: Transcript | null): Promise<Video>;
+    /** Opens a native file picker restricted to the given kind; returns the chosen paths, or
+     *  [] if the user cancelled. `multi` (default true) toggles multi-selection. */
+    pickFiles(kind: "video" | "audio", multi?: boolean): Promise<string[]>;
+    /** Copies/transcodes each path into the library (video → mp4, audio → wav — see
+     *  electron/main/ipc/library.ts) and inserts a library entry for it, reporting progress
+     *  on onImportProgress as it goes. */
+    importFiles(filePaths: string[], kind: "video" | "audio"): Promise<Video[]>;
+    /** Fires while importFiles is transcoding — `percent` is overall progress across the
+     *  whole batch (0-100), not just the file currently in flight. */
+    onImportProgress(callback: (progress: { percent: number; fileIndex: number; totalFiles: number }) => void): () => void;
   };
   settings: {
     getSaveDir(): Promise<string>;
@@ -146,6 +158,19 @@ export interface DoculigentApi {
     summarize(transcript: Transcript, profileId?: string): Promise<Summary>;
     chat(transcript: Transcript | null, history: ChatMessage[], question: string, profileId?: string): Promise<ChatMessage>;
     testConnection(profile: LlmModelProfile, apiKey?: string | null): Promise<{ ok: boolean; message: string }>;
+  };
+  apps: {
+    list(): Promise<AppIntegration[]>;
+    save(integration: AppIntegration, secret?: string | null): Promise<void>;
+    delete(id: string): Promise<void>;
+    /** `integrationId` is used to fall back to the saved keychain secret when `secret` is
+     *  omitted (e.g. testing an existing integration without retyping its value); pass null
+     *  when testing a brand-new, not-yet-saved integration. */
+    testConnection(
+      kind: AppIntegrationKind,
+      integrationId: string | null,
+      secret?: string | null
+    ): Promise<{ ok: boolean; message: string }>;
   };
   transcription: {
     transcribe(filePath: string, language?: string, modelSize?: WhisperModelSize, byokProfileId?: string): Promise<Transcript>;

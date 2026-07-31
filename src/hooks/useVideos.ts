@@ -45,6 +45,15 @@ export function useRenameVideo() {
   });
 }
 
+export function useImportVideos() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ filePaths, kind }: { filePaths: string[]; kind: "video" | "audio" }) =>
+      LibraryService.importFiles(filePaths, kind),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["videos"] }),
+  });
+}
+
 export function useSetVideoTranscript() {
   const queryClient = useQueryClient();
   return useMutation({

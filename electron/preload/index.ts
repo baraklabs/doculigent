@@ -88,6 +88,14 @@ const api: DoculigentApi = {
     search: (query) => ipcRenderer.invoke(Channels.library.search, query),
     rename: (id, title) => ipcRenderer.invoke(Channels.library.rename, id, title),
     setTranscript: (id, transcript) => ipcRenderer.invoke(Channels.library.setTranscript, id, transcript),
+    pickFiles: (kind, multi) => ipcRenderer.invoke(Channels.library.pickFiles, kind, multi),
+    importFiles: (filePaths, kind) => ipcRenderer.invoke(Channels.library.importFiles, filePaths, kind),
+    onImportProgress: (callback) => {
+      const listener = (_event: unknown, progress: { percent: number; fileIndex: number; totalFiles: number }) =>
+        callback(progress);
+      ipcRenderer.on(Channels.library.importProgress, listener);
+      return () => ipcRenderer.removeListener(Channels.library.importProgress, listener);
+    },
   },
   settings: {
     getSaveDir: () => ipcRenderer.invoke(Channels.settings.getSaveDir),
@@ -128,6 +136,13 @@ const api: DoculigentApi = {
     chat: (transcript, history, question, profileId) =>
       ipcRenderer.invoke(Channels.ai.chat, transcript, history, question, profileId),
     testConnection: (profile, apiKey) => ipcRenderer.invoke(Channels.ai.testConnection, profile, apiKey),
+  },
+  apps: {
+    list: () => ipcRenderer.invoke(Channels.apps.list),
+    save: (integration, secret) => ipcRenderer.invoke(Channels.apps.save, integration, secret),
+    delete: (id) => ipcRenderer.invoke(Channels.apps.delete, id),
+    testConnection: (kind, integrationId, secret) =>
+      ipcRenderer.invoke(Channels.apps.testConnection, kind, integrationId, secret),
   },
   transcription: {
     transcribe: (filePath, language, modelSize, byokProfileId) =>
