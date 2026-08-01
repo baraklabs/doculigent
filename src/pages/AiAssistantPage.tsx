@@ -139,6 +139,10 @@ function deriveTitle(messages: ChatMessage[]): string {
 export function AiAssistantPage() {
   const { data: videos = [] } = useVideos("");
   const { data: profiles = [] } = useLlmProfiles();
+  // Only chat-capable profiles belong in the Ask-chat model picker below — a profile saved
+  // purely for transcription (no "chat" capability) can't actually answer questions, so
+  // listing it there would just be a selectable option that fails immediately.
+  const chatProfiles = profiles.filter((p) => p.capabilities.includes("chat"));
   const session = useAuthStore((s) => s.session);
   // Same gating as the Meeting tab's model picker (see MeetingPage.tsx's cloudEnabled) —
   // only offer the hosted Doculigent option to accounts on a paid plan.
@@ -163,7 +167,7 @@ export function AiAssistantPage() {
   // than a separate flag, since this picker only ever has one selection at a time anyway.
   const usingCloudChat = profileOverride === "doculigent" && cloudEnabled;
   const profileId = profileOverride && !usingCloudChat ? profileOverride : undefined;
-  const selectedProfile = profiles.find((p) => p.id === profileId);
+  const selectedProfile = chatProfiles.find((p) => p.id === profileId);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Persists the choice as it's made, and drops it if it ever stops resolving to a real
@@ -181,13 +185,13 @@ export function AiAssistantPage() {
       return;
     }
     if (profiles.length === 0) return; // still loading — don't judge it yet
-    if (profiles.some((p) => p.id === profileOverride)) {
+    if (chatProfiles.some((p) => p.id === profileOverride)) {
       localStorage.setItem(LAST_PROFILE_KEY, profileOverride);
     } else {
       setProfileOverride("");
       localStorage.removeItem(LAST_PROFILE_KEY);
     }
-  }, [profileOverride, profiles, cloudEnabled]);
+  }, [profileOverride, profiles, chatProfiles, cloudEnabled]);
 
   const [transcript, setTranscript] = useState<Transcript | null>(null);
 
@@ -796,12 +800,12 @@ export function AiAssistantPage() {
                 <select
                   value={profileOverride}
                   onChange={(e) => setProfileOverride(e.target.value)}
-                  disabled={profiles.length === 0 && !cloudEnabled}
+                  disabled={chatProfiles.length === 0 && !cloudEnabled}
                 >
-                  {profiles.length === 0 && !cloudEnabled && <option value="">No models configured</option>}
-                  {(profiles.length > 0 || cloudEnabled) && <option value="">Select a model…</option>}
+                  {chatProfiles.length === 0 && !cloudEnabled && <option value="">No models configured</option>}
+                  {(chatProfiles.length > 0 || cloudEnabled) && <option value="">Select a model…</option>}
                   {cloudEnabled && <option value="doculigent">Doculigent (cloud)</option>}
-                  {profiles.map((p) => (
+                  {chatProfiles.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
                     </option>
