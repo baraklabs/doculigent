@@ -130,6 +130,8 @@ const api: DoculigentApi = {
     setUseDoculigentModel: (use) => ipcRenderer.invoke(Channels.settings.setUseDoculigentModel, use),
     getTranscriptionByokProfileId: () => ipcRenderer.invoke(Channels.settings.getTranscriptionByokProfileId),
     setTranscriptionByokProfileId: (id) => ipcRenderer.invoke(Channels.settings.setTranscriptionByokProfileId, id),
+    getAutoTranscribeSettings: () => ipcRenderer.invoke(Channels.settings.getAutoTranscribeSettings),
+    setAutoTranscribeSettings: (settings) => ipcRenderer.invoke(Channels.settings.setAutoTranscribeSettings, settings),
   },
   ai: {
     summarize: (transcript, profileId) => ipcRenderer.invoke(Channels.ai.summarize, transcript, profileId),
@@ -143,6 +145,12 @@ const api: DoculigentApi = {
     delete: (id) => ipcRenderer.invoke(Channels.apps.delete, id),
     testConnection: (kind, integrationId, secret) =>
       ipcRenderer.invoke(Channels.apps.testConnection, kind, integrationId, secret),
+    githubCreateIssue: (integrationId, repo, title, body) =>
+      ipcRenderer.invoke(Channels.apps.githubCreateIssue, integrationId, repo, title, body),
+    githubCommentIssue: (integrationId, repo, issueNumber, body) =>
+      ipcRenderer.invoke(Channels.apps.githubCommentIssue, integrationId, repo, issueNumber, body),
+    slackPostMessage: (integrationId, channel, text) =>
+      ipcRenderer.invoke(Channels.apps.slackPostMessage, integrationId, channel, text),
   },
   transcription: {
     transcribe: (filePath, language, modelSize, byokProfileId) =>

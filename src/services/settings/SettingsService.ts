@@ -1,4 +1,4 @@
-import type { LlmModelProfile, LlmProviderKind, MicConfig, OverlayConfig } from "@shared/types/models";
+import type { AutoTranscribeSettings, LlmModelProfile, LlmProviderKind, MicConfig, OverlayConfig } from "@shared/types/models";
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
 
 export const SettingsService = {
@@ -82,5 +82,11 @@ export const SettingsService = {
   },
   setTranscriptionByokProfileId(id: string | null): Promise<void> {
     return window.api.settings.setTranscriptionByokProfileId(id);
+  },
+  getAutoTranscribeSettings(): Promise<AutoTranscribeSettings> {
+    return window.api.settings.getAutoTranscribeSettings();
+  },
+  setAutoTranscribeSettings(settings: AutoTranscribeSettings): Promise<void> {
+    return window.api.settings.setAutoTranscribeSettings(settings);
   },
 };

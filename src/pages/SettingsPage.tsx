@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AppWindow, Cpu, Download, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { AppWindow, Cpu, Download, PanelLeftClose, PanelLeftOpen, SlidersHorizontal } from "lucide-react";
 import type {
   AppIntegration,
   AppIntegrationKind,
+  AutoTranscribeSettings,
   LlmCapability,
   LlmModelProfile,
   LlmProviderKind,
@@ -22,6 +23,7 @@ import {
   useSaveAppIntegration,
   useTestAppConnection,
 } from "../hooks/useAppIntegrations";
+import { useAutoTranscribeSettings, useSetAutoTranscribeSettings } from "../hooks/useAutoTranscribeSettings";
 import "./SettingsPage.css";
 
 function providerLabel(kind: LlmProviderKind): string {
@@ -179,8 +181,8 @@ interface AppIntegrationFormProps {
 }
 
 /** Add/edit form for one connected app. Unlike ModelForm there's no kind picker — the kind
- *  is fixed by which app card (GitHub/Slack/Teams) the user clicked "+ Add" on, and stays
- *  fixed while editing too. Multiple integrations of the same kind are just multiple saved
+ *  is fixed by which app card (GitHub/Slack) the user clicked "+ Add" on, and stays fixed
+ *  while editing too. Multiple integrations of the same kind are just multiple saved
  *  records with different `name`s (e.g. two GitHub orgs), same as LLM profiles. */
 function AppIntegrationForm({ kind, initial, onCancel, onSaved }: AppIntegrationFormProps) {
   const meta = appProviderMeta(kind);
@@ -422,8 +424,37 @@ function useWhisperModels() {
 const SECTIONS = [
   { id: "models", label: "Models", icon: <Cpu size={16} /> },
   { id: "apps", label: "Apps", icon: <AppWindow size={16} /> },
+  { id: "preferences", label: "Preferences", icon: <SlidersHorizontal size={16} /> },
 ] as const;
 type SettingsSectionId = (typeof SECTIONS)[number]["id"];
+
+interface PrefToggleProps {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}
+
+/** Same hand-rolled switch look as RecordPage's cursor-hide-toggle, generalized for any
+ *  on/off preference row instead of just the one recording-time setting. */
+function PrefToggle({ label, hint, checked, onChange }: PrefToggleProps) {
+  return (
+    <button
+      type="button"
+      className={checked ? "pref-toggle on" : "pref-toggle"}
+      aria-pressed={checked}
+      onClick={() => onChange(!checked)}
+    >
+      <span className="pref-toggle-text">
+        <span className="pref-toggle-label">{label}</span>
+        {hint && <span className="muted sub">{hint}</span>}
+      </span>
+      <span className="pref-toggle-switch" aria-hidden="true">
+        <span className="pref-toggle-knob" />
+      </span>
+    </button>
+  );
+}
 
 // Same per-renderer-preference pattern as LibraryPage's navCollapsed — persisted to
 // localStorage rather than the settings store since it's just a UI layout choice.
@@ -475,6 +506,29 @@ export function SettingsPage() {
   function closeIntegrationModal() {
     setAddingKind(null);
     setEditingIntegration(null);
+  }
+
+  const { data: autoTranscribe } = useAutoTranscribeSettings();
+  const setAutoTranscribe = useSetAutoTranscribeSettings();
+
+  function toggleAutoTranscribeAll(on: boolean) {
+    const next: AutoTranscribeSettings = {
+      all: on,
+      recording: on,
+      videoImport: on,
+      audioImport: on,
+      teamsContent: on,
+    };
+    setAutoTranscribe.mutate(next);
+  }
+
+  function toggleAutoTranscribeOne(key: keyof Omit<AutoTranscribeSettings, "all">, on: boolean) {
+    if (!autoTranscribe) return;
+    const next: AutoTranscribeSettings = { ...autoTranscribe, [key]: on };
+    // The master switch reads "on" only once every sub-toggle agrees — flipping one off
+    // shouldn't silently claim everything is still auto-transcribing.
+    next.all = next.recording && next.videoImport && next.audioImport && next.teamsContent;
+    setAutoTranscribe.mutate(next);
   }
 
   return (
@@ -567,6 +621,46 @@ export function SettingsPage() {
               {!integrationsLoading && integrations.length === 0 && (
                 <p className="muted">No apps connected yet.</p>
               )}
+            </div>
+          </div>
+        </section>
+      ) : section === "preferences" ? (
+        <section className="panel settings-content">
+          <p className="muted">Choose what gets transcribed automatically, without tapping Transcribe by hand.</p>
+
+          <div className="field">
+            <span>Library</span>
+            <div className="pref-toggle-list">
+              <PrefToggle
+                label="Auto-transcribe all"
+                hint="Turns every option below on or off at once"
+                checked={!!autoTranscribe?.all}
+                onChange={toggleAutoTranscribeAll}
+              />
+              <PrefToggle
+                label="Recordings"
+                hint="Screen and meeting recordings, right after they finish saving"
+                checked={!!autoTranscribe?.recording}
+                onChange={(on) => toggleAutoTranscribeOne("recording", on)}
+              />
+              <PrefToggle
+                label="Video import"
+                hint="Video files imported into the Library"
+                checked={!!autoTranscribe?.videoImport}
+                onChange={(on) => toggleAutoTranscribeOne("videoImport", on)}
+              />
+              <PrefToggle
+                label="Audio import"
+                hint="Audio files imported into the Library"
+                checked={!!autoTranscribe?.audioImport}
+                onChange={(on) => toggleAutoTranscribeOne("audioImport", on)}
+              />
+              <PrefToggle
+                label="Teams content"
+                hint="Transcibe eveything once your team member uploads video/audio"
+                checked={!!autoTranscribe?.teamsContent}
+                onChange={(on) => toggleAutoTranscribeOne("teamsContent", on)}
+              />
             </div>
           </div>
         </section>

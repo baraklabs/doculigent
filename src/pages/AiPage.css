@@ -5,7 +5,7 @@
    centered max-width rather than stretching edge-to-edge across the whole page, so the
    conversation reads like a normal chat app column instead of a full-bleed panel. */
 .chat-page-shell { flex: 1; min-height: 0; display: flex; width: 100%; }
-.chat-page { flex: 1; min-height: 0; display: flex; flex-direction: column; width: 100%; align-items: center; }
+.chat-page { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; width: 100%; align-items: center; }
 
 /* Collapsible chat history rail, à la ChatGPT/Claude — see AiAssistantPage.tsx's
    sidebarCollapsed/sessions state. Collapsed mode keeps just the toggle + New-chat icons
@@ -66,100 +66,38 @@
 .chat-page-log-inner { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 760px; }
 .chat-page-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 48px 0; text-align: center; }
 
-/* Stuck to the right edge of the app (position: fixed, same bottom:24px;right:24px
-   convention the toast system uses elsewhere — see base.css's .toast — just anchored from
-   the top instead) rather than living inline in the scrollable log, so it stays reachable
-   no matter how far down the conversation you've scrolled. Slides/fades in on mount and
-   whenever the attachment changes (see AiAssistantPage.tsx's key={video.id}). Click toggles
-   .expanded, which reveals .chat-resource-expanded below the summary row. */
-.chat-resource-card {
-  position: fixed; top: 56px; right: 24px; z-index: 40;
-  width: min(340px, calc(100vw - 48px));
-  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-  box-shadow: 0 10px 28px rgba(20, 20, 40, .14);
-  padding: 10px 14px; cursor: pointer; box-sizing: border-box;
-  animation: chat-resource-in 220ms cubic-bezier(.2, .8, .2, 1);
-  transition: box-shadow 150ms ease, width 380ms cubic-bezier(.4, 0, .2, 1), padding 380ms ease;
+/* Shown just above the composer instead of the quick actions when there's an attachment
+   but nothing to ground a summary/notes request yet (see AiAssistantPage.tsx) — a red
+   pill (same source-icon + title language as the old floating resource badge) with a
+   soft pulse so it reads as a call to action, not just a status line. Clicking it opens
+   the docked panel straight to the Transcribe tab. */
+.chat-transcribe-warning {
+  display: flex; align-items: center; gap: 7px; flex-shrink: 0;
+  background: rgba(179, 38, 30, .08); border: 1px solid rgba(179, 38, 30, .35);
+  color: var(--danger); font: inherit; font-size: 12px; font-weight: 600;
+  padding: 7px 14px; border-radius: 999px; cursor: pointer;
+  animation: chat-transcribe-warning-in 180ms cubic-bezier(.2, .8, .2, 1),
+    chat-transcribe-warning-pulse 2200ms ease-in-out 400ms infinite;
 }
-.chat-resource-card:hover { box-shadow: 0 14px 34px rgba(20, 20, 40, .2); }
-/* The box itself shrinks down to just fit the green transcribe icon — not just its inner
-   content fading away inside a still-full-width box, which left the icon looking stranded
-   at the left edge of a big empty white card. `right: 24px` stays fixed, so as width
-   shrinks the box collapses in toward that anchor rather than drifting. */
-.chat-resource-card.collapsed { width: 40px; padding: 10px; }
-@keyframes chat-resource-in {
-  from { opacity: 0; transform: translateX(18px); }
-  to { opacity: 1; transform: translateX(0); }
+.chat-transcribe-warning:hover {
+  background: rgba(179, 38, 30, .14); border-color: rgba(179, 38, 30, .5);
 }
-/* No `gap` here either, same reason as .chat-transcribe-status below — the icon and title
-   both collapse away too (see .collapsed below), and a static flex gap would leave dead
-   space once they're gone. Their spacing lives on each one's own margin-right instead. */
-.chat-resource-summary { display: flex; align-items: center; }
-/* The source-type icon (Video/Mic, see AiAssistantPage.tsx) — collapses away alongside the
-   title once transcribedBadgeCollapsed flips (see .chat-resource-summary.collapsed),
-   leaving only the green transcribe icon in the status pill. */
-.chat-resource-icon {
-  display: inline-flex; flex-shrink: 0; color: var(--muted); overflow: hidden;
-  max-width: 20px; margin-right: 8px; opacity: 1; transform: scale(1);
-  transition: max-width 380ms cubic-bezier(.4, 0, .2, 1), opacity 260ms ease,
-    margin-right 380ms ease, transform 320ms ease;
+.chat-transcribe-warning-icon { display: flex; flex-shrink: 0; }
+.chat-transcribe-warning-title {
+  max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 700;
 }
-.chat-resource-summary.collapsed .chat-resource-icon {
-  max-width: 0; opacity: 0; margin-right: 0; transform: scale(.6);
+.chat-transcribe-warning-cta { opacity: .85; }
+@keyframes chat-transcribe-warning-in {
+  from { opacity: 0; transform: translateY(6px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
-.chat-resource-title {
-  font-weight: 600; font-size: 13px; min-width: 0; flex-shrink: 1;
-  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  opacity: 1; margin-right: 8px;
-  transition: max-width 380ms cubic-bezier(.4, 0, .2, 1), opacity 220ms ease, margin-right 380ms ease;
-}
-.chat-resource-summary.collapsed .chat-resource-title {
-  max-width: 0; opacity: 0; margin-right: 0;
-}
-
-/* Transcribed-status pill at the end of the summary row. No `gap` here on purpose — a flex
-   gap doesn't shrink away when .chat-transcribe-status-text collapses to 0 width, which
-   left a small dead space between the (invisible) text and the transcribe icon; all the
-   animatable spacing lives on the text's own margin-right instead. */
-.chat-transcribe-status {
-  display: flex; align-items: center; flex-shrink: 0;
-  font-size: 12px; font-weight: 600; white-space: nowrap;
-}
-.chat-transcribe-status.ok { color: #16a34a; }
-/* Collapses down to just the green transcribe icon a beat after mounting (see
-   transcribedBadgeCollapsed) — the label's own box shrinks/fades/scales down rather than
-   being removed from the DOM, so the collapse itself is what animates, and the icon
-   gets a small delayed "pop" as it takes over. */
-.chat-transcribe-status-text {
-  display: inline-block; max-width: 90px; overflow: hidden; white-space: nowrap;
-  opacity: 1; transform: scale(1); transform-origin: right center; margin-right: 5px;
-  transition: max-width 380ms cubic-bezier(.4, 0, .2, 1), opacity 260ms ease,
-    margin-right 380ms ease, transform 320ms ease;
-}
-.chat-transcribe-status.ok.collapsed .chat-transcribe-status-text {
-  max-width: 0; opacity: 0; margin-right: 0; transform: scale(.6);
-}
-.chat-transcribe-status.ok svg { transition: transform 220ms ease 140ms; }
-.chat-transcribe-status.ok.collapsed svg { transform: scale(1.2); }
-.chat-transcribe-status.warn { color: var(--danger); }
-
-/* The card's expanded content (Transcribe with.../actions/segments) — cursor: default and
-   its own click stopPropagation (see AiAssistantPage.tsx) keep clicking inside it from
-   toggling the card closed. */
-.chat-resource-expanded {
-  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
-  cursor: default; max-height: min(70vh, 520px); overflow-y: auto;
-  animation: chat-resource-expand-in 180ms ease;
-}
-@keyframes chat-resource-expand-in {
-  from { opacity: 0; transform: translateY(-6px); }
-  to { opacity: 1; transform: translateY(0); }
+@keyframes chat-transcribe-warning-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(179, 38, 30, .28); }
+  50% { box-shadow: 0 0 0 6px rgba(179, 38, 30, 0); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .chat-resource-card, .chat-resource-expanded, .chat-transcribe-status-text, .chat-transcribe-status.ok svg,
-  .chat-resource-icon, .chat-resource-title {
-    animation: none; transition: none;
-  }
+  .chat-transcribe-warning { animation: none; }
 }
 
 /* No panel background/border/shadow here on purpose — it sits directly on the page rather
@@ -205,3 +143,93 @@
 @media (prefers-reduced-motion: reduce) {
   .chat-quick-actions { animation: none; }
 }
+
+/* --- Docked video/audio detail panel ---------------------------------------------
+   Opened by the Summarize/Generate Notes quick actions, the "Transcribe to get insights"
+   prompt, or its own toggle (see AiAssistantPage.tsx's videoPanelOpen). A real flex
+   sibling of .chat-page, so opening it squeezes the chat column instead of floating over
+   it. Collapses to a slim rail (same width/pattern as .chat-sidebar.collapsed) rather
+   than disappearing entirely, so the toggle stays in the same top-right spot either way
+   instead of moving into the composer. `.wide` (added when the left chat-sidebar is
+   collapsed) claims some of the width that frees up rather than leaving it unused. */
+.chat-video-panel {
+  width: 40px; flex-shrink: 0; overflow: hidden; box-sizing: border-box;
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  transition: width 220ms cubic-bezier(.4, 0, .2, 1);
+}
+.chat-video-panel.open { width: min(34%, 480px); min-width: 320px; }
+.chat-video-panel.open.wide { width: min(38%, 560px); min-width: 360px; }
+.chat-video-panel-top {
+  display: flex; align-items: center; gap: 8px; padding: 8px; flex-shrink: 0;
+}
+.chat-video-panel-inner {
+  flex: 1; min-height: 0; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 10px; padding: 0 14px 14px; overflow-y: auto;
+}
+.chat-video-panel-title {
+  font-weight: 600; font-size: 14px; min-width: 0; flex: 1 1 auto; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-video-preview { flex-shrink: 0; }
+.chat-video-preview video, .chat-video-preview audio { width: 100%; display: block; border-radius: 10px; background: #000; }
+.chat-video-preview audio { background: none; }
+.chat-video-panel-tabs {
+  display: flex; gap: 4px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.chat-video-tab {
+  flex: 1; background: none; border: none; font: inherit; cursor: pointer;
+  padding: 8px 6px; font-size: 12px; font-weight: 600; color: var(--muted);
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.chat-video-tab:hover { color: var(--text); }
+.chat-video-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.chat-video-panel-body {
+  display: flex; flex-direction: column; gap: 10px; min-height: 0;
+}
+.chat-video-panel-text { font-size: 13px; line-height: 1.5; }
+
+/* --- Actions sheet (bottom of the panel) -------------------------------------------
+   Collapsed by default to just .chat-actions-toggle's bar. A normal flex sibling of
+   .chat-video-panel-inner (flex-shrink: 0, not absolutely positioned) — expanding it
+   (`.open`) grows its own height, which shrinks .chat-video-panel-inner's flex:1 share in
+   turn, pushing that content upward rather than overlaying/covering it; that content stays
+   reachable by scrolling within its own (now smaller) space. One row per connected
+   Settings > Apps integration, with that kind's action button(s); clicking one expands
+   .chat-action-form inline right below it rather than a modal. */
+.chat-actions-sheet {
+  flex-shrink: 0; border-top: 1px solid var(--border);
+  max-height: 38px; overflow: hidden;
+  transition: max-height 220ms cubic-bezier(.4, 0, .2, 1);
+}
+.chat-actions-sheet.open { max-height: min(60%, 380px); overflow-y: auto; }
+.chat-actions-toggle {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; justify-content: space-between; width: 100%;
+  background: var(--panel); border: none; font: inherit; cursor: pointer;
+  padding: 11px 14px; font-size: 12px; font-weight: 700; color: var(--text);
+}
+.chat-actions-toggle:hover { color: var(--accent); }
+.chat-actions-sheet-body { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 8px; }
+.chat-actions-list { display: flex; flex-direction: column; gap: 6px; }
+.chat-action-app {
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.chat-action-app-header { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.chat-action-app-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-action-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.chat-action-buttons button { padding: 5px 10px; font-size: 12px; }
+.chat-action-form {
+  display: flex; flex-direction: column; gap: 8px;
+  padding-top: 8px; border-top: 1px solid var(--border);
+}
+.chat-action-source-picker { display: flex; align-items: center; gap: 6px; font-size: 12px; flex-wrap: wrap; }
+.chat-action-form input { font-size: 13px; padding: 7px 10px; }
+.chip {
+  background: none; border: 1px solid var(--border); color: var(--muted);
+  font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 999px; cursor: pointer;
+}
+.chip:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+.chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chip:disabled { opacity: .4; cursor: not-allowed; }

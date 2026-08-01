@@ -1,7 +1,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { AppIntegration, LlmModelProfile, MicConfig, OverlayConfig } from "@shared/types/models";
+import type { AppIntegration, AutoTranscribeSettings, LlmModelProfile, MicConfig, OverlayConfig } from "@shared/types/models";
 import type { AuthUser } from "@shared/types/auth";
 import type { WhisperModelSize } from "@shared/constants/whisperModels";
 import { settingsFilePath } from "./paths";
@@ -23,7 +23,18 @@ interface StoredSettings {
   cursorOverride?: boolean;
   useDoculigentModel?: boolean;
   transcriptionByokProfileId?: string | null;
+  autoTranscribe?: AutoTranscribeSettings;
 }
+
+// Everything defaults on — auto-transcribe is meant to be the path of least surprise for a
+// new install, not an opt-in a user has to go find first.
+const DEFAULT_AUTO_TRANSCRIBE: AutoTranscribeSettings = {
+  all: true,
+  recording: true,
+  videoImport: true,
+  audioImport: true,
+  teamsContent: true,
+};
 
 function readStored(): StoredSettings {
   try {
@@ -189,6 +200,14 @@ export function getTranscriptionByokProfileId(): string | null {
 
 export function setTranscriptionByokProfileId(id: string | null): void {
   writeStored({ ...readStored(), transcriptionByokProfileId: id });
+}
+
+export function getAutoTranscribeSettings(): AutoTranscribeSettings {
+  return { ...DEFAULT_AUTO_TRANSCRIBE, ...readStored().autoTranscribe };
+}
+
+export function setAutoTranscribeSettings(settings: AutoTranscribeSettings): void {
+  writeStored({ ...readStored(), autoTranscribe: settings });
 }
 
 export function getCursorOverride(): boolean {

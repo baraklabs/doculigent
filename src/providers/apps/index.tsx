@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { BsGithub, BsMicrosoftTeams } from "react-icons/bs";
+import { BsGithub } from "react-icons/bs";
 import type { AppIntegrationKind } from "@shared/types/models";
 
 export interface AppProviderMeta {
@@ -19,7 +19,7 @@ export interface AppProviderMeta {
 /** Slack's mark is genuinely four-color (no accurate single-fill version exists in any
  *  open icon set — Slack had it pulled from simple-icons over brand-guideline concerns),
  *  so it's the one icon here built from Slack's official logomark paths/colors rather
- *  than a monochrome glyph tinted a single accent, unlike GitHub/Teams below. */
+ *  than a monochrome glyph tinted a single accent, unlike GitHub below. */
 function SlackMark() {
   return (
     <svg viewBox="0 0 122.8 122.8" width="1em" height="1em" style={{ display: "block" }}>
@@ -59,8 +59,6 @@ function SlackMark() {
   );
 }
 
-/** GitHub/Teams share one icon set (Bootstrap Icons, via react-icons/bs) for a consistent
- *  stroke weight; Slack uses its own real four-color mark (see SlackMark above). */
 export const APP_PROVIDERS: AppProviderMeta[] = [
   {
     kind: "github",
@@ -80,15 +78,6 @@ export const APP_PROVIDERS: AppProviderMeta[] = [
     secretLabel: "Bot User OAuth Token",
     secretPlaceholder: "xoxb-…",
     testHint: "Test calls Slack's auth.test endpoint — read-only, nothing is posted.",
-  },
-  {
-    kind: "teams",
-    label: "Microsoft Teams",
-    icon: <BsMicrosoftTeams />,
-    accent: "#6264A7",
-    secretLabel: "Incoming Webhook URL",
-    secretPlaceholder: "https://…webhook.office.com/webhookb2/…",
-    testHint: "Test sends a small confirmation message to the channel — webhooks have no read-only check.",
   },
 ];
 

@@ -1,13 +1,16 @@
-.msg-content-wrap { position: relative; }
+.msg-content-wrap { display: flex; flex-direction: column; }
 
-/* Copy button — hidden until the message bubble is hovered/focused, top-right corner. */
+/* Timestamp + copy button, in normal flow below the bubble (not overlaid on top of it) so
+   it reads as metadata rather than another line of the message. Left/right alignment
+   (matching the bubble's own side) is set per role in AiWorkspace.css's .msg.user/
+   .msg.assistant rules; flex-start here is just the fallback. */
+.msg-footer { display: flex; align-items: center; justify-content: flex-start; gap: 6px; margin-top: 4px; }
+.msg-timestamp { font-size: 11px; color: var(--muted); }
 .msg-copy-btn {
-  position: absolute; top: -6px; right: -6px; opacity: 0; transition: opacity 100ms ease;
-  background: var(--panel); border: 1px solid var(--border); color: var(--muted);
-  border-radius: 6px; padding: 3px; cursor: pointer; line-height: 0;
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  border-radius: 4px; padding: 2px; line-height: 0;
 }
-.msg:hover .msg-copy-btn, .msg-copy-btn:focus-visible { opacity: 1; }
-.msg-copy-btn:hover { color: var(--text); border-color: var(--accent); }
+.msg-copy-btn:hover { color: var(--text); }
 
 /* Markdown body — first/last child margins collapsed so a single-paragraph reply (the
    common case) doesn't carry extra top/bottom padding beyond the bubble's own. */

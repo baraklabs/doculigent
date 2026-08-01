@@ -65,14 +65,14 @@ export function AiWorkspace({ video, profileId }: AiWorkspaceProps) {
   async function ask() {
     if (!transcript || !question.trim()) return;
     const q = question.trim();
-    const next: ChatMessage[] = [...history, { role: "user", content: q }];
+    const next: ChatMessage[] = [...history, { role: "user", content: q, timestamp: new Date().toISOString() }];
     setHistory(next);
     setQuestion("");
     setChatBusy(true);
     setChatError(null);
     try {
       const reply = await AiService.chat(transcript, next, q, profileId);
-      setHistory([...next, reply]);
+      setHistory([...next, { ...reply, timestamp: new Date().toISOString() }]);
     } catch (e) {
       setChatError(String(e));
     } finally {
@@ -144,7 +144,7 @@ export function AiWorkspace({ video, profileId }: AiWorkspaceProps) {
         <div className="chat-log">
           {history.map((m, i) => (
             <div key={i} className={`msg ${m.role}`}>
-              <ChatMessageContent content={m.content} />
+              <ChatMessageContent content={m.content} timestamp={m.timestamp} />
               {m.citations?.map((c, j) => (
                 <button key={j} className="citation" title={c.quote}>
                   ↷ {fmt(c.timestamp)}

@@ -76,6 +76,8 @@ export const Channels = {
     setUseDoculigentModel: "settings:setUseDoculigentModel",
     getTranscriptionByokProfileId: "settings:getTranscriptionByokProfileId",
     setTranscriptionByokProfileId: "settings:setTranscriptionByokProfileId",
+    getAutoTranscribeSettings: "settings:getAutoTranscribeSettings",
+    setAutoTranscribeSettings: "settings:setAutoTranscribeSettings",
   },
   ai: {
     summarize: "ai:summarize",
@@ -87,6 +89,9 @@ export const Channels = {
     save: "apps:save",
     delete: "apps:delete",
     testConnection: "apps:testConnection",
+    githubCreateIssue: "apps:githubCreateIssue",
+    githubCommentIssue: "apps:githubCommentIssue",
+    slackPostMessage: "apps:slackPostMessage",
   },
   transcription: {
     transcribe: "transcription:transcribe",

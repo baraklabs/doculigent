@@ -44,3 +44,27 @@ export function useTestAppConnection() {
     }) => AppsService.testConnection(kind, integrationId, secret),
   });
 }
+
+// Actions block (AiAssistantPage.tsx) — one mutation per action kind, each just a thin
+// pass-through to AppsService since there's no shared cache to invalidate (unlike the CRUD
+// mutations above, running an action doesn't change the connected-integrations list).
+export function useGithubCreateIssue() {
+  return useMutation({
+    mutationFn: (vars: { integrationId: string; repo: string; title: string; body: string }) =>
+      AppsService.githubCreateIssue(vars.integrationId, vars.repo, vars.title, vars.body),
+  });
+}
+
+export function useGithubCommentIssue() {
+  return useMutation({
+    mutationFn: (vars: { integrationId: string; repo: string; issueNumber: number; body: string }) =>
+      AppsService.githubCommentIssue(vars.integrationId, vars.repo, vars.issueNumber, vars.body),
+  });
+}
+
+export function useSlackPostMessage() {
+  return useMutation({
+    mutationFn: (vars: { integrationId: string; channel: string; text: string }) =>
+      AppsService.slackPostMessage(vars.integrationId, vars.channel, vars.text),
+  });
+}
