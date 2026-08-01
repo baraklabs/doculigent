@@ -23,9 +23,19 @@
    own size and hugs the right edge; a long one that actually needs the full width to wrap
    grows out to that same 100% cap, at which point its left edge lands exactly where
    assistant replies start, rather than staying pinned to a narrower fixed max-width. */
-.msg { padding: 8px 12px; border-radius: 10px; max-width: 100%; box-sizing: border-box; }
-.msg.user { align-self: flex-end; background: rgba(91, 75, 245,.18); }
-.msg.assistant { width: 100%; background: var(--bg); }
+/* .msg is now just a layout container, not the bubble itself — the colored/padded box
+   lives on .msg-bubble (see ChatMessageContent.tsx) one level in, so the timestamp/copy
+   footer below it (.msg-footer, see ChatMessageContent.css) can sit outside that box
+   instead of inside it, while still lining up under the same edge (right for a question,
+   left for an answer) via align-items here. */
+.msg { display: flex; flex-direction: column; max-width: 100%; box-sizing: border-box; }
+.msg.user { align-self: flex-end; align-items: flex-end; }
+.msg.assistant { width: 100%; }
+.msg-bubble { padding: 8px 12px; border-radius: 10px; max-width: 100%; box-sizing: border-box; }
+.msg.user .msg-bubble { background: rgba(91, 75, 245, .18); }
+.msg.assistant .msg-bubble { width: 100%; background: var(--bg); }
+.msg.user .msg-footer { justify-content: flex-end; }
+.msg.assistant .msg-footer { justify-content: flex-start; }
 .citation { font-size: 12px; margin: 6px 6px 0 0; padding: 2px 8px; }
 .chat-input { display: flex; gap: 8px; }
 .chat-input input { flex: 1; }

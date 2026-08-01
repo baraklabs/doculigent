@@ -1,13 +1,35 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Settings, X, Plus, Trash2, Pencil, PanelLeftClose, PanelLeftOpen, FileText, Video, Mic } from "lucide-react";
+import {
+  Settings,
+  X,
+  Plus,
+  Trash2,
+  Pencil,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
+  Mic,
+  Video,
+  ChevronUp,
+  ChevronDown,
+} from "lucide-react";
 import type { ChatMessage, Transcript, TranscriptSegment } from "@shared/types/models";
+import { mediaUrl } from "@shared/constants/media";
 import { DEFAULT_TRANSCRIPTION_LANGUAGE, TRANSCRIPTION_LANGUAGES } from "@shared/constants/languages";
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
 import { WHISPER_MODELS } from "@shared/constants/whisperModels";
 import { isBilledTier } from "@shared/constants/plans";
 import { useVideo, useVideos, useSetVideoTranscript } from "../hooks/useVideos";
 import { useLlmProfiles } from "../hooks/useLlmProfiles";
+import {
+  useAppIntegrations,
+  useGithubCommentIssue,
+  useGithubCreateIssue,
+  useSlackPostMessage,
+} from "../hooks/useAppIntegrations";
+import { appProviderMeta } from "../providers/apps";
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
 import { SettingsService } from "../services/settings/SettingsService";
 import { AiService } from "../services/ai/AiService";
@@ -21,11 +43,19 @@ function fmt(t: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+// Plain-text rendition of a transcript for the Actions block's "Transcript" content
+// option — a GitHub issue body/Slack message has no use for the structured Transcript
+// shape, just readable lines.
+function transcriptToPlainText(transcript: Transcript): string {
+  return transcript.segments.map((s) => `[${fmt(s.start)}] ${s.speaker}: ${s.text}`).join("\n");
+}
+
 // Remembers the last model picked here across tab switches (this page unmounts when you
 // navigate away, wiping its React state) and app reloads — plain localStorage rather than
 // the settings store since this is a per-renderer UI preference, not app configuration.
 const LAST_PROFILE_KEY = "aiAssistant.lastProfileId";
 const SIDEBAR_COLLAPSED_KEY = "aiAssistant.sidebarCollapsed";
+const VIDEO_PANEL_OPEN_KEY = "aiAssistant.videoPanelOpen";
 const SESSIONS_KEY = "aiAssistant.chatSessions";
 
 // Canned questions for the Summarize/Generate Notes quick actions — sent through the
@@ -59,6 +89,31 @@ function loadSessions(): ChatSession[] {
 
 function saveSessions(sessions: ChatSession[]): void {
   localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
+}
+
+interface VideoInsights {
+  summary?: string;
+  notes?: string;
+}
+
+// Keyed per-video (not per-session) since the same recording's summary/notes should show
+// up again however it's reattached — a different chat session, or just navigating back to
+// this page — rather than only surviving as long as the videoPanelTab stays mounted.
+function videoInsightsKey(videoId: string): string {
+  return `aiAssistant.videoInsights.${videoId}`;
+}
+
+function loadVideoInsights(videoId: string): VideoInsights {
+  try {
+    const raw = localStorage.getItem(videoInsightsKey(videoId));
+    return raw ? (JSON.parse(raw) as VideoInsights) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveVideoInsights(videoId: string, insights: VideoInsights): void {
+  localStorage.setItem(videoInsightsKey(videoId), JSON.stringify(insights));
 }
 
 // A session's sidebar label is just its opening question — good enough to recognize at a
@@ -136,27 +191,123 @@ export function AiAssistantPage() {
 
   const [transcript, setTranscript] = useState<Transcript | null>(null);
 
-  // Whether the "Transcribed" status pill has collapsed down to just its green check (see
-  // the resource card below) — starts open so a fresh attachment's status is readable, then
-  // collapses itself after a beat. Resets to open (and re-collapses) whenever the
-  // attachment or its transcribed-ness changes, so switching to a different transcribed
-  // video re-announces it instead of silently staying collapsed.
-  const [transcribedBadgeCollapsed, setTranscribedBadgeCollapsed] = useState(false);
+  // Docked video/audio detail panel (see chat-video-panel below) — opened by the
+  // Summarize/Generate Notes quick actions, the "Transcribe to get insights" prompt, or
+  // the toggle button next to the composer, and squeezes the chat column rather than
+  // floating over it. Stays mounted (width animates 0 → open) so its video/audio element
+  // and tab state survive being hidden. Open/closed is a persisted UI preference (same
+  // pattern as sidebarCollapsed) rather than attachment-specific state — switching
+  // attachments only resets which tab/text is showing (see the video?.id effect below),
+  // not whether the panel itself is open.
+  const [videoPanelOpen, setVideoPanelOpen] = useState(() => localStorage.getItem(VIDEO_PANEL_OPEN_KEY) === "1");
   useEffect(() => {
-    if (!transcript) {
-      setTranscribedBadgeCollapsed(false);
-      return;
-    }
-    setTranscribedBadgeCollapsed(false);
-    const timer = setTimeout(() => setTranscribedBadgeCollapsed(true), 1400);
-    return () => clearTimeout(timer);
-  }, [transcript, video?.id]);
+    localStorage.setItem(VIDEO_PANEL_OPEN_KEY, videoPanelOpen ? "1" : "0");
+  }, [videoPanelOpen]);
+  const [videoPanelTab, setVideoPanelTab] = useState<"summary" | "notes" | "transcribe">("summary");
+  const [summaryText, setSummaryText] = useState<string | null>(null);
+  const [notesText, setNotesText] = useState<string | null>(null);
+  // Which quick action is currently in flight, if any — lets the panel show "Summarizing…"
+  // in only the tab that's actually running rather than both (runQuickAction guards against
+  // starting a second one while this is set).
+  const [runningAction, setRunningAction] = useState<"summarize" | "notes" | null>(null);
+  // Separate from the main chat `error` below — a failed Summarize/Generate Notes shouldn't
+  // show up under the chat log it never touched, only in the panel itself.
+  const [panelError, setPanelError] = useState<string | null>(null);
 
-  // Whether the sticky resource card (see below) is expanded to show its transcribe
-  // controls — toggled by clicking the card itself. Same underlying language/model pickers
-  // and inline segment editing + Save as the Library tab's transcript drawer, just inline
-  // in this card instead of a separate modal.
-  const [resourceExpanded, setResourceExpanded] = useState(false);
+  // Actions block (bottom of the panel) — lets the user send the Summary/Notes/Transcript
+  // to one of their connected Settings > Apps integrations. Only one action form expands
+  // at a time; its field state resets whenever a different integration/action is opened
+  // (see openActionForm) rather than being tracked per-action, since only one is ever
+  // visible.
+  const { data: integrations = [] } = useAppIntegrations();
+  const githubCreateIssueMutation = useGithubCreateIssue();
+  const githubCommentIssueMutation = useGithubCommentIssue();
+  const slackPostMessageMutation = useSlackPostMessage();
+  // Whether the Actions sheet is expanded — collapsed by default (just the toggle bar) so
+  // it doesn't eat into the Summary/Notes/Transcribe content above. A normal flex sibling
+  // of .chat-video-panel-inner (see AiPage.css), so expanding it squeezes that content
+  // upward rather than overlaying/covering it.
+  const [actionsExpanded, setActionsExpanded] = useState(false);
+  const [openAction, setOpenAction] = useState<{
+    integrationId: string;
+    kind: "githubCreateIssue" | "githubCommentIssue" | "slackPostMessage";
+  } | null>(null);
+  // Deliberately starts at null (not defaulted to the active videoPanelTab) — the user
+  // picks a content source explicitly every time an action form opens, rather than it being
+  // silently inferred, so it's always clear exactly what's about to be sent externally.
+  const [actionSource, setActionSource] = useState<"summary" | "notes" | "transcript" | null>(null);
+  const [actionRepo, setActionRepo] = useState("");
+  const [actionTitle, setActionTitle] = useState("");
+  const [actionIssueNumber, setActionIssueNumber] = useState("");
+  const [actionChannel, setActionChannel] = useState("");
+  const [actionResult, setActionResult] = useState<{ ok: boolean; message: string; url?: string } | null>(null);
+  const actionSending =
+    githubCreateIssueMutation.isPending || githubCommentIssueMutation.isPending || slackPostMessageMutation.isPending;
+
+  function openActionForm(
+    integrationId: string,
+    kind: "githubCreateIssue" | "githubCommentIssue" | "slackPostMessage"
+  ) {
+    setOpenAction({ integrationId, kind });
+    setActionSource(null);
+    setActionRepo("");
+    setActionTitle(video?.title ?? "");
+    setActionIssueNumber("");
+    setActionChannel("");
+    setActionResult(null);
+  }
+
+  function resolveActionContent(source: "summary" | "notes" | "transcript" | null): string | null {
+    if (source === "summary") return summaryText;
+    if (source === "notes") return notesText;
+    if (source === "transcript") return transcript ? transcriptToPlainText(transcript) : null;
+    return null;
+  }
+
+  const actionContent = resolveActionContent(actionSource);
+  const actionFieldsValid = (() => {
+    if (!openAction || !actionContent) return false;
+    if (openAction.kind === "githubCreateIssue") return actionRepo.trim().includes("/");
+    if (openAction.kind === "githubCommentIssue") return actionRepo.trim().includes("/") && !!actionIssueNumber.trim();
+    return !!actionChannel.trim(); // slackPostMessage
+  })();
+
+  async function runOpenAction() {
+    if (!openAction || !actionContent || !actionFieldsValid) return;
+    setActionResult(null);
+    try {
+      if (openAction.kind === "githubCreateIssue") {
+        setActionResult(
+          await githubCreateIssueMutation.mutateAsync({
+            integrationId: openAction.integrationId,
+            repo: actionRepo.trim(),
+            title: actionTitle.trim() || video?.title || "Doculigent recording",
+            body: actionContent,
+          })
+        );
+      } else if (openAction.kind === "githubCommentIssue") {
+        setActionResult(
+          await githubCommentIssueMutation.mutateAsync({
+            integrationId: openAction.integrationId,
+            repo: actionRepo.trim(),
+            issueNumber: Number(actionIssueNumber),
+            body: actionContent,
+          })
+        );
+      } else {
+        setActionResult(
+          await slackPostMessageMutation.mutateAsync({
+            integrationId: openAction.integrationId,
+            channel: actionChannel.trim(),
+            text: actionContent,
+          })
+        );
+      }
+    } catch (e) {
+      setActionResult({ ok: false, message: String(e) });
+    }
+  }
+
   const [transcribing, setTranscribing] = useState(false);
   const [transcribeError, setTranscribeError] = useState<string | null>(null);
   const [drawerLanguage, setDrawerLanguage] = useState(DEFAULT_TRANSCRIPTION_LANGUAGE);
@@ -202,12 +353,13 @@ export function AiAssistantPage() {
   const setVideoTranscript = useSetVideoTranscript();
   const [editingSegments, setEditingSegments] = useState<TranscriptSegment[] | null>(null);
   const [savingEdits, setSavingEdits] = useState(false);
-  // Keeps the drawer's editable copy in sync with whichever attachment/transcript is
-  // current whenever it's open — same pattern as Library's transcript drawer.
+  // Keeps the drawer's editable copy in sync whenever the transcript itself changes (new
+  // attachment, or a (re-)transcribe/save completes) — same pattern as Library's transcript
+  // drawer. Re-syncing after saveSegmentEdits is a no-op (the new transcript's segments
+  // already equal editingSegments), so this never clobbers an in-progress edit.
   useEffect(() => {
-    if (!resourceExpanded) return;
     setEditingSegments(transcript?.segments ?? null);
-  }, [resourceExpanded, transcript]);
+  }, [transcript]);
   const isEditingDirty =
     !!editingSegments &&
     !!transcript &&
@@ -282,6 +434,20 @@ export function AiAssistantPage() {
   // doesn't wipe the history that session just loaded.
   useEffect(() => {
     setTranscript(video?.transcript ?? null);
+  }, [video?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Summary/Notes are per-attachment, cached in localStorage (see loadVideoInsights) so
+  // they survive navigating away and back, not just component state — switching
+  // attachments restores whatever was already generated for the new one (if any) rather
+  // than always dropping to empty. Whether the panel itself is open is a separate,
+  // persisted preference (see videoPanelOpen above) and isn't touched here.
+  useEffect(() => {
+    const cached = video ? loadVideoInsights(video.id) : {};
+    setSummaryText(cached.summary ?? null);
+    setNotesText(cached.notes ?? null);
+    setVideoPanelTab("summary");
+    setOpenAction(null);
+    setActionsExpanded(false);
   }, [video?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function newChat() {
@@ -370,32 +536,26 @@ export function AiAssistantPage() {
     });
   }
 
-  // `presetQuestion` lets the Summarize/Generate Notes quick actions (see
-  // chat-quick-actions below) send a canned question through the exact same pipeline as
-  // anything typed by hand, instead of a separate one-off summarize code path — the
-  // transcript already grounds the reply via the chat system prompt (see
-  // openAiCompatibleClient.ts), so a well-worded question does the same job.
-  // `transcriptOverride`: the pendingAction auto-fire effect below needs to pass the
-  // just-loaded video's transcript explicitly rather than relying on the `transcript`
-  // state variable — that state is set by a separate effect keyed on video?.id, and on the
-  // very render where `video` first loads, that effect's setTranscript call hasn't
-  // propagated into this render's `transcript` closure yet, which would otherwise send the
-  // auto-fired question ungrounded (null transcript) even though one is actually available.
-  async function ask(presetQuestion?: string, transcriptOverride?: Transcript | null) {
-    const q = (presetQuestion ?? question).trim();
+  // Only ever sends what the user actually typed and hit Ask/Enter on — Summarize/
+  // Generate Notes are a deliberately separate path (see runQuickAction below) that never
+  // touches history/persistSession, so the visible conversation only ever contains
+  // questions the user actually asked, not canned prompts fired on their behalf.
+  async function ask() {
+    const q = question.trim();
     if (!q || chatBusy) return;
-    const next: ChatMessage[] = [...history, { role: "user", content: q }];
+    const next: ChatMessage[] = [...history, { role: "user", content: q, timestamp: new Date().toISOString() }];
     setHistory(next);
-    if (!presetQuestion) setQuestion("");
+    setQuestion("");
     setChatBusy(true);
     setError(null);
     try {
       // transcript is null when nothing's attached (or it hasn't been transcribed yet) —
       // AiService.chat/the backend fall back to a plain assistant prompt in that case, so
       // chatting only ever needs a model, not an attachment (see openAiCompatibleClient.ts).
-      const t = transcriptOverride !== undefined ? transcriptOverride : transcript;
-      const reply = await AiService.chat(t, next, q, profileId);
-      const final = [...next, reply];
+      const reply = await AiService.chat(transcript, next, q, profileId);
+      // The backend doesn't set a timestamp (see ChatMessage's comment) — stamped here,
+      // right when the reply actually lands, rather than left undefined.
+      const final = [...next, { ...reply, timestamp: new Date().toISOString() }];
       setHistory(final);
       persistSession(final);
     } catch (e) {
@@ -405,18 +565,48 @@ export function AiAssistantPage() {
     }
   }
 
+  // Summarize/Generate Notes — deliberately bypasses ask()/history/persistSession so
+  // clicking these never adds a canned prompt+reply into the visible conversation or a
+  // saved session; the reply only ever lands in the panel's Summary/Notes tab (and gets
+  // cached per-video via saveVideoInsights so it survives navigating away and back).
+  // `transcriptOverride` is for the pendingAction auto-fire effect below, which needs the
+  // just-loaded video's transcript directly rather than the separately-synced `transcript`
+  // state (see that effect's comment for why relying on `transcript` would race).
+  async function runQuickAction(action: "summarize" | "notes", transcriptOverride?: Transcript | null) {
+    const t = transcriptOverride !== undefined ? transcriptOverride : transcript;
+    if (!t || runningAction) return;
+    setVideoPanelTab(action === "summarize" ? "summary" : "notes");
+    setVideoPanelOpen(true);
+    setRunningAction(action);
+    setPanelError(null);
+    try {
+      const prompt = action === "summarize" ? SUMMARIZE_PROMPT : NOTES_PROMPT;
+      const reply = await AiService.chat(t, [], prompt, profileId);
+      if (action === "summarize") setSummaryText(reply.content);
+      else setNotesText(reply.content);
+      if (video) {
+        const cached = loadVideoInsights(video.id);
+        saveVideoInsights(video.id, { ...cached, [action === "summarize" ? "summary" : "notes"]: reply.content });
+      }
+    } catch (e) {
+      setPanelError(String(e));
+    } finally {
+      setRunningAction(null);
+    }
+  }
+
   // Fires the Summarize/Generate Notes action carried over from MeetingPage.tsx's
   // post-save quick actions (see pendingAction above) — waits for `video` to actually
   // load (the attachment was just set by id, not fetched yet) rather than firing
   // immediately with a stale/empty transcript, and reads video.transcript directly (see
-  // ask()'s transcriptOverride) rather than the separately-synced `transcript` state to
-  // avoid a one-render race. If the video turns out to have no transcript (no speech
-  // detected during the meeting), it's silently dropped rather than asking a question with
-  // nothing to ground it — the normal composer is still right there.
+  // runQuickAction's transcriptOverride) rather than the separately-synced `transcript`
+  // state to avoid a one-render race. If the video turns out to have no transcript (no
+  // speech detected during the meeting), it's silently dropped rather than summarizing
+  // with nothing to ground it.
   useEffect(() => {
     if (!pendingAction || !video) return;
     setPendingAction(null);
-    if (video.transcript) ask(pendingAction === "summarize" ? SUMMARIZE_PROMPT : NOTES_PROMPT, video.transcript);
+    if (video.transcript) runQuickAction(pendingAction, video.transcript);
   }, [pendingAction, video]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -514,7 +704,7 @@ export function AiAssistantPage() {
 
             {history.map((m, i) => (
               <div key={i} className={`msg ${m.role}`}>
-                <ChatMessageContent content={m.content} />
+                <ChatMessageContent content={m.content} timestamp={m.timestamp} />
                 {m.citations?.map((c, j) => (
                   <button key={j} className="citation" title={c.quote}>
                     ↷ {fmt(c.timestamp)}
@@ -528,15 +718,38 @@ export function AiAssistantPage() {
         </div>
 
         <div className="chat-page-composer">
+          {/* Attached but not transcribed yet — a call to action rather than a status, so
+              it's shown regardless of conversation length (unlike the quick actions below).
+              Opens the docked panel to the Transcribe tab and, if a model's actually
+              configured, fires the transcribe right away instead of making the user click
+              Transcribe again once the panel slides in. */}
+          {video && !transcript && (
+            <button
+              type="button"
+              className="chat-transcribe-warning"
+              onClick={() => {
+                setVideoPanelTab("transcribe");
+                setVideoPanelOpen(true);
+                if (hasAnyTranscribeModel && !transcribing) runVideoTranscribe();
+              }}
+            >
+              <span className="chat-transcribe-warning-icon">
+                {video.source === "meeting" ? <Mic size={14} /> : <Video size={14} />}
+              </span>
+              <span className="chat-transcribe-warning-title">{video.title}</span>
+              <span className="chat-transcribe-warning-cta">Transcribe to get insights</span>
+            </button>
+          )}
+
           {/* Only for a transcribed attachment on a fresh conversation — once you've
               started chatting (or there's nothing grounding these prompts) they'd just be
               clutter, same reasoning as the chat-page-empty hints above. */}
           {transcript && history.length === 0 && (
             <div className="chat-quick-actions">
-              <button type="button" onClick={() => ask(SUMMARIZE_PROMPT)} disabled={chatBusy}>
+              <button type="button" onClick={() => runQuickAction("summarize")} disabled={runningAction !== null}>
                 Summarize
               </button>
-              <button type="button" onClick={() => ask(NOTES_PROMPT)} disabled={chatBusy}>
+              <button type="button" onClick={() => runQuickAction("notes")} disabled={runningAction !== null}>
                 Generate Notes
               </button>
             </div>
@@ -633,167 +846,415 @@ export function AiAssistantPage() {
           </div>
         )}
 
-        {/* Sticky card for the attached video — pinned to the right edge of the app
-            (position: fixed, see AiPage.css) rather than living inline in the scrollable
-            log, so it stays reachable no matter how far you've scrolled the conversation.
-            Slides/fades in on mount and whenever the attachment changes (see
-            .chat-resource-card's animation). Clicking it toggles resourceExpanded, which
-            reveals the same Transcribe/Re-transcribe controls and inline segment editing +
-            Save as the Library tab's transcript drawer, just inline here instead of a
-            separate modal. */}
-        {video &&
-          (() => {
-            // Shared by the outer card (shrinks its own box, not just its content — see
-            // .chat-resource-card.collapsed) and the inner summary/status pill, so all
-            // three collapse and re-expand in lockstep. Expanding (resourceExpanded) always
-            // wins over the auto-collapse timer — clicking the tiny collapsed badge should
-            // bring the title back too, not just reveal the drawer below an empty box.
-            const badgeCollapsed = !!transcript && transcribedBadgeCollapsed && !resourceExpanded;
-            return (
-              <div
-                key={video.id}
-                className={
-                  resourceExpanded
-                    ? "chat-resource-card expanded"
-                    : badgeCollapsed
-                      ? "chat-resource-card collapsed"
-                      : "chat-resource-card"
-                }
-                onClick={() => setResourceExpanded((v) => !v)}
-              >
-                <div className={badgeCollapsed ? "chat-resource-summary collapsed" : "chat-resource-summary"}>
-                  <span className="chat-resource-icon">
-                    {video.source === "meeting" ? <Mic size={16} /> : <Video size={16} />}
-                  </span>
-                  <span className="chat-resource-title">{video.title}</span>
-                  {transcript ? (
-                    // Opens full (icon + title + "Transcribed" + icon) on load/attachment-
-                    // change, then the whole summary row collapses down to just the green
-                    // transcribe icon after a beat (see badgeCollapsed above).
-                    <span className={badgeCollapsed ? "chat-transcribe-status ok collapsed" : "chat-transcribe-status ok"}>
-                      <span className="chat-transcribe-status-text">Transcribed</span>
-                      <FileText size={14} />
-                    </span>
+      </div>
+
+      {/* Docked video/audio detail panel — a direct sibling of .chat-page (not nested
+          inside it), squeezing the chat column instead of floating over it or stacking
+          below the composer. Collapses to a slim rail (same pattern as .chat-sidebar)
+          rather than fully disappearing, so its toggle icon stays reachable in the same
+          top-right spot whether open or closed — no separate open button needed
+          elsewhere. `wide` gives it more room once the left chat-sidebar is collapsed,
+          instead of leaving that freed-up width unused. Opened by the Summarize/Generate
+          Notes quick actions (runQuickAction), the "Transcribe to get insights" prompt
+          above the composer, or this toggle. */}
+      {video && (
+        <aside
+          className={
+            videoPanelOpen ? `chat-video-panel open${sidebarCollapsed ? " wide" : ""}` : "chat-video-panel"
+          }
+        >
+          <div className="chat-video-panel-top">
+            <button
+              type="button"
+              className="icon-btn"
+              title={videoPanelOpen ? "Hide recording panel" : "Show recording panel"}
+              onClick={() => setVideoPanelOpen((v) => !v)}
+            >
+              {videoPanelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+            </button>
+            {videoPanelOpen && <span className="chat-video-panel-title">{video.title}</span>}
+          </div>
+
+          {videoPanelOpen && (
+          <>
+          <div className="chat-video-panel-inner">
+            <div className="chat-video-preview">
+              {video.source === "meeting" ? (
+                <audio src={mediaUrl(video.filePath)} controls preload="metadata" />
               ) : (
-                // Stays open (never collapses) — it's a call to action, not a status.
-                <span className="chat-transcribe-status warn">Transcribe to get insights</span>
+                <video src={mediaUrl(video.filePath)} controls preload="metadata" />
               )}
             </div>
 
-            {resourceExpanded && (
-              <div className="chat-resource-expanded" onClick={(e) => e.stopPropagation()}>
-                <fieldset className="field retranscribe-controls" disabled={transcribing}>
-                  <legend>Transcribe with</legend>
+            <div className="chat-video-panel-tabs">
+              <button
+                type="button"
+                className={videoPanelTab === "summary" ? "chat-video-tab active" : "chat-video-tab"}
+                onClick={() => setVideoPanelTab("summary")}
+              >
+                Summary
+              </button>
+              <button
+                type="button"
+                className={videoPanelTab === "notes" ? "chat-video-tab active" : "chat-video-tab"}
+                onClick={() => setVideoPanelTab("notes")}
+              >
+                Notes
+              </button>
+              <button
+                type="button"
+                className={videoPanelTab === "transcribe" ? "chat-video-tab active" : "chat-video-tab"}
+                onClick={() => setVideoPanelTab("transcribe")}
+              >
+                Transcribe
+              </button>
+            </div>
 
-                  <div className="retranscribe-row">
-                    <label className="field">
-                      <span>Language</span>
-                      <select value={drawerLanguage} onChange={(e) => setDrawerLanguage(e.target.value)}>
-                        {TRANSCRIPTION_LANGUAGES.map((l) => (
-                          <option key={l.code} value={l.code}>
-                            {l.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+            <div className="chat-video-panel-body">
+              {videoPanelTab === "summary" && (
+                <>
+                  {summaryText ? (
+                    <div className="chat-video-panel-text">
+                      <ChatMessageContent content={summaryText} />
+                    </div>
+                  ) : (
+                    <p className="muted">
+                      {runningAction === "summarize"
+                        ? "Summarizing…"
+                        : transcript
+                          ? "No summary yet."
+                          : "Transcribe this recording first to summarize it."}
+                    </p>
+                  )}
+                  {transcript && (
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={() => runQuickAction("summarize")}
+                      disabled={runningAction !== null}
+                    >
+                      {runningAction === "summarize" ? "…" : summaryText ? "Regenerate" : "Summarize"}
+                    </button>
+                  )}
+                  {panelError && videoPanelTab === "summary" && <p className="error">{panelError}</p>}
+                </>
+              )}
 
-                    <label className="field">
-                      <span>Model</span>
-                      {hasAnyTranscribeModel ? (
-                        <select
-                          value={usingDrawerCloud ? "doculigent" : usingDrawerByok ? `byok:${drawerByokId}` : (effectiveDrawerModel ?? "")}
-                          onChange={(e) => handleDrawerModelSelectChange(e.target.value)}
-                        >
-                          {cloudEnabled && <option value="doculigent">Doculigent (cloud)</option>}
-                          {downloadedModels.map((m) => (
-                            <option key={m.size} value={m.size}>
-                              {m.label}
-                            </option>
-                          ))}
-                          {byokProfiles.map((p) => (
-                            <option key={p.id} value={`byok:${p.id}`}>
-                              {p.name || "BYOK"}
+              {videoPanelTab === "notes" && (
+                <>
+                  {notesText ? (
+                    <div className="chat-video-panel-text">
+                      <ChatMessageContent content={notesText} />
+                    </div>
+                  ) : (
+                    <p className="muted">
+                      {runningAction === "notes"
+                        ? "Generating notes…"
+                        : transcript
+                          ? "No notes yet."
+                          : "Transcribe this recording first to generate notes."}
+                    </p>
+                  )}
+                  {transcript && (
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={() => runQuickAction("notes")}
+                      disabled={runningAction !== null}
+                    >
+                      {runningAction === "notes" ? "…" : notesText ? "Regenerate" : "Generate Notes"}
+                    </button>
+                  )}
+                  {panelError && videoPanelTab === "notes" && <p className="error">{panelError}</p>}
+                </>
+              )}
+
+              {videoPanelTab === "transcribe" && (
+                <>
+                  <fieldset className="field retranscribe-controls" disabled={transcribing}>
+                    <legend>Transcribe with</legend>
+
+                    <div className="retranscribe-row">
+                      <label className="field">
+                        <span>Language</span>
+                        <select value={drawerLanguage} onChange={(e) => setDrawerLanguage(e.target.value)}>
+                          {TRANSCRIPTION_LANGUAGES.map((l) => (
+                            <option key={l.code} value={l.code}>
+                              {l.label}
                             </option>
                           ))}
                         </select>
-                      ) : (
-                        modelStatuses && (
-                          <span className="muted field-hint-inline">
-                            No models configured — set one up in{" "}
-                            <Link to="/settings">Settings &gt; Models</Link>.
-                          </span>
-                        )
-                      )}
-                    </label>
-                  </div>
-                </fieldset>
+                      </label>
 
-                {/* Deliberately outside the fieldset above — its `disabled` while
-                    transcribing is meant to lock the language/model pickers, not the Stop
-                    button, which needs to stay clickable for exactly that duration. */}
-                <div className="actions">
-                  <button
-                    type="button"
-                    className="primary"
-                    onClick={runVideoTranscribe}
-                    disabled={transcribing || !hasAnyTranscribeModel}
-                  >
-                    {transcribing ? "Transcribing…" : transcript ? "Re-transcribe" : "Transcribe"}
-                  </button>
-                  {transcribing && (
-                    <button type="button" className="danger" onClick={stopVideoTranscribe}>
-                      Stop
-                    </button>
-                  )}
-                </div>
-
-                {transcribeError && <p className="error">{transcribeError}</p>}
-
-                {editingSegments && editingSegments.length > 0 && (
-                  <>
-                    <div className="transcript-drawer-header">
-                      <h3>Transcript</h3>
-                      <div className="actions">
-                        {isEditingDirty && (
-                          <button type="button" onClick={cancelSegmentEdits} disabled={savingEdits}>
-                            Cancel
-                          </button>
+                      <label className="field">
+                        <span>Model</span>
+                        {hasAnyTranscribeModel ? (
+                          <select
+                            value={usingDrawerCloud ? "doculigent" : usingDrawerByok ? `byok:${drawerByokId}` : (effectiveDrawerModel ?? "")}
+                            onChange={(e) => handleDrawerModelSelectChange(e.target.value)}
+                          >
+                            {cloudEnabled && <option value="doculigent">Doculigent (cloud)</option>}
+                            {downloadedModels.map((m) => (
+                              <option key={m.size} value={m.size}>
+                                {m.label}
+                              </option>
+                            ))}
+                            {byokProfiles.map((p) => (
+                              <option key={p.id} value={`byok:${p.id}`}>
+                                {p.name || "BYOK"}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          modelStatuses && (
+                            <span className="muted field-hint-inline">
+                              No models configured — set one up in{" "}
+                              <Link to="/settings">Settings &gt; Models</Link>.
+                            </span>
+                          )
                         )}
-                        <button
-                          type="button"
-                          className="primary"
-                          onClick={saveSegmentEdits}
-                          disabled={savingEdits || !isEditingDirty}
-                        >
-                          {savingEdits ? "Saving…" : "Save"}
-                        </button>
-                      </div>
+                      </label>
                     </div>
+                  </fieldset>
 
-                    <div className="segments">
-                      {editingSegments.map((seg, i) => (
-                        <div key={i} className="segment">
-                          <span className="ts">{fmt(seg.start)}</span>
-                          <span className="spk">{seg.speaker}</span>
-                          <textarea
-                            className="txt segment-edit"
-                            value={seg.text}
-                            onChange={(e) => updateSegmentText(i, e.target.value)}
-                            rows={Math.max(1, Math.ceil(seg.text.length / 40))}
-                          />
+                  {/* Deliberately outside the fieldset above — its `disabled` while
+                      transcribing is meant to lock the language/model pickers, not the
+                      Stop button, which needs to stay clickable for exactly that
+                      duration. */}
+                  <div className="actions">
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={runVideoTranscribe}
+                      disabled={transcribing || !hasAnyTranscribeModel}
+                    >
+                      {transcribing ? "Transcribing…" : transcript ? "Re-transcribe" : "Transcribe"}
+                    </button>
+                    {transcribing && (
+                      <button type="button" className="danger" onClick={stopVideoTranscribe}>
+                        Stop
+                      </button>
+                    )}
+                  </div>
+
+                  {transcribeError && <p className="error">{transcribeError}</p>}
+
+                  {editingSegments && editingSegments.length > 0 && (
+                    <>
+                      <div className="transcript-drawer-header">
+                        <h3>Transcript</h3>
+                        <div className="actions">
+                          {isEditingDirty && (
+                            <button type="button" onClick={cancelSegmentEdits} disabled={savingEdits}>
+                              Cancel
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="primary"
+                            onClick={saveSegmentEdits}
+                            disabled={savingEdits || !isEditingDirty}
+                          >
+                            {savingEdits ? "Saving…" : "Save"}
+                          </button>
                         </div>
-                      ))}
-                    </div>
-                  </>
-                )}
+                      </div>
 
-                {!transcript && !transcribing && !transcribeError && <p className="muted">No transcript yet.</p>}
+                      <div className="segments">
+                        {editingSegments.map((seg, i) => (
+                          <div key={i} className="segment">
+                            <span className="ts">{fmt(seg.start)}</span>
+                            <span className="spk">{seg.speaker}</span>
+                            <textarea
+                              className="txt segment-edit"
+                              value={seg.text}
+                              onChange={(e) => updateSegmentText(i, e.target.value)}
+                              rows={Math.max(1, Math.ceil(seg.text.length / 40))}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {!transcript && !transcribing && !transcribeError && <p className="muted">No transcript yet.</p>}
+                </>
+              )}
+            </div>
+
+          </div>
+
+          {/* Actions sheet — collapsed to just its toggle bar by default. A normal flex
+              sibling of .chat-video-panel-inner (not absolutely positioned/overlaid), so
+              expanding it squeezes that content upward — .chat-video-panel-inner's own
+              flex:1/overflow-y:auto shrinks and keeps everything (Summary/Notes/Transcribe,
+              including the Regenerate button) reachable by scrolling within the smaller
+              space, rather than an overlay covering it. Lists every app connected in
+              Settings > Apps with its available action(s); clicking one expands an inline
+              form right there (content source + whatever that action needs). */}
+          {video && (
+            <div className={actionsExpanded ? "chat-actions-sheet open" : "chat-actions-sheet"}>
+              <button
+                type="button"
+                className="chat-actions-toggle"
+                onClick={() => setActionsExpanded((v) => !v)}
+              >
+                <span>Actions</span>
+                {actionsExpanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+              </button>
+              {actionsExpanded && (
+              <div className="chat-actions-sheet-body">
+              {integrations.length === 0 ? (
+                <p className="muted">
+                  No apps connected — <Link to="/settings">connect one in Settings</Link>.
+                </p>
+              ) : (
+                <div className="chat-actions-list">
+                  {integrations.map((integ) => {
+                    const meta = appProviderMeta(integ.kind);
+                    return (
+                      <div key={integ.id} className="chat-action-app">
+                        <div className="chat-action-app-header">
+                          <span
+                            className={meta.multicolor ? "app-icon multicolor" : "app-icon"}
+                            style={meta.multicolor ? undefined : { background: meta.accent }}
+                          >
+                            {meta.icon}
+                          </span>
+                          <span className="chat-action-app-name">{integ.name}</span>
+                        </div>
+
+                        <div className="chat-action-buttons">
+                          {integ.kind === "github" && (
+                            <>
+                              <button type="button" onClick={() => openActionForm(integ.id, "githubCreateIssue")}>
+                                Create Issue
+                              </button>
+                              <button type="button" onClick={() => openActionForm(integ.id, "githubCommentIssue")}>
+                                Comment
+                              </button>
+                            </>
+                          )}
+                          {integ.kind === "slack" && (
+                            <button type="button" onClick={() => openActionForm(integ.id, "slackPostMessage")}>
+                              Post Message
+                            </button>
+                          )}
+                        </div>
+
+                        {openAction?.integrationId === integ.id && (
+                          <div className="chat-action-form">
+                            <div className="chat-action-source-picker">
+                              <span className="muted">Send</span>
+                              <button
+                                type="button"
+                                className={actionSource === "summary" ? "chip active" : "chip"}
+                                disabled={!summaryText}
+                                onClick={() => setActionSource("summary")}
+                              >
+                                Summary
+                              </button>
+                              <button
+                                type="button"
+                                className={actionSource === "notes" ? "chip active" : "chip"}
+                                disabled={!notesText}
+                                onClick={() => setActionSource("notes")}
+                              >
+                                Notes
+                              </button>
+                              <button
+                                type="button"
+                                className={actionSource === "transcript" ? "chip active" : "chip"}
+                                disabled={!transcript}
+                                onClick={() => setActionSource("transcript")}
+                              >
+                                Transcript
+                              </button>
+                            </div>
+
+                            {openAction.kind === "githubCreateIssue" && (
+                              <>
+                                <input
+                                  value={actionRepo}
+                                  placeholder="owner/repo"
+                                  onChange={(e) => setActionRepo(e.target.value)}
+                                />
+                                <input
+                                  value={actionTitle}
+                                  placeholder="Issue title"
+                                  onChange={(e) => setActionTitle(e.target.value)}
+                                />
+                              </>
+                            )}
+                            {openAction.kind === "githubCommentIssue" && (
+                              <>
+                                <input
+                                  value={actionRepo}
+                                  placeholder="owner/repo"
+                                  onChange={(e) => setActionRepo(e.target.value)}
+                                />
+                                <input
+                                  value={actionIssueNumber}
+                                  placeholder="Issue or PR #"
+                                  inputMode="numeric"
+                                  onChange={(e) => setActionIssueNumber(e.target.value.replace(/\D/g, ""))}
+                                />
+                              </>
+                            )}
+                            {openAction.kind === "slackPostMessage" && (
+                              <input
+                                value={actionChannel}
+                                placeholder="#channel or channel ID"
+                                onChange={(e) => setActionChannel(e.target.value)}
+                              />
+                            )}
+
+                            <div className="actions">
+                              <button
+                                type="button"
+                                className="primary"
+                                onClick={runOpenAction}
+                                disabled={!actionFieldsValid || actionSending}
+                              >
+                                {actionSending ? "Sending…" : "Send"}
+                              </button>
+                              <button type="button" onClick={() => setOpenAction(null)}>
+                                Cancel
+                              </button>
+                            </div>
+
+                            {actionResult && (
+                              <p className={actionResult.ok ? "muted" : "error"}>
+                                {actionResult.message}
+                                {actionResult.url && (
+                                  <>
+                                    {" "}
+                                    <button
+                                      type="button"
+                                      className="link-btn"
+                                      onClick={() => window.open(actionResult.url, "_blank")}
+                                    >
+                                      View
+                                    </button>
+                                  </>
+                                )}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               </div>
-            )}
-              </div>
-            );
-          })()}
-      </div>
+              )}
+            </div>
+          )}
+          </>
+          )}
+        </aside>
+      )}
     </div>
   );
 }

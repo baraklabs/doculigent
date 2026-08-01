@@ -1,6 +1,7 @@
 import type {
   AppIntegration,
   AppIntegrationKind,
+  AutoTranscribeSettings,
   CaptureTarget,
   ChatMessage,
   CursorHighlightStyle,
@@ -153,6 +154,8 @@ export interface DoculigentApi {
     setUseDoculigentModel(use: boolean): Promise<void>;
     getTranscriptionByokProfileId(): Promise<string | null>;
     setTranscriptionByokProfileId(id: string | null): Promise<void>;
+    getAutoTranscribeSettings(): Promise<AutoTranscribeSettings>;
+    setAutoTranscribeSettings(settings: AutoTranscribeSettings): Promise<void>;
   };
   ai: {
     summarize(transcript: Transcript, profileId?: string): Promise<Summary>;
@@ -171,6 +174,19 @@ export interface DoculigentApi {
       integrationId: string | null,
       secret?: string | null
     ): Promise<{ ok: boolean; message: string }>;
+    githubCreateIssue(
+      integrationId: string,
+      repo: string,
+      title: string,
+      body: string
+    ): Promise<{ ok: boolean; message: string; url?: string }>;
+    githubCommentIssue(
+      integrationId: string,
+      repo: string,
+      issueNumber: number,
+      body: string
+    ): Promise<{ ok: boolean; message: string; url?: string }>;
+    slackPostMessage(integrationId: string, channel: string, text: string): Promise<{ ok: boolean; message: string }>;
   };
   transcription: {
     transcribe(filePath: string, language?: string, modelSize?: WhisperModelSize, byokProfileId?: string): Promise<Transcript>;

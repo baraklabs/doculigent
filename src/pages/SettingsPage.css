@@ -25,6 +25,30 @@
 .settings-nav-item.active { color: var(--text); background: rgba(91, 75, 245,.12); font-weight: 600; }
 .settings-content { flex: 1; min-width: 0; }
 
+/* --- Preferences tab toggles ------------------------------------------------------ */
+
+.pref-toggle-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.pref-toggle {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+  padding: 10px 12px; border-radius: 8px; font-size: 12px; text-align: left; cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+.pref-toggle:hover { border-color: var(--accent); color: var(--text); }
+.pref-toggle.on { background: rgba(91, 75, 245, .08); border-color: var(--accent); color: var(--text); }
+.pref-toggle-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pref-toggle-label { font-size: 13px; color: var(--text); }
+.pref-toggle-switch {
+  flex: none; width: 32px; height: 18px; border-radius: 999px; padding: 2px;
+  background: var(--border); display: flex; transition: background 150ms ease;
+}
+.pref-toggle.on .pref-toggle-switch { background: var(--accent); }
+.pref-toggle-knob {
+  width: 14px; height: 14px; border-radius: 50%; background: var(--bg);
+  transition: transform 150ms ease;
+}
+.pref-toggle.on .pref-toggle-knob { transform: translateX(14px); }
+
 /* Quick filter chips above the model profiles list, with "+ Add model" on the right */
 .model-filter-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0; flex-wrap: wrap; }
 .model-filter { display: flex; gap: 6px; flex-wrap: wrap; }

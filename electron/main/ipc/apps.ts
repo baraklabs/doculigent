@@ -3,7 +3,26 @@ import { Channels } from "@shared/constants/channels";
 import type { AppIntegration, AppIntegrationKind } from "@shared/types/models";
 import * as store from "../native/settingsStore";
 import { deleteAppSecret, getAppSecret, setAppSecret } from "../native/keyring";
-import { testAppConnection } from "../apps";
+import { commentOnGithubIssue, createGithubIssue, postSlackMessage, testAppConnection } from "../apps";
+
+interface ActionResult {
+  ok: boolean;
+  message: string;
+  url?: string;
+}
+
+// Every action handler resolves the integration's keychain secret by id and never throws
+// over IPC — same {ok, message} contract as testConnection, so the Actions panel can
+// render success/failure (and a link, for GitHub) inline without a try/catch of its own.
+async function runAction(integrationId: string, action: (secret: string) => Promise<ActionResult>): Promise<ActionResult> {
+  try {
+    const secret = await getAppSecret(integrationId);
+    if (!secret) throw new Error("This app isn't connected — reconnect it in Settings > Apps.");
+    return await action(secret);
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+  }
+}
 
 export function registerAppsIpc(): void {
   ipcMain.handle(Channels.apps.list, async (): Promise<AppIntegration[]> => store.listAppIntegrations());
@@ -42,5 +61,38 @@ export function registerAppsIpc(): void {
         return { ok: false, message: err instanceof Error ? err.message : String(err) };
       }
     }
+  );
+
+  ipcMain.handle(
+    Channels.apps.githubCreateIssue,
+    async (_event, integrationId: string, repo: string, title: string, body: string): Promise<ActionResult> =>
+      runAction(integrationId, async (secret) => {
+        const issue = await createGithubIssue(secret, repo, title, body);
+        return { ok: true, message: `Created issue #${issue.number}.`, url: issue.url };
+      })
+  );
+
+  ipcMain.handle(
+    Channels.apps.githubCommentIssue,
+    async (
+      _event,
+      integrationId: string,
+      repo: string,
+      issueNumber: number,
+      body: string
+    ): Promise<ActionResult> =>
+      runAction(integrationId, async (secret) => {
+        const comment = await commentOnGithubIssue(secret, repo, issueNumber, body);
+        return { ok: true, message: `Commented on #${comment.number}.`, url: comment.url };
+      })
+  );
+
+  ipcMain.handle(
+    Channels.apps.slackPostMessage,
+    async (_event, integrationId: string, channel: string, text: string): Promise<ActionResult> =>
+      runAction(integrationId, async (secret) => {
+        await postSlackMessage(secret, channel, text);
+        return { ok: true, message: `Posted to ${channel}.` };
+      })
   );
 }

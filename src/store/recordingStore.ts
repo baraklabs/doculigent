@@ -1,6 +1,10 @@
 import { create } from "zustand";
-import type { MicConfig, OverlayConfig } from "@shared/types/models";
+import type { MicConfig, OverlayConfig, Video } from "@shared/types/models";
 import { recordingService } from "../services/recording/RecordingService";
+import { SettingsService } from "../services/settings/SettingsService";
+import { TranscriptionService } from "../services/transcription/TranscriptionService";
+import { LibraryService } from "../services/library/LibraryService";
+import { queryClient } from "../lib/queryClient";
 export interface RecordingSaveStatus {
   id: string;
   status: "processing" | "ready" | "failed" | "cancelled";
@@ -87,6 +91,20 @@ export function useSavingRecording(): boolean {
   return useRecordingStore((s) => s.stopping || s.saveStatus?.status === "processing");
 }
 
+async function autoTranscribeRecording(video: Video): Promise<void> {
+  const settings = await SettingsService.getAutoTranscribeSettings();
+  if (!settings.all && !settings.recording) return;
+  try {
+    const transcript = await TranscriptionService.transcribe(video.filePath);
+    const updated = await LibraryService.setTranscript(video.id, transcript);
+    queryClient.invalidateQueries({ queryKey: ["videos"] });
+    queryClient.setQueryData(["video", updated.id], updated);
+  } catch {
+    // Best-effort — the recording is already saved either way; the user can still
+    // transcribe it by hand from the Library if this fails (e.g. no model configured).
+  }
+}
+
 let watching = false;
 
 export function watchRecordingSaves(): void {
@@ -105,6 +123,9 @@ export function watchRecordingSaves(): void {
     useRecordingStore.setState((s) =>
       s.saveStatus?.id === video.id ? { saveStatus: { id: video.id, status: "ready", percent: 100 } } : {}
     );
+    // Meeting-source saves already carry a transcript (built live during the call, see
+    // MeetingPage's transcribePcm usage) — only plain screen recordings land here untranscribed.
+    if (!video.transcript) void autoTranscribeRecording(video);
   });
 
   window.api.recording.onSaveFailed(({ id, message }) => {

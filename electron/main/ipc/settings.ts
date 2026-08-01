@@ -2,7 +2,7 @@ import { dialog, ipcMain, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { Channels } from "@shared/constants/channels";
-import type { LlmModelProfile, LlmProviderKind, MicConfig, OverlayConfig } from "@shared/types/models";
+import type { AutoTranscribeSettings, LlmModelProfile, LlmProviderKind, MicConfig, OverlayConfig } from "@shared/types/models";
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
 import { defaultLlmConfig } from "@shared/constants/llmDefaults";
 import { getSaveDir, setSaveDir } from "../native/paths";
@@ -20,6 +20,8 @@ import {
   setUseDoculigentModel,
   getTranscriptionByokProfileId,
   setTranscriptionByokProfileId,
+  getAutoTranscribeSettings,
+  setAutoTranscribeSettings,
 } from "../native/settingsStore";
 import { setLlmApiKey, deleteLlmApiKey } from "../native/keyring";
 import { preloadWhisperModel } from "../transcription/whisper";
@@ -151,4 +153,16 @@ export function registerSettingsIpc(): void {
   ipcMain.handle(Channels.settings.setTranscriptionByokProfileId, async (_event, id: string | null): Promise<void> => {
     setTranscriptionByokProfileId(id);
   });
+
+  ipcMain.handle(
+    Channels.settings.getAutoTranscribeSettings,
+    async (): Promise<AutoTranscribeSettings> => getAutoTranscribeSettings()
+  );
+
+  ipcMain.handle(
+    Channels.settings.setAutoTranscribeSettings,
+    async (_event, settings: AutoTranscribeSettings): Promise<void> => {
+      setAutoTranscribeSettings(settings);
+    }
+  );
 }

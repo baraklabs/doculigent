@@ -30,6 +30,7 @@ import {
   useVideos,
 } from "../hooks/useVideos";
 import { useLlmProfiles } from "../hooks/useLlmProfiles";
+import { useAutoTranscribeSettings } from "../hooks/useAutoTranscribeSettings";
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
 import { LibraryService } from "../services/library/LibraryService";
 import { SettingsService } from "../services/settings/SettingsService";
@@ -124,6 +125,7 @@ export function LibraryPage() {
   const renameVideo = useRenameVideo();
   const setVideoTranscript = useSetVideoTranscript();
   const importVideos = useImportVideos();
+  const { data: autoTranscribe } = useAutoTranscribeSettings();
 
   const sectionVideos =
     section === "transcribed"
@@ -267,6 +269,15 @@ export function LibraryPage() {
     try {
       const imported = await importVideos.mutateAsync({ filePaths, kind });
       toast.success(`${imported.length} file${imported.length === 1 ? "" : "s"} imported`);
+      const autoTranscribeThisKind =
+        autoTranscribe?.all || (kind === "video" ? autoTranscribe?.videoImport : autoTranscribe?.audioImport);
+      if (autoTranscribeThisKind) {
+        // Sequential, not Promise.all — runTranscribe drives the single shared whisper
+        // worker (transcribingId/handleStopTranscribe assume one transcription in flight).
+        for (const v of imported) {
+          await runTranscribe(v);
+        }
+      }
     } catch (e) {
       toast.error(friendlyErrorMessage(e), { title: "Import failed" });
     } finally {

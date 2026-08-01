@@ -17,4 +17,23 @@ export const AppsService = {
   ): Promise<{ ok: boolean; message: string }> {
     return window.api.apps.testConnection(kind, integrationId, secret);
   },
+  githubCreateIssue(
+    integrationId: string,
+    repo: string,
+    title: string,
+    body: string
+  ): Promise<{ ok: boolean; message: string; url?: string }> {
+    return window.api.apps.githubCreateIssue(integrationId, repo, title, body);
+  },
+  githubCommentIssue(
+    integrationId: string,
+    repo: string,
+    issueNumber: number,
+    body: string
+  ): Promise<{ ok: boolean; message: string; url?: string }> {
+    return window.api.apps.githubCommentIssue(integrationId, repo, issueNumber, body);
+  },
+  slackPostMessage(integrationId: string, channel: string, text: string): Promise<{ ok: boolean; message: string }> {
+    return window.api.apps.slackPostMessage(integrationId, channel, text);
+  },
 };
