@@ -16,6 +16,9 @@ import type {
 import type { AuthSession, LoginStatus } from "./auth";
 import type { AnnotationCommand, AnnotationState, AnnotationTool } from "./annotation";
 import type { WhisperModelSize, WhisperModelStatus } from "../constants/whisperModels";
+import type { FileDownloadTicket, Team, TeamFile, TeamFileStatus, TeamMember } from "./team";
+import type { PmRunResult, ProjectManager } from "./projectManager";
+import type { CustomPersona } from "./persona";
 
 export interface DoculigentApi {
  
@@ -32,21 +35,11 @@ export interface DoculigentApi {
     apply(style: CursorHighlightStyle): Promise<void>;
 
     restore(): Promise<void>;
-    /** Starts sampling pointer positions for the cursor metadata sidecar. */
     startCapture(targetId: string, style: CursorHighlightStyle): Promise<void>;
-    /** Stops sampling; the track stays buffered until recording.save writes it out. */
     stopCapture(): Promise<void>;
   };
   screenCapture: {
-    /** Starts a Windows gdigrab capture of the given display target directly to a temp
-     *  file, with the real cursor excluded from the frames when `hideCursor` is true —
-     *  the real pointer itself is never touched. Resolves `available: false` (not an
-     *  error) whenever this path doesn't apply: non-Windows, or a specific-window target
-     *  rather than a whole display, or a capture is already running. Callers fall back to
-     *  the ordinary getUserMedia/MediaRecorder pipeline in that case. */
     start(targetId: string, hideCursor: boolean): Promise<{ available: boolean }>;
-    /** Stops the capture and returns the finished file's path. `available: false` mirrors
-     *  start()'s meaning — nothing was running to stop. */
     stop(): Promise<{ available: boolean; filePath?: string }>;
   };
   annotation: {
@@ -74,11 +67,6 @@ export interface DoculigentApi {
     onOverlayOpenChanged(callback: (open: boolean) => void): () => void;
   };
   recording: {
-    /** Exactly one of `webmBytes` (ordinary getUserMedia/MediaRecorder pipeline) or
-     *  `screenFilePath` (native gdigrab pipeline, screen already on disk) is set, matching
-     *  whichever RecordingService used for this recording. `sideClip` is the camera-bubble
-     *  or mic-only clip recorded alongside a native screen capture, if any — see
-     *  electron/main/ipc/recording.ts for how the two get combined. */
     save(input: {
       webmBytes?: ArrayBuffer;
       screenFilePath?: string;
@@ -107,15 +95,8 @@ export interface DoculigentApi {
     search(query: string): Promise<Video[]>;
     rename(id: string, title: string): Promise<Video>;
     setTranscript(id: string, transcript: Transcript | null): Promise<Video>;
-    /** Opens a native file picker restricted to the given kind; returns the chosen paths, or
-     *  [] if the user cancelled. `multi` (default true) toggles multi-selection. */
     pickFiles(kind: "video" | "audio", multi?: boolean): Promise<string[]>;
-    /** Copies/transcodes each path into the library (video → mp4, audio → wav — see
-     *  electron/main/ipc/library.ts) and inserts a library entry for it, reporting progress
-     *  on onImportProgress as it goes. */
     importFiles(filePaths: string[], kind: "video" | "audio"): Promise<Video[]>;
-    /** Fires while importFiles is transcoding — `percent` is overall progress across the
-     *  whole batch (0-100), not just the file currently in flight. */
     onImportProgress(callback: (progress: { percent: number; fileIndex: number; totalFiles: number }) => void): () => void;
   };
   settings: {
@@ -159,16 +140,19 @@ export interface DoculigentApi {
   };
   ai: {
     summarize(transcript: Transcript, profileId?: string): Promise<Summary>;
-    chat(transcript: Transcript | null, history: ChatMessage[], question: string, profileId?: string): Promise<ChatMessage>;
+    chat(
+      transcript: Transcript | null,
+      history: ChatMessage[],
+      question: string,
+      profileId?: string,
+      systemPromptOverride?: string
+    ): Promise<ChatMessage>;
     testConnection(profile: LlmModelProfile, apiKey?: string | null): Promise<{ ok: boolean; message: string }>;
   };
   apps: {
     list(): Promise<AppIntegration[]>;
     save(integration: AppIntegration, secret?: string | null): Promise<void>;
     delete(id: string): Promise<void>;
-    /** `integrationId` is used to fall back to the saved keychain secret when `secret` is
-     *  omitted (e.g. testing an existing integration without retyping its value); pass null
-     *  when testing a brand-new, not-yet-saved integration. */
     testConnection(
       kind: AppIntegrationKind,
       integrationId: string | null,
@@ -207,5 +191,35 @@ export interface DoculigentApi {
     cancelLogin(): Promise<void>;
     logout(): Promise<void>;
     onSessionChanged(callback: (session: AuthSession | null, loginStatus: LoginStatus) => void): () => void;
+  };
+  teams: {
+    create(name: string): Promise<Team>;
+    list(): Promise<Team[]>;
+    get(teamId: string): Promise<{ team: Team; members: TeamMember[]; files: TeamFile[] }>;
+    inviteMember(teamId: string, email: string): Promise<TeamMember>;
+    removeMember(teamId: string, memberId: string): Promise<void>;
+    delete(teamId: string): Promise<void>;
+    listFiles(teamId: string, status?: TeamFileStatus): Promise<TeamFile[]>;
+    presignDownload(fileId: string): Promise<FileDownloadTicket>;
+    setFileStatus(fileId: string, status: TeamFileStatus): Promise<TeamFile>;
+    permanentlyDeleteFile(fileId: string): Promise<void>;
+    uploadFile(uploadId: string, teamId: string, filePath: string, displayName?: string): Promise<TeamFile>;
+    onUploadProgress(callback: (progress: { uploadId: string; percent: number }) => void): () => void;
+    downloadToLibrary(teamId: string, fileId: string): Promise<Video>;
+    listSyncedFileIds(): Promise<string[]>;
+  };
+  pm: {
+    list(): Promise<ProjectManager[]>;
+    save(pm: ProjectManager): Promise<ProjectManager>;
+    delete(id: string): Promise<void>;
+    generateInsight(pmId: string, fileId: string, fileName: string, profileId?: string): Promise<ProjectManager>;
+    generateOverallInsight(pmId: string, profileId?: string): Promise<ProjectManager>;
+    markAutoProcessed(pmId: string): Promise<ProjectManager>;
+    run(pmId: string, profileId?: string): Promise<PmRunResult>;
+  };
+  persona: {
+    list(): Promise<CustomPersona[]>;
+    save(persona: CustomPersona): Promise<CustomPersona>;
+    delete(id: string): Promise<void>;
   };
 }

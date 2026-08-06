@@ -8,6 +8,7 @@ import { killPendingFfmpegJobs } from "./native/ffmpeg";
 import { killPendingScreenCapture } from "./native/screenCapture";
 import { initTranscriptionWorkerClient, terminateTranscriptionWorker } from "./transcription/whisperWorkerClient";
 import { registerProtocolClient, handleOpenUrl, handleSecondInstanceArgv, handleInitialArgv } from "./auth/deepLink";
+import { startProjectManagerScheduler } from "./projectManagers/scheduler";
 
 registerMediaScheme();
 
@@ -39,6 +40,7 @@ if (!gotSingleInstanceLock) {
 
     registerMediaHandler();
     registerIpcHandlers();
+    startProjectManagerScheduler();
     openMainWindow();
 
     handleInitialArgv(process.argv);

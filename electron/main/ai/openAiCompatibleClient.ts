@@ -1,10 +1,4 @@
-/**
- * A single client for every OpenAI-compatible provider (Ollama, LM Studio, OpenAI,
- * OpenRouter, and any custom OpenAI-compatible endpoint) — per FUNCTIONALITY.md §10,
- * these all speak the same `/chat/completions` schema, so one implementation
- * parameterized by baseUrl/model/apiKey covers all five; only Anthropic's native
- * Messages API needs a different shape (see electron/main/ai/index.ts).
- */
+
 import type { ChatMessage, LlmProviderConfig, Summary, Transcript } from "@shared/types/models";
 
 interface OpenAiChatCompletionResponse {
@@ -39,9 +33,6 @@ function transcriptToPrompt(transcript: Transcript): string {
   return transcript.segments.map((s) => `[${s.speaker}] ${s.text}`).join("\n");
 }
 
-/** Lightweight reachability/auth check: every OpenAI-compatible server (Ollama, LM
- *  Studio, OpenAI, OpenRouter, custom) exposes GET /models, so a 2xx there is enough to
- *  confirm the base URL and key are good without spending a completion. */
 export async function testOpenAiCompatibleConnection(
   config: LlmProviderConfig,
   apiKey: string | null
@@ -69,8 +60,6 @@ export async function summarizeWithOpenAiCompatible(
   try {
     return JSON.parse(content) as Summary;
   } catch {
-    // The model didn't follow the JSON instruction — surface its raw text as the tl;dr
-    // rather than failing the whole request outright.
     return { tldr: content, keyPoints: [], actionItems: [] };
   }
 }
@@ -80,15 +69,15 @@ export async function chatWithOpenAiCompatible(
   history: ChatMessage[],
   question: string,
   config: LlmProviderConfig,
-  apiKey: string | null
+  apiKey: string | null,
+  systemPromptOverride?: string
 ): Promise<ChatMessage> {
-  // No attachment — the AI Assistant tab allows chatting on just a model, with nothing to
-  // ground answers in (see AiAssistantPage.tsx), so fall back to a plain assistant prompt
-  // instead of one that demands transcript content that doesn't exist.
-  const system = transcript
-    ? "Answer questions about the following transcript. Be concise and only use information " +
-      `from it.\n\n${transcriptToPrompt(transcript)}`
-    : "You are a helpful assistant. Be concise.";
+  const system =
+    systemPromptOverride ??
+    (transcript
+      ? "Answer questions about the following transcript. Be concise and only use information " +
+        `from it.\n\n${transcriptToPrompt(transcript)}`
+      : "You are a helpful assistant. Be concise.");
   const content = await chatCompletion(config, apiKey, [
     { role: "system", content: system },
     ...history.map((m) => ({ role: m.role, content: m.content })),

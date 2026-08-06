@@ -28,11 +28,12 @@ export function registerAiIpc(): void {
       transcript: Transcript | null,
       history: ChatMessage[],
       question: string,
-      profileId?: string
+      profileId?: string,
+      systemPromptOverride?: string
     ): Promise<ChatMessage> => {
       const profile = resolveProfile(profileId);
       const apiKey = profile.needsKey ? await getLlmApiKey(profile.id) : null;
-      return aiRouter.chat(transcript, history, question, profile, apiKey);
+      return aiRouter.chat(transcript, history, question, profile, apiKey, systemPromptOverride);
     }
   );
 

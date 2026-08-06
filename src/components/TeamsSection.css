@@ -1,0 +1,42 @@
+
+.teams-list-view-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+
+.teams-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+.team-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+  width: 220px; padding: 14px 16px; border-radius: 12px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); text-align: left;
+  transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+.team-card:hover { border-color: var(--accent); box-shadow: 0 4px 12px rgba(91, 75, 245, .12); transform: translateY(-1px); }
+.team-card h3 { margin: 0; font-size: 14px; }
+.team-card-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; font-size: 11px; }
+.team-card-meta .muted { display: flex; align-items: center; gap: 4px; }
+
+
+.teams-back-btn {
+  display: flex; align-items: center; gap: 6px; background: none; border: none;
+  color: var(--muted); font-size: 12px; padding: 0; margin-bottom: 10px; cursor: pointer;
+}
+.teams-back-btn:hover { color: var(--text); }
+
+.teams-detail-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.teams-detail-header h2 { margin: 0; }
+
+
+.teams-dropzone {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 22px; margin: 8px 0; border-radius: 12px; border: 2px dashed var(--border);
+  color: var(--muted); text-align: center; cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
+}
+.teams-dropzone:hover, .teams-dropzone.drag-active { border-color: var(--accent); background: rgba(91, 75, 245, .06); color: var(--text); }
+.teams-dropzone p { margin: 0; font-size: 12px; }
+.teams-dropzone-input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+
+.sync-status { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 0 4px; }
+.sync-status.synced { color: #15803d; }
+.sync-status.syncing { color: var(--muted); }
+.spin { animation: teams-spin 900ms linear infinite; }
+@keyframes teams-spin { to { transform: rotate(360deg); } }

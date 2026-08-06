@@ -10,6 +10,9 @@ import { registerAiIpc } from "./ai";
 import { registerTranscriptionIpc } from "./transcription";
 import { registerWindowIpc } from "./window";
 import { registerAuthIpc } from "./auth";
+import { registerTeamsIpc } from "./teams";
+import { registerProjectManagersIpc } from "./projectManagers";
+import { registerPersonasIpc } from "./personas";
 
 export function registerIpcHandlers(): void {
   registerCaptureIpc();
@@ -24,4 +27,7 @@ export function registerIpcHandlers(): void {
   registerTranscriptionIpc();
   registerWindowIpc();
   registerAuthIpc();
+  registerTeamsIpc();
+  registerProjectManagersIpc();
+  registerPersonasIpc();
 }

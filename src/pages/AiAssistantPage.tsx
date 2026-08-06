@@ -14,8 +14,13 @@ import {
   Video,
   ChevronUp,
   ChevronDown,
+  Bot,
+  Info,
+  UserCog,
 } from "lucide-react";
 import type { ChatMessage, Transcript, TranscriptSegment } from "@shared/types/models";
+import type { PmPersonaId } from "@shared/types/projectManager";
+import { PM_PERSONAS, listAllPersonas, resolvePersonaById } from "@shared/constants/pmPersonas";
 import { mediaUrl } from "@shared/constants/media";
 import { DEFAULT_TRANSCRIPTION_LANGUAGE, TRANSCRIPTION_LANGUAGES } from "@shared/constants/languages";
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
@@ -23,6 +28,9 @@ import { WHISPER_MODELS } from "@shared/constants/whisperModels";
 import { isBilledTier } from "@shared/constants/plans";
 import { useVideo, useVideos, useSetVideoTranscript } from "../hooks/useVideos";
 import { useLlmProfiles } from "../hooks/useLlmProfiles";
+import { useTeams } from "../hooks/useTeams";
+import { useProjectManagers, useSaveProjectManager } from "../hooks/useProjectManagers";
+import { useCustomPersonas } from "../hooks/useCustomPersonas";
 import {
   useAppIntegrations,
   useGithubCommentIssue,
@@ -35,6 +43,8 @@ import { SettingsService } from "../services/settings/SettingsService";
 import { AiService } from "../services/ai/AiService";
 import { useAuthStore } from "../store/authStore";
 import { ChatMessageContent } from "../components/ChatMessageContent";
+import { ProjectManagerPanel } from "../components/ProjectManagerPanel";
+import { PersonaManagerPanel } from "../components/PersonaManagerPanel";
 import "./AiPage.css";
 
 function fmt(t: number): string {
@@ -43,25 +53,15 @@ function fmt(t: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-// Plain-text rendition of a transcript for the Actions block's "Transcript" content
-// option — a GitHub issue body/Slack message has no use for the structured Transcript
-// shape, just readable lines.
 function transcriptToPlainText(transcript: Transcript): string {
   return transcript.segments.map((s) => `[${fmt(s.start)}] ${s.speaker}: ${s.text}`).join("\n");
 }
 
-// Remembers the last model picked here across tab switches (this page unmounts when you
-// navigate away, wiping its React state) and app reloads — plain localStorage rather than
-// the settings store since this is a per-renderer UI preference, not app configuration.
 const LAST_PROFILE_KEY = "aiAssistant.lastProfileId";
 const SIDEBAR_COLLAPSED_KEY = "aiAssistant.sidebarCollapsed";
 const VIDEO_PANEL_OPEN_KEY = "aiAssistant.videoPanelOpen";
 const SESSIONS_KEY = "aiAssistant.chatSessions";
 
-// Canned questions for the Summarize/Generate Notes quick actions — sent through the
-// normal ask() pipeline rather than AiService.summarize()'s separate structured-JSON
-// endpoint, since the transcript already grounds a plain chat reply just as well and this
-// way the result renders as a normal (markdown, copyable) assistant message in the log.
 const SUMMARIZE_PROMPT = "Summarize this recording in a few concise paragraphs, covering the key points.";
 const NOTES_PROMPT =
   "Generate structured notes from this recording, organized with headings and bullet points.";
@@ -69,8 +69,6 @@ const NOTES_PROMPT =
 interface ChatSession {
   id: string;
   title: string;
-  // Set once the user manually renames a session — persistSession then leaves the title
-  // alone on later messages instead of overwriting it with a fresh deriveTitle() each time.
   titleCustom?: boolean;
   messages: ChatMessage[];
   videoId: string;
@@ -96,9 +94,6 @@ interface VideoInsights {
   notes?: string;
 }
 
-// Keyed per-video (not per-session) since the same recording's summary/notes should show
-// up again however it's reattached — a different chat session, or just navigating back to
-// this page — rather than only surviving as long as the videoPanelTab stays mounted.
 function videoInsightsKey(videoId: string): string {
   return `aiAssistant.videoInsights.${videoId}`;
 }
@@ -116,63 +111,30 @@ function saveVideoInsights(videoId: string, insights: VideoInsights): void {
   localStorage.setItem(videoInsightsKey(videoId), JSON.stringify(insights));
 }
 
-// A session's sidebar label is just its opening question — good enough to recognize at a
-// glance without asking the model to summarize its own conversation.
 function deriveTitle(messages: ChatMessage[]): string {
   const text = messages.find((m) => m.role === "user")?.content.trim() || "New chat";
   return text.length > 42 ? `${text.slice(0, 42)}…` : text;
 }
 
-/**
- * Chatbot-style hub: the conversation fills the page, with the model and an optional
- * attached recording/meeting chosen from a settings popup rather than always-visible
- * dropdowns — unlike AiPage (reached from a specific video, two-column transcript+chat
- * layout), this doesn't require navigating from a video first and reads like a normal
- * chat app. Attaching a transcribed recording grounds answers in it, but it's never
- * required — chatting works with just a model (see ask()'s null transcript fallback).
- *
- * Past conversations are saved to a collapsible sidebar (New chat / Recent chats, à la
- * ChatGPT/Claude) — see ChatSession above and the sessions/activeSessionId state below.
- * Sessions are only ever written to localStorage, never sent anywhere, matching this app's
- * local-first stance elsewhere (e.g. the model-selection persistence above).
- */
+
 export function AiAssistantPage() {
   const { data: videos = [] } = useVideos("");
   const { data: profiles = [] } = useLlmProfiles();
-  // Only chat-capable profiles belong in the Ask-chat model picker below — a profile saved
-  // purely for transcription (no "chat" capability) can't actually answer questions, so
-  // listing it there would just be a selectable option that fails immediately.
   const chatProfiles = profiles.filter((p) => p.capabilities.includes("chat"));
   const session = useAuthStore((s) => s.session);
-  // Same gating as the Meeting tab's model picker (see MeetingPage.tsx's cloudEnabled) —
-  // only offer the hosted Doculigent option to accounts on a paid plan.
   const cloudEnabled = !!session?.user.plan && isBilledTier(session.user.plan.tier);
 
-  // The Library tab's per-card AI icon, and the Meeting tab's post-save "Summarize/
-  // Generate Notes/Quick Chat" quick actions, navigate here with the recording/meeting
-  // passed via router state (see LibraryPage.tsx and MeetingPage.tsx's
-  // navigate("/ai", { state: { videoId, action } })) — read once on mount so landing here
-  // fresh already has that attachment set, same as if it had been picked from the settings
-  // popup by hand. `action`, if present, auto-fires Summarize/Generate Notes once that
-  // attachment's transcript has loaded (see the effect below) rather than requiring the
-  // user to click the quick-action buttons again after arriving.
   const location = useLocation();
   const initialNavState = location.state as { videoId?: string; action?: "summarize" | "notes" } | null;
   const [videoId, setVideoId] = useState(() => initialNavState?.videoId ?? "");
   const [pendingAction, setPendingAction] = useState(() => initialNavState?.action ?? null);
   const { data: video } = useVideo(videoId || undefined);
   const [profileOverride, setProfileOverride] = useState(() => localStorage.getItem(LAST_PROFILE_KEY) ?? "");
-  // Same "not implemented yet" hosted option as the Meeting/Library/transcribe pickers
-  // (see MeetingPage.tsx's useDoculigent) — a sentinel value in profileOverride rather
-  // than a separate flag, since this picker only ever has one selection at a time anyway.
   const usingCloudChat = profileOverride === "doculigent" && cloudEnabled;
   const profileId = profileOverride && !usingCloudChat ? profileOverride : undefined;
   const selectedProfile = chatProfiles.find((p) => p.id === profileId);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // Persists the choice as it's made, and drops it if it ever stops resolving to a real
-  // profile (deleted in Settings, or the localStorage value was stale on first load) so
-  // the picker doesn't sit on a phantom selection nothing can actually use.
   useEffect(() => {
     if (!profileOverride) return;
     if (profileOverride === "doculigent") {
@@ -195,14 +157,6 @@ export function AiAssistantPage() {
 
   const [transcript, setTranscript] = useState<Transcript | null>(null);
 
-  // Docked video/audio detail panel (see chat-video-panel below) — opened by the
-  // Summarize/Generate Notes quick actions, the "Transcribe to get insights" prompt, or
-  // the toggle button next to the composer, and squeezes the chat column rather than
-  // floating over it. Stays mounted (width animates 0 → open) so its video/audio element
-  // and tab state survive being hidden. Open/closed is a persisted UI preference (same
-  // pattern as sidebarCollapsed) rather than attachment-specific state — switching
-  // attachments only resets which tab/text is showing (see the video?.id effect below),
-  // not whether the panel itself is open.
   const [videoPanelOpen, setVideoPanelOpen] = useState(() => localStorage.getItem(VIDEO_PANEL_OPEN_KEY) === "1");
   useEffect(() => {
     localStorage.setItem(VIDEO_PANEL_OPEN_KEY, videoPanelOpen ? "1" : "0");
@@ -210,35 +164,18 @@ export function AiAssistantPage() {
   const [videoPanelTab, setVideoPanelTab] = useState<"summary" | "notes" | "transcribe">("summary");
   const [summaryText, setSummaryText] = useState<string | null>(null);
   const [notesText, setNotesText] = useState<string | null>(null);
-  // Which quick action is currently in flight, if any — lets the panel show "Summarizing…"
-  // in only the tab that's actually running rather than both (runQuickAction guards against
-  // starting a second one while this is set).
   const [runningAction, setRunningAction] = useState<"summarize" | "notes" | null>(null);
-  // Separate from the main chat `error` below — a failed Summarize/Generate Notes shouldn't
-  // show up under the chat log it never touched, only in the panel itself.
   const [panelError, setPanelError] = useState<string | null>(null);
 
-  // Actions block (bottom of the panel) — lets the user send the Summary/Notes/Transcript
-  // to one of their connected Settings > Apps integrations. Only one action form expands
-  // at a time; its field state resets whenever a different integration/action is opened
-  // (see openActionForm) rather than being tracked per-action, since only one is ever
-  // visible.
   const { data: integrations = [] } = useAppIntegrations();
   const githubCreateIssueMutation = useGithubCreateIssue();
   const githubCommentIssueMutation = useGithubCommentIssue();
   const slackPostMessageMutation = useSlackPostMessage();
-  // Whether the Actions sheet is expanded — collapsed by default (just the toggle bar) so
-  // it doesn't eat into the Summary/Notes/Transcribe content above. A normal flex sibling
-  // of .chat-video-panel-inner (see AiPage.css), so expanding it squeezes that content
-  // upward rather than overlaying/covering it.
   const [actionsExpanded, setActionsExpanded] = useState(false);
   const [openAction, setOpenAction] = useState<{
     integrationId: string;
     kind: "githubCreateIssue" | "githubCommentIssue" | "slackPostMessage";
   } | null>(null);
-  // Deliberately starts at null (not defaulted to the active videoPanelTab) — the user
-  // picks a content source explicitly every time an action form opens, rather than it being
-  // silently inferred, so it's always clear exactly what's about to be sent externally.
   const [actionSource, setActionSource] = useState<"summary" | "notes" | "transcript" | null>(null);
   const [actionRepo, setActionRepo] = useState("");
   const [actionTitle, setActionTitle] = useState("");
@@ -273,7 +210,7 @@ export function AiAssistantPage() {
     if (!openAction || !actionContent) return false;
     if (openAction.kind === "githubCreateIssue") return actionRepo.trim().includes("/");
     if (openAction.kind === "githubCommentIssue") return actionRepo.trim().includes("/") && !!actionIssueNumber.trim();
-    return !!actionChannel.trim(); // slackPostMessage
+    return !!actionChannel.trim(); 
   })();
 
   async function runOpenAction() {
@@ -317,24 +254,17 @@ export function AiAssistantPage() {
   const [drawerLanguage, setDrawerLanguage] = useState(DEFAULT_TRANSCRIPTION_LANGUAGE);
   const [drawerModel, setDrawerModel] = useState<WhisperModelSize | null>(null);
   const [drawerByokId, setDrawerByokId] = useState<string | null>(null);
-  // Whether the picker below is set to the hosted Doculigent option rather than a local
-  // size or BYOK profile — same "not implemented yet" status as the Meeting tab's cloud
-  // option (see MeetingPage.tsx's useDoculigent), so selecting it here just disables the
-  // (Re-)transcribe button below instead of firing a request nothing can serve yet.
   const [drawerUseCloud, setDrawerUseCloud] = useState(false);
   const [modelStatuses, setModelStatuses] = useState<WhisperModelStatus[] | null>(null);
   useEffect(() => {
     SettingsService.getWhisperModel().then(setDrawerModel).catch(() => {});
     SettingsService.getWhisperModelStatuses().then(setModelStatuses).catch(() => {});
   }, []);
-  // Excludes anything still mid-download — same check as Library/Meeting's model pickers
-  // (see modelCache.ts's incremental-write caveat).
   const downloadedModels = WHISPER_MODELS.filter((m) => {
     const status = modelStatuses?.find((s) => s.size === m.size);
     return status?.downloaded && !status.downloading;
   });
   const effectiveDrawerModel = drawerModel ?? downloadedModels[0]?.size;
-  // Transcribe-capable profiles from the same Settings > Models list used for chat above.
   const byokProfiles = profiles.filter((p) => p.capabilities.includes("transcribe"));
   const usingDrawerByok = drawerByokId !== null && byokProfiles.some((p) => p.id === drawerByokId);
   const usingDrawerCloud = drawerUseCloud && cloudEnabled;
@@ -357,10 +287,6 @@ export function AiAssistantPage() {
   const setVideoTranscript = useSetVideoTranscript();
   const [editingSegments, setEditingSegments] = useState<TranscriptSegment[] | null>(null);
   const [savingEdits, setSavingEdits] = useState(false);
-  // Keeps the drawer's editable copy in sync whenever the transcript itself changes (new
-  // attachment, or a (re-)transcribe/save completes) — same pattern as Library's transcript
-  // drawer. Re-syncing after saveSegmentEdits is a no-op (the new transcript's segments
-  // already equal editingSegments), so this never clobbers an in-progress edit.
   useEffect(() => {
     setEditingSegments(transcript?.segments ?? null);
   }, [transcript]);
@@ -423,7 +349,62 @@ export function AiAssistantPage() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1");
   const sortedSessions = [...sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  // Which session's sidebar entry is showing its inline rename input right now, if any.
+
+  const { data: projectManagers = [] } = useProjectManagers();
+  const { data: customPersonas = [] } = useCustomPersonas();
+  const { data: teams = [] } = useTeams();
+  const saveProjectManager = useSaveProjectManager();
+  const [activePmId, setActivePmId] = useState<string | null>(null);
+  const activePm = projectManagers.find((pm) => pm.id === activePmId) ?? null;
+  const [showPersonaManager, setShowPersonaManager] = useState(false);
+  const [addPmOpen, setAddPmOpen] = useState(false);
+  const [newPmName, setNewPmName] = useState("");
+  const [newPmPersona, setNewPmPersona] = useState<PmPersonaId>(PM_PERSONAS[0].id);
+  const [newPmTeamId, setNewPmTeamId] = useState("");
+  const [newPmChatProfileId, setNewPmChatProfileId] = useState("");
+  const [newPmTranscribeModel, setNewPmTranscribeModel] = useState("");
+  const [creatingPm, setCreatingPm] = useState(false);
+  const pmTranscribeOptions = [
+    ...downloadedModels.map((m) => ({ value: m.size as string, label: m.label })),
+    ...byokProfiles.map((p) => ({ value: `byok:${p.id}`, label: p.name || "BYOK" })),
+  ];
+  const newPmEffectiveFocus = resolvePersonaById(newPmPersona, customPersonas).focus;
+
+  function openAddPm() {
+    setNewPmName("");
+    setNewPmPersona(PM_PERSONAS[0].id);
+    setNewPmTeamId(teams[0]?.id ?? "");
+    setNewPmChatProfileId(chatProfiles[0]?.id ?? "");
+    setNewPmTranscribeModel(pmTranscribeOptions[0]?.value ?? "");
+    setAddPmOpen(true);
+  }
+
+  async function createProjectManager() {
+    const team = teams.find((t) => t.id === newPmTeamId);
+    if (!team || !newPmName.trim() || creatingPm) return;
+    setCreatingPm(true);
+    try {
+      const created = await saveProjectManager.mutateAsync({
+        id: "",
+        name: newPmName.trim(),
+        teamId: team.id,
+        teamName: team.name,
+        persona: newPmPersona,
+        triggerMode: "manual",
+        scheduleTime: null,
+        actions: {},
+        insights: [],
+        chatProfileId: newPmChatProfileId || null,
+        transcribeModel: newPmTranscribeModel || null,
+        createdAt: new Date().toISOString(),
+        lastRunAt: null,
+      });
+      setAddPmOpen(false);
+      setActivePmId(created.id);
+    } finally {
+      setCreatingPm(false);
+    }
+  }
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
 
@@ -431,20 +412,10 @@ export function AiAssistantPage() {
     localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? "1" : "0");
   }, [sidebarCollapsed]);
 
-  // Keeps the attached video's transcript in sync whenever the attachment changes — for
-  // any reason (picked in the settings popup, restored from a loaded session). Clearing
-  // the conversation itself on an attachment change is a separate, deliberate action (see
-  // handleAttachmentChange) rather than living here, so restoring a session's own video
-  // doesn't wipe the history that session just loaded.
   useEffect(() => {
     setTranscript(video?.transcript ?? null);
   }, [video?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Summary/Notes are per-attachment, cached in localStorage (see loadVideoInsights) so
-  // they survive navigating away and back, not just component state — switching
-  // attachments restores whatever was already generated for the new one (if any) rather
-  // than always dropping to empty. Whether the panel itself is open is a separate,
-  // persisted preference (see videoPanelOpen above) and isn't touched here.
   useEffect(() => {
     const cached = video ? loadVideoInsights(video.id) : {};
     setSummaryText(cached.summary ?? null);
@@ -452,9 +423,11 @@ export function AiAssistantPage() {
     setVideoPanelTab("summary");
     setOpenAction(null);
     setActionsExpanded(false);
-  }, [video?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [video?.id]); 
 
   function newChat() {
+    setActivePmId(null);
+    setShowPersonaManager(false);
     setActiveSessionId(null);
     setVideoId("");
     setHistory([]);
@@ -463,6 +436,8 @@ export function AiAssistantPage() {
   }
 
   function openSession(session: ChatSession) {
+    setActivePmId(null);
+    setShowPersonaManager(false);
     if (session.id === activeSessionId) return;
     setActiveSessionId(session.id);
     setHistory(session.messages);
@@ -499,13 +474,6 @@ export function AiAssistantPage() {
     });
   }
 
-  // Attaching for the first time onto an already-in-progress (unattached) chat continues
-  // that same conversation/session — only swapping away from an *existing* attachment is a
-  // deliberate context switch that starts a fresh, unsaved conversation (like "New chat"),
-  // since the messages so far were grounded in that old attachment. In practice the
-  // settings popup's Attachment select is disabled once history exists for a chat that
-  // already has one (see its `disabled` prop), so this reset branch is mostly a safety net
-  // rather than something reachable mid-conversation.
   function handleAttachmentChange(id: string) {
     const hadAttachment = !!videoId;
     setVideoId(id);
@@ -523,8 +491,6 @@ export function AiAssistantPage() {
     setSessions((prev) => {
       const idx = prev.findIndex((s) => s.id === id);
       const existing = idx >= 0 ? prev[idx] : null;
-      // A manually-renamed title (see commitRename) sticks — otherwise every subsequent
-      // message in the session would silently overwrite it back to the opening question.
       const session: ChatSession = {
         id,
         title: existing?.titleCustom ? existing.title : deriveTitle(messages),
@@ -540,10 +506,6 @@ export function AiAssistantPage() {
     });
   }
 
-  // Only ever sends what the user actually typed and hit Ask/Enter on — Summarize/
-  // Generate Notes are a deliberately separate path (see runQuickAction below) that never
-  // touches history/persistSession, so the visible conversation only ever contains
-  // questions the user actually asked, not canned prompts fired on their behalf.
   async function ask() {
     const q = question.trim();
     if (!q || chatBusy) return;
@@ -553,12 +515,7 @@ export function AiAssistantPage() {
     setChatBusy(true);
     setError(null);
     try {
-      // transcript is null when nothing's attached (or it hasn't been transcribed yet) —
-      // AiService.chat/the backend fall back to a plain assistant prompt in that case, so
-      // chatting only ever needs a model, not an attachment (see openAiCompatibleClient.ts).
       const reply = await AiService.chat(transcript, next, q, profileId);
-      // The backend doesn't set a timestamp (see ChatMessage's comment) — stamped here,
-      // right when the reply actually lands, rather than left undefined.
       const final = [...next, { ...reply, timestamp: new Date().toISOString() }];
       setHistory(final);
       persistSession(final);
@@ -569,13 +526,6 @@ export function AiAssistantPage() {
     }
   }
 
-  // Summarize/Generate Notes — deliberately bypasses ask()/history/persistSession so
-  // clicking these never adds a canned prompt+reply into the visible conversation or a
-  // saved session; the reply only ever lands in the panel's Summary/Notes tab (and gets
-  // cached per-video via saveVideoInsights so it survives navigating away and back).
-  // `transcriptOverride` is for the pendingAction auto-fire effect below, which needs the
-  // just-loaded video's transcript directly rather than the separately-synced `transcript`
-  // state (see that effect's comment for why relying on `transcript` would race).
   async function runQuickAction(action: "summarize" | "notes", transcriptOverride?: Transcript | null) {
     const t = transcriptOverride !== undefined ? transcriptOverride : transcript;
     if (!t || runningAction) return;
@@ -599,19 +549,11 @@ export function AiAssistantPage() {
     }
   }
 
-  // Fires the Summarize/Generate Notes action carried over from MeetingPage.tsx's
-  // post-save quick actions (see pendingAction above) — waits for `video` to actually
-  // load (the attachment was just set by id, not fetched yet) rather than firing
-  // immediately with a stale/empty transcript, and reads video.transcript directly (see
-  // runQuickAction's transcriptOverride) rather than the separately-synced `transcript`
-  // state to avoid a one-render race. If the video turns out to have no transcript (no
-  // speech detected during the meeting), it's silently dropped rather than summarizing
-  // with nothing to ground it.
   useEffect(() => {
     if (!pendingAction || !video) return;
     setPendingAction(null);
     if (video.transcript) runQuickAction(pendingAction, video.transcript);
-  }, [pendingAction, video]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pendingAction, video]); 
 
   return (
     <div className="chat-page-shell">
@@ -680,8 +622,75 @@ export function AiAssistantPage() {
             )}
           </div>
         )}
+
+        {!sidebarCollapsed && <div className="chat-sidebar-divider" />}
+
+        {!sidebarCollapsed && (
+          <div className="chat-sidebar-section-header">
+            <div className="pm-sidebar-title-group">
+              <span className="chat-sidebar-section-title">Project Managers</span>
+              <button
+                type="button"
+                className="pm-sidebar-add"
+                title="Manage personas"
+                onClick={() => {
+                  setActivePmId(null);
+                  setShowPersonaManager(true);
+                }}
+              >
+                <UserCog size={14} />
+              </button>
+            </div>
+            <button type="button" className="pm-sidebar-add" title="Add AI Project Manager" onClick={openAddPm}>
+              <Plus size={15} />
+            </button>
+          </div>
+        )}
+        {sidebarCollapsed && (
+          <button type="button" className="chat-sidebar-new" title="Add AI Project Manager" onClick={openAddPm}>
+            <Bot size={16} />
+          </button>
+        )}
+
+        {/* A second, independently-scrolling list — deliberately not merged with the Chats
+            list above (each has its own overflow-y:auto and shares the sidebar's remaining
+            height via flex:1), so scrolling through project managers never scrolls chats
+            out of view and vice versa. */}
+        {!sidebarCollapsed && (
+          <div className="chat-sidebar-list">
+            {projectManagers.length === 0 && <p className="muted chat-sidebar-empty">No project managers yet</p>}
+            {projectManagers.map((pm) => (
+              <div
+                key={pm.id}
+                className={pm.id === activePmId ? "chat-sidebar-item active" : "chat-sidebar-item"}
+                onClick={() => {
+                  setShowPersonaManager(false);
+                  setActivePmId(pm.id);
+                }}
+              >
+                <span className="chat-sidebar-item-title">
+                  {pm.name}
+                  <span className="pm-sidebar-item-persona"> · {resolvePersonaById(pm.persona, customPersonas).name}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </aside>
 
+      {showPersonaManager ? (
+        <div className="chat-page">
+          <PersonaManagerPanel />
+        </div>
+      ) : activePm ? (
+        <div className="chat-page">
+          <ProjectManagerPanel
+            pm={activePm}
+            onDeleted={() => setActivePmId(null)}
+            onManagePersonas={() => setShowPersonaManager(true)}
+          />
+        </div>
+      ) : (
       <div className="chat-page">
         {/* .chat-page-log is the scroll container and spans the full column width, so its
             scrollbar sits at the actual right edge of the page rather than hugging the
@@ -851,6 +860,7 @@ export function AiAssistantPage() {
         )}
 
       </div>
+      )}
 
       {/* Docked video/audio detail panel — a direct sibling of .chat-page (not nested
           inside it), squeezing the chat column instead of floating over it or stacking
@@ -861,7 +871,7 @@ export function AiAssistantPage() {
           instead of leaving that freed-up width unused. Opened by the Summarize/Generate
           Notes quick actions (runQuickAction), the "Transcribe to get insights" prompt
           above the composer, or this toggle. */}
-      {video && (
+      {video && !activePm && (
         <aside
           className={
             videoPanelOpen ? `chat-video-panel open${sidebarCollapsed ? " wide" : ""}` : "chat-video-panel"
@@ -1258,6 +1268,122 @@ export function AiAssistantPage() {
           </>
           )}
         </aside>
+      )}
+
+      {addPmOpen && (
+        <div className="modal-backdrop" onClick={() => setAddPmOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="transcript-drawer-header">
+              <h2>Add AI Project Manager</h2>
+              <button type="button" className="icon-btn" title="Close" onClick={() => setAddPmOpen(false)}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <label className="field">
+              <span>Name</span>
+              <input value={newPmName} onChange={(e) => setNewPmName(e.target.value)} placeholder="e.g. Sprint Bot" autoFocus />
+            </label>
+
+            <label className="field">
+              <div className="pm-field-label-row">
+                <span>Persona</span>
+                <span className="pm-info-icon" title={`Focuses on: ${newPmEffectiveFocus}`}>
+                  <Info size={14} />
+                </span>
+              </div>
+              <select value={newPmPersona} onChange={(e) => setNewPmPersona(e.target.value)}>
+                {listAllPersonas(customPersonas).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <small className="field-hint">
+                {resolvePersonaById(newPmPersona, customPersonas).description}{" "}
+                <button
+                  type="button"
+                  className="link-btn"
+                  onClick={() => {
+                    setAddPmOpen(false);
+                    setShowPersonaManager(true);
+                  }}
+                >
+                  Manage personas
+                </button>
+              </small>
+            </label>
+
+            <div className="retranscribe-row">
+              <label className="field">
+                <span>Team</span>
+                <select value={newPmTeamId} onChange={(e) => setNewPmTeamId(e.target.value)} disabled={teams.length === 0}>
+                  {teams.length === 0 && <option value="">No teams yet</option>}
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+                {teams.length === 0 && (
+                  <small className="field-hint">Create a team in Library &gt; Team first.</small>
+                )}
+              </label>
+
+              <label className="field">
+                <span>Summary model</span>
+                <select value={newPmChatProfileId} onChange={(e) => setNewPmChatProfileId(e.target.value)} disabled={chatProfiles.length === 0}>
+                  {chatProfiles.length === 0 && <option value="">No models configured</option>}
+                  {chatProfiles.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+                {chatProfiles.length === 0 && (
+                  <small className="field-hint">
+                    <Link to="/settings">Add a model in Settings</Link>
+                  </small>
+                )}
+              </label>
+
+              <label className="field">
+                <span>Transcription model</span>
+                <select
+                  value={newPmTranscribeModel}
+                  onChange={(e) => setNewPmTranscribeModel(e.target.value)}
+                  disabled={pmTranscribeOptions.length === 0}
+                >
+                  {pmTranscribeOptions.length === 0 && <option value="">No models configured</option>}
+                  {pmTranscribeOptions.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                {pmTranscribeOptions.length === 0 && (
+                  <small className="field-hint">
+                    <Link to="/settings">Add a model in Settings</Link>
+                  </small>
+                )}
+              </label>
+            </div>
+
+            <div className="actions modal-actions">
+              <button
+                type="button"
+                className="primary"
+                onClick={createProjectManager}
+                disabled={creatingPm || !newPmName.trim() || !newPmTeamId}
+              >
+                {creatingPm ? "Adding…" : "Add"}
+              </button>
+              <button type="button" onClick={() => setAddPmOpen(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

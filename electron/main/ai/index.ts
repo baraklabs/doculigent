@@ -25,12 +25,13 @@ export async function chat(
   history: ChatMessage[],
   question: string,
   config: LlmProviderConfig,
-  apiKey: string | null
+  apiKey: string | null,
+  systemPromptOverride?: string
 ): Promise<ChatMessage> {
   if (config.kind === "anthropic") {
     throw new NotImplementedError("anthropic chat");
   }
-  return chatWithOpenAiCompatible(transcript, history, question, config, apiKey);
+  return chatWithOpenAiCompatible(transcript, history, question, config, apiKey, systemPromptOverride);
 }
 
 export async function testConnection(config: LlmProviderConfig, apiKey: string | null): Promise<void> {

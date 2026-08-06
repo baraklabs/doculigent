@@ -1,6 +1,8 @@
 const baseUrl = import.meta.env.VITE_WEB_URL.replace(/\/+$/, "");
 const functionsBaseUrl = `${import.meta.env.VITE_SUPABASE_URL.replace(/\/+$/, "")}/functions/v1`;
 
+export const FUNCTIONS_BASE_URL = functionsBaseUrl;
+
 export const AUTH_CONFIG = {
   authorizeUrl: `${baseUrl}/oauth/authorize`,
   tokenUrl: `${baseUrl}/oauth/token`,

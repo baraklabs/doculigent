@@ -34,6 +34,7 @@ import { useAutoTranscribeSettings } from "../hooks/useAutoTranscribeSettings";
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
 import { LibraryService } from "../services/library/LibraryService";
 import { SettingsService } from "../services/settings/SettingsService";
+import { TeamsSection } from "../components/TeamsSection";
 import { useAuthStore } from "../store/authStore";
 import { useToast } from "../hooks/useToast";
 import { friendlyErrorMessage } from "../utils/errors";
@@ -72,8 +73,6 @@ type SharedTabId = (typeof SHARED_TABS)[number]["id"];
 
 const SECTION_IDS = SECTIONS.map((s) => s.id) as readonly string[];
 
-// Same per-renderer-preference pattern as AiAssistantPage's sidebarCollapsed — persisted
-// to localStorage rather than the settings store since it's just a UI layout choice.
 const NAV_COLLAPSED_KEY = "library.navCollapsed";
 
 export function LibraryPage() {
@@ -105,8 +104,6 @@ export function LibraryPage() {
     null
   );
   const session = useAuthStore((s) => s.session);
-  // Same gating as the Meeting tab's model picker (see MeetingPage.tsx's cloudEnabled) —
-  // only offer the hosted Doculigent option to accounts on a paid plan.
   const cloudEnabled = !!session?.user.plan && isBilledTier(session.user.plan.tier);
 
  
@@ -134,10 +131,6 @@ export function LibraryPage() {
         ? videos.filter((v) => v.source === "meeting")
         : videos.filter((v) => v.source === "record");
   const viewingVideo = videos.find((v) => v.id === viewingId) ?? null;
-  // A transcript with this engine tag has no real speech-to-text run behind it to redo
-  // (legacy data only — the feature that produced it has been removed) — only transcripts
-  // actually produced by transcribing the video/audio itself (or no transcript yet, the
-  // first-time case) get the (Re-)transcribe controls.
   const canRetranscribe = !viewingVideo?.transcript || viewingVideo.transcript.engine !== "transcript-import";
 
   useEffect(() => {
@@ -149,8 +142,6 @@ export function LibraryPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [viewingId]);
 
-  // Selection is scoped to whichever section/search results are visible — switching
-  // sections or re-searching clears it rather than keeping ids the user can no longer see.
   useEffect(() => {
     setSelectedIds(new Set());
   }, [section, query]);
@@ -159,35 +150,19 @@ export function LibraryPage() {
 
   const [retranscribeLanguage, setRetranscribeLanguage] = useState(DEFAULT_TRANSCRIPTION_LANGUAGE);
   const [retranscribeModel, setRetranscribeModel] = useState<WhisperModelSize | null>(null);
-  // Which BYOK (transcribe-capable) model, configured in Settings, this re-transcribe
-  // should use instead of a local Whisper size — null means "use the local size below"
-  // rather than one of the profiles from llmProfiles. Not persisted anywhere (unlike the
-  // Meeting tab's global BYOK selection); it only applies to the next transcribe click.
   const [retranscribeByokId, setRetranscribeByokId] = useState<string | null>(null);
-  // Whether the picker below is set to the hosted Doculigent option rather than a local
-  // size or BYOK profile — same "not implemented yet" status as the Meeting tab's cloud
-  // option (see MeetingPage.tsx's useDoculigent), so selecting it here just disables the
-  // (Re-)transcribe button below instead of firing a request nothing can serve yet.
   const [retranscribeUseCloud, setRetranscribeUseCloud] = useState(false);
   const [modelStatuses, setModelStatuses] = useState<WhisperModelStatus[] | null>(null);
   useEffect(() => {
     SettingsService.getWhisperModel().then(setRetranscribeModel).catch(() => {});
     SettingsService.getWhisperModelStatuses().then(setModelStatuses).catch(() => {});
   }, []);
-  // Excludes anything still mid-download: the model cache writes its files incrementally,
-  // so `downloaded` (any bytes on disk) can go true before a download actually finishes
-  // (see whisper.ts's requireDownloadedModel for the same check on the main-process side).
   const downloadedModels = WHISPER_MODELS.filter((m) => {
     const status = modelStatuses?.find((s) => s.size === m.size);
     return status?.downloaded && !status.downloading;
   });
-  // Falls back to whichever downloaded size sorts first when no model is active in
-  // Settings — the picker below only ever lists downloaded sizes, so this is never used
-  // to silently trigger a download.
   const effectiveRetranscribeModel = retranscribeModel ?? downloadedModels[0]?.size;
 
-  // Custom/BYOK profiles tagged "transcribe" in Settings > Models — offered alongside the
-  // downloaded local sizes so re-transcribing isn't limited to on-device Whisper.
   const { data: llmProfiles = [] } = useLlmProfiles();
   const byokProfiles = llmProfiles.filter((p) => p.capabilities.includes("transcribe"));
   const usingByok = retranscribeByokId !== null && byokProfiles.some((p) => p.id === retranscribeByokId);
@@ -272,8 +247,6 @@ export function LibraryPage() {
       const autoTranscribeThisKind =
         autoTranscribe?.all || (kind === "video" ? autoTranscribe?.videoImport : autoTranscribe?.audioImport);
       if (autoTranscribeThisKind) {
-        // Sequential, not Promise.all — runTranscribe drives the single shared whisper
-        // worker (transcribingId/handleStopTranscribe assume one transcription in flight).
         for (const v of imported) {
           await runTranscribe(v);
         }
@@ -289,10 +262,6 @@ export function LibraryPage() {
   async function handleTranscribeClick(v: Video) {
     setViewingId(v.id);
     if (v.transcript) return;
-    // No model set up at all yet — opening the drawer is enough; its model picker already
-    // shows the "no models configured" hint + Settings link and disables Transcribe, so
-    // don't also fire a transcribe attempt that can only fail (see whisper.ts's
-    // requireDownloadedModel — it refuses rather than silently downloading one).
     if (!hasAnyModel) return;
     await runTranscribe(v);
   }
@@ -437,11 +406,17 @@ export function LibraryPage() {
               </div>
             </>
           ) : section === "team" ? (
-            <div className="shared-empty">
-              <p className="muted">
-                Sign in with doculigent.com to collaborate with teams — <Link to="/account">go to Account</Link>.
-              </p>
-            </div>
+            <>
+              <div className="library-section-head">
+                <span className="library-section-icon">{activeSection.icon}</span>
+                <div>
+                  <h1>Team</h1>
+                  <p className="muted">Create teams, invite members, and share files through your doculigent.com account.</p>
+                </div>
+              </div>
+
+              <TeamsSection />
+            </>
           ) : (
             <>
               <div className="library-section-head">

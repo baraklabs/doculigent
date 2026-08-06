@@ -92,6 +92,7 @@ export interface Video {
   transcript: Transcript | null;
   summary: Summary | null;
   source: "record" | "meeting";
+  syncedFromTeamFileId?: string;
 }
 
 export interface TranscriptSegment {
@@ -122,9 +123,6 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   citations?: ChatCitation[];
-  /** ISO 8601 — set client-side when the message is added to history (see
-   *  AiAssistantPage.tsx/AiWorkspace.tsx's ask()), not by the backend, so it reflects when
-   *  the message actually appeared in this conversation rather than a server clock. */
   timestamp?: string;
 }
 
@@ -149,11 +147,6 @@ export interface LlmModelProfile extends LlmProviderConfig {
 
 export type AppIntegrationKind = "github" | "slack";
 
-/** A connected external app — GitHub or Slack. Unlike LlmModelProfile there's no per-kind
- *  config beyond the kind itself (no baseUrl/model): each kind's single credential (PAT /
- *  bot token) is stored separately in the OS keychain, same as an LLM profile's API key —
- *  see electron/main/native/keyring.ts. Multiple integrations of the same kind are
- *  supported (e.g. two GitHub orgs), distinguished by `name`. */
 export interface AppIntegration {
   id: string;
   kind: AppIntegrationKind;

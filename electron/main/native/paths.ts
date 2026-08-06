@@ -24,11 +24,13 @@ export function setSaveDir(dir: string): void {
   fs.writeFileSync(SAVE_DIR_POINTER_FILE, JSON.stringify({ saveDir: dir }));
 }
 
-/** Ensures the video save directory exists; returns it. */
 export function ensureSaveDir(): string {
   const dir = getSaveDir();
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+export function teamFileDir(teamId: string, fileId: string): string {
+  return path.join(app.getPath("documents"), "Doculigent", teamId, fileId);
 }
 
 export function settingsFilePath(): string {

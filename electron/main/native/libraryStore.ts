@@ -30,6 +30,7 @@ function normalizeVideo(raw: Partial<Video>): Video {
     transcript: (raw.transcript as Transcript | null) ?? null,
     summary: (raw.summary as Summary | null) ?? null,
     source: raw.source === "meeting" ? "meeting" : "record",
+    syncedFromTeamFileId: raw.syncedFromTeamFileId,
   };
 }
 
@@ -63,12 +64,26 @@ export function insertVideo(video: Video): void {
   write({ ...store, videos: [...store.videos, video] });
 }
 
+function libraryVisible(videos: Video[]): Video[] {
+  return videos.filter((v) => !v.syncedFromTeamFileId);
+}
+
 export function listVideos(): Video[] {
-  return [...read().videos].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return libraryVisible(read().videos).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 export function getVideo(id: string): Video | null {
   return read().videos.find((v) => v.id === id) ?? null;
+}
+
+export function getVideoBySyncedTeamFileId(teamFileId: string): Video | null {
+  return read().videos.find((v) => v.syncedFromTeamFileId === teamFileId) ?? null;
+}
+
+export function listSyncedTeamFileIds(): string[] {
+  return read()
+    .videos.map((v) => v.syncedFromTeamFileId)
+    .filter((id): id is string => !!id);
 }
 
 export function deleteVideo(id: string): void {
@@ -76,7 +91,6 @@ export function deleteVideo(id: string): void {
   write({ ...store, videos: store.videos.filter((v) => v.id !== id) });
 }
 
-/** Removes every listed video in one write and returns the ones actually found/removed. */
 export function deleteVideos(ids: string[]): Video[] {
   const store = read();
   const idSet = new Set(ids);
@@ -103,7 +117,6 @@ export function updateVideoTranscript(id: string, transcript: Transcript | null)
   return updateVideo(id, { transcript });
 }
 
-/** Flattens a transcript's segment text into one searchable string. */
 function transcriptText(transcript: Transcript | null): string {
   return transcript ? transcript.segments.map((s) => s.text).join(" ") : "";
 }
@@ -123,8 +136,8 @@ export function searchVideos(query: string): Video[] {
   const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return listVideos();
 
-  return read()
-    .videos.map((video) => {
+  return libraryVisible(read().videos)
+    .map((video) => {
       const title = video.title.toLowerCase();
       const transcript = transcriptText(video.transcript).toLowerCase();
       let score = 0;

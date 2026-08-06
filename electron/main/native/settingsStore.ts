@@ -2,6 +2,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { AppIntegration, AutoTranscribeSettings, LlmModelProfile, MicConfig, OverlayConfig } from "@shared/types/models";
+import type { ProjectManager } from "@shared/types/projectManager";
+import type { CustomPersona } from "@shared/types/persona";
 import type { AuthUser } from "@shared/types/auth";
 import type { WhisperModelSize } from "@shared/constants/whisperModels";
 import { settingsFilePath } from "./paths";
@@ -9,6 +11,8 @@ import { settingsFilePath } from "./paths";
 interface StoredSettings {
   llmProfiles?: LlmModelProfile[];
   appIntegrations?: AppIntegration[];
+  projectManagers?: ProjectManager[];
+  customPersonas?: CustomPersona[];
   authUser?: AuthUser;
   authExpiresAt?: string | null;
   recordOverlay?: OverlayConfig;
@@ -26,8 +30,6 @@ interface StoredSettings {
   autoTranscribe?: AutoTranscribeSettings;
 }
 
-// Everything defaults on — auto-transcribe is meant to be the path of least surprise for a
-// new install, not an opt-in a user has to go find first.
 const DEFAULT_AUTO_TRANSCRIBE: AutoTranscribeSettings = {
   all: true,
   recording: true,
@@ -70,8 +72,6 @@ export function saveLlmProfile(profile: LlmModelProfile): void {
 export function deleteLlmProfile(id: string): void {
   const stored = readStored();
   const llmProfiles = (stored.llmProfiles ?? []).filter((p) => p.id !== id);
-  // Mirrors whisperModel's clear-on-delete: leaving the Meeting tab pointed at a BYOK
-  // profile that no longer exists would silently look selected but do nothing.
   const transcriptionByokProfileId =
     stored.transcriptionByokProfileId === id ? null : stored.transcriptionByokProfileId;
   writeStored({ ...stored, llmProfiles, transcriptionByokProfileId });
@@ -97,6 +97,46 @@ export function deleteAppIntegration(id: string): void {
   const stored = readStored();
   const appIntegrations = (stored.appIntegrations ?? []).filter((a) => a.id !== id);
   writeStored({ ...stored, appIntegrations });
+}
+
+export function listProjectManagers(): ProjectManager[] {
+  return readStored().projectManagers ?? [];
+}
+
+export function getProjectManager(id: string): ProjectManager | null {
+  return listProjectManagers().find((pm) => pm.id === id) ?? null;
+}
+
+export function saveProjectManager(pm: ProjectManager): void {
+  const stored = readStored();
+  const existing = stored.projectManagers ?? [];
+  const idx = existing.findIndex((p) => p.id === pm.id);
+  const projectManagers = idx >= 0 ? existing.map((p, i) => (i === idx ? pm : p)) : [...existing, pm];
+  writeStored({ ...stored, projectManagers });
+}
+
+export function deleteProjectManager(id: string): void {
+  const stored = readStored();
+  const projectManagers = (stored.projectManagers ?? []).filter((p) => p.id !== id);
+  writeStored({ ...stored, projectManagers });
+}
+
+export function listCustomPersonas(): CustomPersona[] {
+  return readStored().customPersonas ?? [];
+}
+
+export function saveCustomPersona(persona: CustomPersona): void {
+  const stored = readStored();
+  const existing = stored.customPersonas ?? [];
+  const idx = existing.findIndex((p) => p.id === persona.id);
+  const customPersonas = idx >= 0 ? existing.map((p, i) => (i === idx ? persona : p)) : [...existing, persona];
+  writeStored({ ...stored, customPersonas });
+}
+
+export function deleteCustomPersona(id: string): void {
+  const stored = readStored();
+  const customPersonas = (stored.customPersonas ?? []).filter((p) => p.id !== id);
+  writeStored({ ...stored, customPersonas });
 }
 
 export function getAuthProfile(): { user: AuthUser; expiresAt: string | null } | null {
@@ -166,8 +206,6 @@ export function setMeetingSettings(
   });
 }
 
-// No fallback default here on purpose — an unset/cleared model means transcription isn't
-// set up yet (see modelCache.ts's downloaded check for why nothing gets auto-activated).
 export function getWhisperModel(): WhisperModelSize | null {
   return readStored().whisperModel ?? null;
 }
@@ -176,11 +214,6 @@ export function setWhisperModel(size: WhisperModelSize | null): void {
   writeStored({ ...readStored(), whisperModel: size });
 }
 
-// Whether the Meeting tab's model picker should use the (not yet implemented) hosted
-// Doculigent Model instead of a local Whisper size — gated in the UI to signed-in,
-// non-free accounts (see SettingsPage.tsx's Doculigent Model block), stored separately
-// from whisperModel so the last-used local size is preserved underneath if the user
-// signs out or downgrades later.
 export function getUseDoculigentModel(): boolean {
   return !!readStored().useDoculigentModel;
 }
@@ -189,11 +222,6 @@ export function setUseDoculigentModel(use: boolean): void {
   writeStored({ ...readStored(), useDoculigentModel: use });
 }
 
-// Which BYOK (custom, "transcribe"-capable) LLM profile the Meeting tab's model picker
-// has selected, if any — see SettingsPage.tsx's BYOK cards for where these profiles get
-// created. Stored by id (not the whole profile) so it stays correct if the profile is
-// later edited; MeetingPage.tsx re-validates the id still exists and is still
-// transcribe-capable before treating it as selected.
 export function getTranscriptionByokProfileId(): string | null {
   return readStored().transcriptionByokProfileId ?? null;
 }

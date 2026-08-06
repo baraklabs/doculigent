@@ -1,15 +1,8 @@
 .ai-grid { display: grid; grid-template-columns: 1fr minmax(320px, 420px); gap: 16px; height: 100%; }
 
-/* Standalone AI Assistant tab (AiAssistantPage) — a full-height chat rather than the
-   two-column transcript workspace above. Both the log and the composer share the same
-   centered max-width rather than stretching edge-to-edge across the whole page, so the
-   conversation reads like a normal chat app column instead of a full-bleed panel. */
 .chat-page-shell { flex: 1; min-height: 0; display: flex; width: 100%; }
 .chat-page { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; width: 100%; align-items: center; }
 
-/* Collapsible chat history rail, à la ChatGPT/Claude — see AiAssistantPage.tsx's
-   sidebarCollapsed/sessions state. Collapsed mode keeps just the toggle + New-chat icons
-   (no title/list text) as a slim rail rather than hiding entirely. */
 .chat-sidebar {
   width: 220px; flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;
   padding: 4px 8px 8px; margin-right: 12px; border-right: 1px solid var(--border);
@@ -25,7 +18,14 @@
 }
 .chat-sidebar.collapsed .chat-sidebar-new { justify-content: center; padding: 7px; }
 .chat-sidebar-new:hover { border-color: var(--accent); color: var(--accent); }
-.chat-sidebar-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.chat-sidebar-list {
+  flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin-top: 8px;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+.chat-sidebar-list::-webkit-scrollbar { width: 5px; }
+.chat-sidebar-list::-webkit-scrollbar-track { background: transparent; }
+.chat-sidebar-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+.chat-sidebar-list::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 .chat-sidebar-empty { font-size: 12px; padding: 4px 2px; }
 .chat-sidebar-item {
   display: flex; align-items: center; justify-content: space-between; gap: 6px;
@@ -42,18 +42,12 @@
 .chat-sidebar-item-rename:hover { color: var(--text); }
 .chat-sidebar-item-delete:hover { color: var(--danger); }
 
-/* Swaps the row for a plain text input while renaming (see AiAssistantPage.tsx's
-   renamingSessionId) — no hover/active/cursor chrome since it isn't clickable like the
-   other rows. */
 .chat-sidebar-item-renaming { padding: 2px 8px; cursor: default; }
 .chat-sidebar-item-rename-input {
   width: 100%; font-size: 12px; padding: 5px 6px; border-radius: 6px;
   border: 1px solid var(--accent); background: var(--panel); color: var(--text);
 }
-/* Full-width scroll container — its scrollbar sits at the actual right edge of the page;
-   .chat-page-log-inner below is what actually carries the centered max-width. Slim
-   scrollbar (both the standard property and the WebKit fallback Chromium/Electron use)
-   rather than the browser default. */
+
 .chat-page-log {
   flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; width: 100%;
   display: flex; flex-direction: column; align-items: center;
@@ -66,11 +60,6 @@
 .chat-page-log-inner { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 760px; }
 .chat-page-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 48px 0; text-align: center; }
 
-/* Shown just above the composer instead of the quick actions when there's an attachment
-   but nothing to ground a summary/notes request yet (see AiAssistantPage.tsx) — a red
-   pill (same source-icon + title language as the old floating resource badge) with a
-   soft pulse so it reads as a call to action, not just a status line. Clicking it opens
-   the docked panel straight to the Transcribe tab. */
 .chat-transcribe-warning {
   display: flex; align-items: center; gap: 7px; flex-shrink: 0;
   background: rgba(179, 38, 30, .08); border: 1px solid rgba(179, 38, 30, .35);
@@ -100,14 +89,10 @@
   .chat-transcribe-warning { animation: none; }
 }
 
-/* No panel background/border/shadow here on purpose — it sits directly on the page rather
-   than reading as a separate boxed block. */
 .chat-page-composer {
   flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 6px;
   width: 100%; max-width: 760px; margin-top: 10px;
 }
-/* Stays full-width despite the composer's align-items:center above (which is there to
-   center the quick actions row and meta line — see below — not to shrink the input). */
 .chat-page-composer .chat-input { width: 100%; }
 .chat-page-composer .chat-input input {
   padding: 13px 16px; font-size: 15px; border-radius: 12px;
@@ -115,16 +100,8 @@
 .chat-page-composer .chat-input button {
   padding: 0 22px; font-size: 14px; border-radius: 12px;
 }
-/* Tiny status line under the composer — which model/recording the next question actually
-   uses, now that picking them moved into the settings popup (see AiAssistantPage.tsx's
-   settingsOpen) instead of always-visible toolbar dropdowns. Centered, like the quick
-   actions below, rather than aligned to either edge of the input row. */
 .chat-page-meta { font-size: 10px; margin: 4px 0 0; line-height: 1.4; text-align: center; }
 
-/* Summarize/Generate Notes quick actions — only shown just above the input for a
-   transcribed attachment on a fresh conversation (see AiAssistantPage.tsx). Pops in with a
-   small slide+fade rather than just appearing, since it comes and goes as the attachment/
-   conversation state changes. Centered above the input rather than aligned to either edge. */
 .chat-quick-actions {
   display: flex; gap: 8px; justify-content: center;
   animation: chat-quick-actions-in 180ms cubic-bezier(.2, .8, .2, 1);
@@ -144,14 +121,6 @@
   .chat-quick-actions { animation: none; }
 }
 
-/* --- Docked video/audio detail panel ---------------------------------------------
-   Opened by the Summarize/Generate Notes quick actions, the "Transcribe to get insights"
-   prompt, or its own toggle (see AiAssistantPage.tsx's videoPanelOpen). A real flex
-   sibling of .chat-page, so opening it squeezes the chat column instead of floating over
-   it. Collapses to a slim rail (same width/pattern as .chat-sidebar.collapsed) rather
-   than disappearing entirely, so the toggle stays in the same top-right spot either way
-   instead of moving into the composer. `.wide` (added when the left chat-sidebar is
-   collapsed) claims some of the width that frees up rather than leaving it unused. */
 .chat-video-panel {
   width: 40px; flex-shrink: 0; overflow: hidden; box-sizing: border-box;
   border-left: 1px solid var(--border);
@@ -189,14 +158,6 @@
 }
 .chat-video-panel-text { font-size: 13px; line-height: 1.5; }
 
-/* --- Actions sheet (bottom of the panel) -------------------------------------------
-   Collapsed by default to just .chat-actions-toggle's bar. A normal flex sibling of
-   .chat-video-panel-inner (flex-shrink: 0, not absolutely positioned) — expanding it
-   (`.open`) grows its own height, which shrinks .chat-video-panel-inner's flex:1 share in
-   turn, pushing that content upward rather than overlaying/covering it; that content stays
-   reachable by scrolling within its own (now smaller) space. One row per connected
-   Settings > Apps integration, with that kind's action button(s); clicking one expands
-   .chat-action-form inline right below it rather than a modal. */
 .chat-actions-sheet {
   flex-shrink: 0; border-top: 1px solid var(--border);
   max-height: 38px; overflow: hidden;

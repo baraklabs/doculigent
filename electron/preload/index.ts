@@ -4,6 +4,7 @@ import type { DoculigentApi } from "@shared/types/api";
 import type { AuthSession, LoginStatus } from "@shared/types/auth";
 import type { AnnotationCommand, AnnotationState } from "@shared/types/annotation";
 import type { Video } from "@shared/types/models";
+import type { TeamFileStatus } from "@shared/types/team";
 
 const api: DoculigentApi = {
   system: {
@@ -135,8 +136,8 @@ const api: DoculigentApi = {
   },
   ai: {
     summarize: (transcript, profileId) => ipcRenderer.invoke(Channels.ai.summarize, transcript, profileId),
-    chat: (transcript, history, question, profileId) =>
-      ipcRenderer.invoke(Channels.ai.chat, transcript, history, question, profileId),
+    chat: (transcript, history, question, profileId, systemPromptOverride) =>
+      ipcRenderer.invoke(Channels.ai.chat, transcript, history, question, profileId, systemPromptOverride),
     testConnection: (profile, apiKey) => ipcRenderer.invoke(Channels.ai.testConnection, profile, apiKey),
   },
   apps: {
@@ -181,6 +182,42 @@ const api: DoculigentApi = {
       ipcRenderer.on(Channels.auth.sessionChanged, listener);
       return () => ipcRenderer.removeListener(Channels.auth.sessionChanged, listener);
     },
+  },
+  teams: {
+    create: (name) => ipcRenderer.invoke(Channels.teams.create, name),
+    list: () => ipcRenderer.invoke(Channels.teams.list),
+    get: (teamId) => ipcRenderer.invoke(Channels.teams.get, teamId),
+    inviteMember: (teamId, email) => ipcRenderer.invoke(Channels.teams.inviteMember, teamId, email),
+    removeMember: (teamId, memberId) => ipcRenderer.invoke(Channels.teams.removeMember, teamId, memberId),
+    delete: (teamId) => ipcRenderer.invoke(Channels.teams.delete, teamId),
+    listFiles: (teamId, status) => ipcRenderer.invoke(Channels.teams.listFiles, teamId, status),
+    presignDownload: (fileId) => ipcRenderer.invoke(Channels.teams.presignDownload, fileId),
+    setFileStatus: (fileId, status: TeamFileStatus) => ipcRenderer.invoke(Channels.teams.setFileStatus, fileId, status),
+    permanentlyDeleteFile: (fileId) => ipcRenderer.invoke(Channels.teams.permanentlyDeleteFile, fileId),
+    uploadFile: (uploadId, teamId, filePath, displayName) =>
+      ipcRenderer.invoke(Channels.teams.uploadFile, uploadId, teamId, filePath, displayName),
+    onUploadProgress: (callback) => {
+      const listener = (_event: unknown, progress: { uploadId: string; percent: number }) => callback(progress);
+      ipcRenderer.on(Channels.teams.uploadProgress, listener);
+      return () => ipcRenderer.removeListener(Channels.teams.uploadProgress, listener);
+    },
+    downloadToLibrary: (teamId, fileId) => ipcRenderer.invoke(Channels.teams.downloadToLibrary, teamId, fileId),
+    listSyncedFileIds: () => ipcRenderer.invoke(Channels.teams.listSyncedFileIds),
+  },
+  pm: {
+    list: () => ipcRenderer.invoke(Channels.pm.list),
+    save: (pm) => ipcRenderer.invoke(Channels.pm.save, pm),
+    delete: (id) => ipcRenderer.invoke(Channels.pm.delete, id),
+    generateInsight: (pmId, fileId, fileName, profileId) =>
+      ipcRenderer.invoke(Channels.pm.generateInsight, pmId, fileId, fileName, profileId),
+    generateOverallInsight: (pmId, profileId) => ipcRenderer.invoke(Channels.pm.generateOverallInsight, pmId, profileId),
+    markAutoProcessed: (pmId) => ipcRenderer.invoke(Channels.pm.markAutoProcessed, pmId),
+    run: (pmId) => ipcRenderer.invoke(Channels.pm.run, pmId),
+  },
+  persona: {
+    list: () => ipcRenderer.invoke(Channels.persona.list),
+    save: (persona) => ipcRenderer.invoke(Channels.persona.save, persona),
+    delete: (id) => ipcRenderer.invoke(Channels.persona.delete, id),
   },
 };
 
