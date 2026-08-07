@@ -27,6 +27,7 @@ import {
   useImportVideos,
   useRenameVideo,
   useSetVideoTranscript,
+  useVideo,
   useVideos,
 } from "../hooks/useVideos";
 import { useLlmProfiles } from "../hooks/useLlmProfiles";
@@ -35,6 +36,9 @@ import { TranscriptionService } from "../services/transcription/TranscriptionSer
 import { LibraryService } from "../services/library/LibraryService";
 import { SettingsService } from "../services/settings/SettingsService";
 import { TeamsSection } from "../components/TeamsSection";
+import { StorageFileBrowser } from "../components/StorageFileBrowser";
+import { ShareToStoragePanel } from "../components/ShareToStoragePanel";
+import { useStoragePreference } from "../hooks/useStorage";
 import { useAuthStore } from "../store/authStore";
 import { useToast } from "../hooks/useToast";
 import { friendlyErrorMessage } from "../utils/errors";
@@ -60,7 +64,6 @@ const SECTIONS = [
   { id: "meeting", label: "Meeting", icon: <Mic size={16} />, accent: "#0284c7", tint: "rgba(14, 165, 233, .11)" },
   { id: "team", label: "Team", icon: <Users size={16} />, accent: "#0f766e", tint: "rgba(15, 118, 110, .1)" },
   { id: "shared", label: "Shared", icon: <Link2 size={16} />, accent: "#db2777", tint: "rgba(236, 72, 153, .1)" },
-  { id: "transcribed", label: "Transcribed", icon: <FileText size={16} />, accent: "#b45309", tint: "rgba(245, 158, 11, .13)" },
 ] as const;
 type SectionId = (typeof SECTIONS)[number]["id"];
 
@@ -86,6 +89,7 @@ export function LibraryPage() {
   useEffect(() => {
     localStorage.setItem(NAV_COLLAPSED_KEY, navCollapsed ? "1" : "0");
   }, [navCollapsed]);
+  const { data: storagePreference } = useStoragePreference();
   const [query, setQuery] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
@@ -95,6 +99,8 @@ export function LibraryPage() {
   const stoppedRef = useRef(false);
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [sharedTab, setSharedTab] = useState<SharedTabId>("mine");
+  const [shareVideoId, setShareVideoId] = useState<string | null>(null);
+  const { data: shareVideo } = useVideo(shareVideoId ?? undefined);
   const [folderError, setFolderError] = useState<{ id: string; message: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Video | null>(null);
   const [bulkDeleteScope, setBulkDeleteScope] = useState<"all" | "selected" | null>(null);
@@ -125,11 +131,7 @@ export function LibraryPage() {
   const { data: autoTranscribe } = useAutoTranscribeSettings();
 
   const sectionVideos =
-    section === "transcribed"
-      ? videos.filter((v) => v.transcript)
-      : section === "meeting"
-        ? videos.filter((v) => v.source === "meeting")
-        : videos.filter((v) => v.source === "record");
+    section === "meeting" ? videos.filter((v) => v.source === "meeting") : videos.filter((v) => v.source === "record");
   const viewingVideo = videos.find((v) => v.id === viewingId) ?? null;
   const canRetranscribe = !viewingVideo?.transcript || viewingVideo.transcript.engine !== "transcript-import";
 
@@ -356,7 +358,10 @@ export function LibraryPage() {
               className={s.id === section ? "library-nav-item active" : "library-nav-item"}
               style={{ "--nav-accent": s.accent, "--nav-tint": s.tint } as CSSProperties}
               title={navCollapsed ? s.label : undefined}
-              onClick={() => setSection(s.id)}
+              onClick={() => {
+                setSection(s.id);
+                if (s.id !== "shared") setShareVideoId(null);
+              }}
             >
               <span className="library-nav-icon">{s.icon}</span>
               {!navCollapsed && s.label}
@@ -369,42 +374,66 @@ export function LibraryPage() {
           style={{ "--section-accent": activeSection.accent, "--section-tint": activeSection.tint } as CSSProperties}
         >
           {section === "shared" ? (
-            <>
-              <div className="library-section-head">
-                <span className="library-section-icon">{activeSection.icon}</span>
-                <div>
-                  <h1>Shared</h1>
-                  <p className="muted">Recordings shared through your doculigent.com account.</p>
+            storagePreference?.provider === "s3" ? (
+              <>
+                <div className="library-section-head">
+                  <span className="library-section-icon">{activeSection.icon}</span>
+                  <div>
+                    <h1>Shared</h1>
+                    <p className="muted">
+                      Files uploaded via Share, or dropped here directly — stored under{" "}
+                      <code>{storagePreference.s3?.folder || "folder"}/shared/</code> in your S3 bucket.
+                    </p>
+                  </div>
                 </div>
-              </div>
 
-              <div className="shared-subnav">
-                {SHARED_TABS.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    className={t.id === sharedTab ? "shared-tab active" : "shared-tab"}
-                    onClick={() => setSharedTab(t.id)}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="shared-empty">
-                {session ? (
-                  <p className="muted">
-                    {sharedTab === "mine"
-                      ? "Nothing shared yet. Sharing (the share icon on a recording) is still being built for doculigent.com accounts."
-                      : "Recordings shared with you will show up here once doculigent.com sharing is live."}
-                  </p>
-                ) : (
-                  <p className="muted">
-                    Sign in with doculigent.com to see shared recordings — <Link to="/account">go to Account</Link>.
-                  </p>
+                {shareVideoId && (
+                  <ShareToStoragePanel
+                    video={shareVideo ? { filePath: shareVideo.filePath, title: shareVideo.title } : undefined}
+                    onClose={() => setShareVideoId(null)}
+                  />
                 )}
-              </div>
-            </>
+
+                <StorageFileBrowser teamId="" showDropzone={!shareVideoId} />
+              </>
+            ) : (
+              <>
+                <div className="library-section-head">
+                  <span className="library-section-icon">{activeSection.icon}</span>
+                  <div>
+                    <h1>Shared</h1>
+                    <p className="muted">Recordings shared through your doculigent.com account.</p>
+                  </div>
+                </div>
+
+                <div className="shared-subnav">
+                  {SHARED_TABS.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      className={t.id === sharedTab ? "shared-tab active" : "shared-tab"}
+                      onClick={() => setSharedTab(t.id)}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="shared-empty">
+                  {session ? (
+                    <p className="muted">
+                      {sharedTab === "mine"
+                        ? "Nothing shared yet. Sharing (the share icon on a recording) is still being built for doculigent.com accounts."
+                        : "Recordings shared with you will show up here once doculigent.com sharing is live."}
+                    </p>
+                  ) : (
+                    <p className="muted">
+                      Sign in with doculigent.com to see shared recordings — <Link to="/account">go to Account</Link>.
+                    </p>
+                  )}
+                </div>
+              </>
+            )
           ) : section === "team" ? (
             <>
               <div className="library-section-head">
@@ -492,11 +521,9 @@ export function LibraryPage() {
               {isLoading && <p className="muted">Loading…</p>}
               {!isLoading && sectionVideos.length === 0 && (
                 <p className="muted">
-                  {section === "transcribed"
-                    ? "No transcribed recordings yet — tap the transcribe icon on a recording."
-                    : section === "meeting"
-                      ? "No meetings recorded yet — head to the Meeting tab."
-                      : "No recordings yet — head to the Record tab."}
+                  {section === "meeting"
+                    ? "No meetings recorded yet — head to the Meeting tab."
+                    : "No recordings yet — head to the Record tab."}
                 </p>
               )}
 
@@ -593,25 +620,29 @@ export function LibraryPage() {
                           >
                             <Pencil size={20} />
                           </button>
-                          {/* Sharing requires a doculigent.com account and is a Phase 2
-                              feature (see prompt.md's roadmap) — intentionally a no-op. */}
-                          <button type="button" title="Share" className="icon-btn icon-btn-share" onClick={() => {}}>
+                          <button
+                            type="button"
+                            title="Share"
+                            className="icon-btn icon-btn-share"
+                            onClick={() => {
+                              if (storagePreference?.provider === "s3") {
+                                setSection("shared");
+                                setShareVideoId(v.id);
+                              } else {
+                                navigate(`/library/${v.id}/share`);
+                              }
+                            }}
+                          >
                             <Link2 size={20} />
                           </button>
-                          {/* Not shown on the Transcribed tab — it's a filtered view of
-                              recordings that live in Videos/Meeting, so deleting happens
-                              from there rather than offering a second, easily-confused
-                              "delete" here that only used to clear the transcript. */}
-                          {section !== "transcribed" && (
-                            <button
-                              type="button"
-                              title="Delete recording"
-                              className="icon-btn icon-btn-delete"
-                              onClick={() => handleDelete(v)}
-                            >
-                              <Trash2 size={20} />
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            title="Delete recording"
+                            className="icon-btn icon-btn-delete"
+                            onClick={() => handleDelete(v)}
+                          >
+                            <Trash2 size={20} />
+                          </button>
                           {/* Pushed to the far right (see .icon-btn-ai's margin-left:auto)
                               rather than sitting in the same cluster as the other actions —
                               jumps to the AI Assistant tab with this recording already

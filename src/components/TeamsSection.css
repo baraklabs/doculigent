@@ -1,4 +1,15 @@
 
+.shared-empty-icon { color: var(--muted); margin-bottom: 10px; }
+.shared-empty h2 { margin: 0 0 6px; font-size: 16px; }
+.shared-empty .muted { max-width: 360px; margin-left: auto; margin-right: auto; }
+.shared-empty-actions { justify-content: center; margin: 16px 0; }
+.shared-empty-divider {
+  display: flex; align-items: center; gap: 10px; max-width: 220px; margin: 4px auto 14px;
+  color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+}
+.shared-empty-divider::before, .shared-empty-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.shared-empty p.sub { max-width: 320px; margin-left: auto; margin-right: auto; }
+
 .teams-list-view-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 
 .teams-grid { display: flex; flex-wrap: wrap; gap: 12px; }

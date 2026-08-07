@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { AppWindow, Cpu, Download, PanelLeftClose, PanelLeftOpen, SlidersHorizontal } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { AppWindow, Cloud, Cpu, Download, PanelLeftClose, PanelLeftOpen, SlidersHorizontal } from "lucide-react";
 import type {
   AppIntegration,
   AppIntegrationKind,
@@ -24,6 +24,7 @@ import {
   useTestAppConnection,
 } from "../hooks/useAppIntegrations";
 import { useAutoTranscribeSettings, useSetAutoTranscribeSettings } from "../hooks/useAutoTranscribeSettings";
+import { StorageSection } from "./settings/StorageSection";
 import "./SettingsPage.css";
 
 function providerLabel(kind: LlmProviderKind): string {
@@ -37,11 +38,6 @@ interface ModelFormProps {
   onSaved: () => void;
 }
 
-/** Add/edit form for one saved model profile. Kind is only changeable while adding (it
- *  drives the baseUrl/model defaults); editing an existing profile keeps its kind fixed
- *  so switching providers doesn't silently clobber a hand-tuned baseUrl. Every kind — not
- *  just "custom" — can be tagged for AI summary (chat/summaries), Transcription, or both,
- *  since the same OpenAI-compatible endpoint (built-in or BYOK) may serve either role. */
 function ModelForm({ initial, isNew, onCancel, onSaved }: ModelFormProps) {
   const [profile, setProfile] = useState<LlmModelProfile>(initial);
   const [apiKey, setApiKey] = useState("");
@@ -57,8 +53,6 @@ function ModelForm({ initial, isNew, onCancel, onSaved }: ModelFormProps) {
 
   function toggleCapability(capability: LlmCapability) {
     const has = profile.capabilities.includes(capability);
-    // Every profile needs at least one capability — a model tagged for neither couldn't
-    // be used anywhere, so the last box can't be unchecked.
     if (has && profile.capabilities.length === 1) return;
     setProfile({
       ...profile,
@@ -180,10 +174,6 @@ interface AppIntegrationFormProps {
   onSaved: () => void;
 }
 
-/** Add/edit form for one connected app. Unlike ModelForm there's no kind picker — the kind
- *  is fixed by which app card (GitHub/Slack) the user clicked "+ Add" on, and stays fixed
- *  while editing too. Multiple integrations of the same kind are just multiple saved
- *  records with different `name`s (e.g. two GitHub orgs), same as LLM profiles. */
 function AppIntegrationForm({ kind, initial, onCancel, onSaved }: AppIntegrationFormProps) {
   const meta = appProviderMeta(kind);
   const isNew = !initial;
@@ -290,15 +280,11 @@ function matchesFilter(capabilities: LlmCapability[], filter: CapabilityFilter):
   }
 }
 
-/** Mirrors the filter chips' wording — something tagged for both capabilities reads as
- *  "Multimodel" rather than spelling out "AI summary + Transcription". */
 function capabilityLabel(capabilities: LlmCapability[]): string {
   if (capabilities.includes("chat") && capabilities.includes("transcribe")) return "Multimodel";
   return capabilities.includes("chat") ? "AI summary" : "Transcription";
 }
 
-/** CSS suffix for the capability badge's color — kept alongside capabilityLabel so the
- *  wording and coloring can never drift out of sync with each other. */
 function capabilityBadgeClass(capabilities: LlmCapability[]): string {
   if (capabilities.includes("chat") && capabilities.includes("transcribe")) return "cap-both";
   return capabilities.includes("chat") ? "cap-chat" : "cap-transcribe";
@@ -306,36 +292,14 @@ function capabilityBadgeClass(capabilities: LlmCapability[]): string {
 
 const LOCALHOST_RE = /^(https?:\/\/)?(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:\d+)?(\/|$)/i;
 
-/** Ollama/LM Studio are always local; any other provider (including "custom"/BYOK) still
- *  counts as local if its base URL actually points at localhost — a self-hosted OpenAI-
- *  compatible server is just as "on this machine" as Ollama is, even though its `kind`
- *  can't say so. */
 function isLocalModel(kind: LlmProviderKind, baseUrl: string): boolean {
   return LOCAL_LLM_PROVIDERS.includes(kind) || LOCALHOST_RE.test(baseUrl.trim());
 }
 
-/** Tracks which local Whisper model sizes (tiny/base/small) are downloaded — see
- *  shared/constants/whisperModels.ts for the size/accuracy/speed/hardware tradeoff and
- *  electron/main/transcription/modelCache.ts for how "downloaded" gets computed. Returns
- *  plain data/handlers rather than JSX so SettingsPage can render Whisper sizes as rows in
- *  the same filtered list as LLM profiles instead of a separate section.
- *
- *  Deliberately no "active" model here — which downloaded size actually transcribes is
- *  chosen from the Meeting tab instead (see MeetingPage.tsx's model picker), since that's
- *  where the accuracy/speed tradeoff actually matters moment to moment; this hook only ever
- *  adds/removes files from disk. */
 function useWhisperModels() {
   const [statuses, setStatuses] = useState<WhisperModelStatus[] | null>(null);
   const [cacheDir, setCacheDir] = useState("");
   const [loading, setLoading] = useState(true);
-  // Sets rather than single sizes — otherwise starting a second download/remove while the
-  // first is still in flight overwrites the tracked size and the first row's button springs
-  // back to its idle label even though that download/removal is still running. Kept
-  // separate (rather than one generic "busy" set) because a download in progress writes its
-  // files incrementally, so `status.downloaded` (any bytes on disk > 0) can flip true well
-  // before the download actually finishes — without this split, that false-positive
-  // "downloaded" pushed the row into its Remove-button branch while a download was still
-  // running, showing "Removing…" for a download.
   const [downloadingLocally, setDownloadingLocally] = useState<ReadonlySet<WhisperModelSize>>(new Set());
   const [removingLocally, setRemovingLocally] = useState<ReadonlySet<WhisperModelSize>>(new Set());
 
@@ -352,13 +316,6 @@ function useWhisperModels() {
     return SettingsService.getWhisperModelStatuses().then(setStatuses);
   }
 
-  // Forces one size's entry to a known value after an action we just confidently performed
-  // ourselves (a download/delete call that resolved without throwing) — independent of
-  // whatever refreshStatuses' disk re-read reports for it. That read can still come back
-  // stale right after the action (a slower earlier statuses fetch settling after this one,
-  // or the model cache's write not having fully landed on disk yet), which otherwise left
-  // the button showing its pre-action label until something else (e.g. leaving and
-  // returning to this tab) forced a fresh read.
   function forceStatus(size: WhisperModelSize, downloaded: boolean) {
     setStatuses((prev) => {
       const base = prev ?? WHISPER_MODELS.map((m) => ({ size: m.size, downloaded: false, sizeBytes: 0, downloading: false }));
@@ -370,11 +327,6 @@ function useWhisperModels() {
     Promise.all([refreshStatuses(), SettingsService.getWhisperModelsDir().then(setCacheDir)]).finally(() => setLoading(false));
   }, []);
 
-  // `downloading` is tracked in the main process, not just by this hook's own
-  // handleDownload — so a download kicked off before this instance mounted (e.g. the user
-  // clicked Download, navigated away and back, remounting this component and losing its
-  // local busySizes) still needs to show "Downloading…" and then flip to "Remove" once it
-  // lands. Poll while any size is in flight; stop as soon as none are.
   useEffect(() => {
     if (!statuses?.some((s) => s.downloading)) return;
     const interval = setInterval(refreshStatuses, 1500);
@@ -407,11 +359,6 @@ function useWhisperModels() {
 
   const entries = WHISPER_MODELS.map((m) => {
     const status = statusFor(m.size);
-    // downloadingLocally covers this hook's own in-flight click; status.downloading is the
-    // main process's own truth, so a download started before this instance mounted still
-    // shows correctly (see the polling effect above). Takes priority over status.downloaded
-    // below — the model cache writes its files incrementally, so "any bytes on disk" can go
-    // true well before the download is actually finished.
     const downloading = downloadingLocally.has(m.size) || (status?.downloading ?? false);
     const removing = removingLocally.has(m.size);
     const reallyDownloaded = !downloading && (status?.downloaded ?? false);
@@ -424,9 +371,11 @@ function useWhisperModels() {
 const SECTIONS = [
   { id: "models", label: "Models", icon: <Cpu size={16} /> },
   { id: "apps", label: "Apps", icon: <AppWindow size={16} /> },
+  { id: "storage", label: "Storage", icon: <Cloud size={16} /> },
   { id: "preferences", label: "Preferences", icon: <SlidersHorizontal size={16} /> },
 ] as const;
 type SettingsSectionId = (typeof SECTIONS)[number]["id"];
+const SECTION_IDS = SECTIONS.map((s) => s.id) as string[];
 
 interface PrefToggleProps {
   label: string;
@@ -435,8 +384,6 @@ interface PrefToggleProps {
   onChange: (checked: boolean) => void;
 }
 
-/** Same hand-rolled switch look as RecordPage's cursor-hide-toggle, generalized for any
- *  on/off preference row instead of just the one recording-time setting. */
 function PrefToggle({ label, hint, checked, onChange }: PrefToggleProps) {
   return (
     <button
@@ -456,13 +403,15 @@ function PrefToggle({ label, hint, checked, onChange }: PrefToggleProps) {
   );
 }
 
-// Same per-renderer-preference pattern as LibraryPage's navCollapsed — persisted to
-// localStorage rather than the settings store since it's just a UI layout choice.
 const NAV_COLLAPSED_KEY = "settings.navCollapsed";
 
 export function SettingsPage() {
   const navigate = useNavigate();
-  const [section, setSection] = useState<SettingsSectionId>("models");
+  const [searchParams] = useSearchParams();
+  const [section, setSection] = useState<SettingsSectionId>(() => {
+    const requested = searchParams.get("section");
+    return requested && SECTION_IDS.includes(requested) ? (requested as SettingsSectionId) : "models";
+  });
   const [navCollapsed, setNavCollapsed] = useState(() => localStorage.getItem(NAV_COLLAPSED_KEY) === "1");
   useEffect(() => {
     localStorage.setItem(NAV_COLLAPSED_KEY, navCollapsed ? "1" : "0");
@@ -476,9 +425,6 @@ export function SettingsPage() {
   const [filter, setFilter] = useState<CapabilityFilter>("all");
   const deleteProfile = useDeleteLlmProfile();
   const whisper = useWhisperModels();
-  // Which not-yet-downloaded size's description/hardware recommendation is shown below the
-  // "Available to download" grid — set by clicking a card's label, purely to preview its
-  // tradeoffs before committing to the download (no other effect).
   const [previewedSize, setPreviewedSize] = useState<WhisperModelSize | null>(null);
   const previewedWhisper = previewedSize ? WHISPER_MODELS.find((m) => m.size === previewedSize) : null;
 
@@ -499,8 +445,6 @@ export function SettingsPage() {
 
   const { data: integrations = [], isLoading: integrationsLoading } = useAppIntegrations();
   const deleteIntegration = useDeleteAppIntegration();
-  // Which app card's "+ Add" was clicked (drives the form's fixed kind) — separate from
-  // editingIntegration since an add has no existing record yet to derive the kind from.
   const [addingKind, setAddingKind] = useState<AppIntegrationKind | null>(null);
   const [editingIntegration, setEditingIntegration] = useState<AppIntegration | null>(null);
   function closeIntegrationModal() {
@@ -525,8 +469,6 @@ export function SettingsPage() {
   function toggleAutoTranscribeOne(key: keyof Omit<AutoTranscribeSettings, "all">, on: boolean) {
     if (!autoTranscribe) return;
     const next: AutoTranscribeSettings = { ...autoTranscribe, [key]: on };
-    // The master switch reads "on" only once every sub-toggle agrees — flipping one off
-    // shouldn't silently claim everything is still auto-transcribing.
     next.all = next.recording && next.videoImport && next.audioImport && next.teamsContent;
     setAutoTranscribe.mutate(next);
   }
@@ -624,6 +566,8 @@ export function SettingsPage() {
             </div>
           </div>
         </section>
+      ) : section === "storage" ? (
+        <StorageSection />
       ) : section === "preferences" ? (
         <section className="panel settings-content">
           <p className="muted">Choose what gets transcribed automatically, without tapping Transcribe by hand.</p>
@@ -751,11 +695,6 @@ export function SettingsPage() {
                 </div>
               ));
 
-              // Doculigent is Doculigent's own upsell, not just another row — it's pinned
-              // to the 3rd spot (rather than wherever it'd naturally fall after profiles
-              // and downloaded Whisper sizes) and visually called out, so it stays a
-              // consistent, prominent landmark in the list no matter how many profiles/
-              // Whisper sizes the user has.
               const rows = [...profileRows, ...whisperRows];
               if (doculigentVisible) {
                 rows.splice(

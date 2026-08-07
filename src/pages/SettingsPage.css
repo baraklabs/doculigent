@@ -1,8 +1,4 @@
 .settings-layout { display: flex; gap: 16px; align-items: flex-start; width: 100%; }
-/* Sticky rather than fixed — same reasoning as LibraryPage's .library-nav: .workspace (see
-   Layout.css) is already the nearest scrolling ancestor, so this stays in place as the
-   settings content on the right scrolls, without needing its own left-offset math or
-   floating over the footer. */
 .settings-nav {
   display: flex; flex-direction: column; gap: 4px; width: 160px; flex-shrink: 0;
   position: sticky; top: 0; transition: width 150ms ease;
@@ -25,7 +21,6 @@
 .settings-nav-item.active { color: var(--text); background: rgba(91, 75, 245,.12); font-weight: 600; }
 .settings-content { flex: 1; min-width: 0; }
 
-/* --- Preferences tab toggles ------------------------------------------------------ */
 
 .pref-toggle-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
 .pref-toggle {
@@ -49,7 +44,6 @@
 }
 .pref-toggle.on .pref-toggle-knob { transform: translateX(14px); }
 
-/* Quick filter chips above the model profiles list, with "+ Add model" on the right */
 .model-filter-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0; flex-wrap: wrap; }
 .model-filter { display: flex; gap: 6px; flex-wrap: wrap; }
 .filter-chip {
@@ -59,8 +53,6 @@
 .filter-chip:hover { color: var(--text); border-color: var(--accent); }
 .filter-chip.active { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 600; }
 
-/* LLM provider profiles — kept deliberately slim (tight padding/line-height) since the
-   list can hold a lot of entries once Whisper sizes and Doculigent are merged in. */
 .model-list { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
 .model-row {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -72,9 +64,6 @@
 .capability-checkboxes { display: flex; gap: 16px; }
 .capability-checkboxes label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 400; }
 
-/* Locality (Local/Cloud) and capability (AI summary/Transcription/Multimodel) tags shown
-   inline with each row's name — color-coded so the two facets are readable at a glance
-   without adding a line of text (which would fight the slimmer row height above). */
 .badge {
   font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px; line-height: 1.6;
   white-space: nowrap;
@@ -85,53 +74,40 @@
 .cap-badge.cap-transcribe { color: #b45309; background: rgba(245, 158, 11, .12); }
 .cap-badge.cap-both { color: #be185d; background: rgba(219, 39, 119, .12); }
 
-/* Downloaded Whisper rows lose the click-to-preview card (see the "Available to
-   download" grid below) once they move into the list, so the same description/hardware
-   recommendation is surfaced as a native title tooltip on a small info glyph instead. */
 .info-icon { color: var(--muted); font-size: 12px; cursor: help; line-height: 1; }
 .info-icon:hover { color: var(--text); }
 
-/* Doculigent's own row — called out from the plain list rows around it (green brand
-   accent, pinned to the 3rd slot in SettingsPage.tsx) so it reads as a promoted option
-   rather than just another saved model. */
 .model-row.doculigent-row {
   border-color: #15803d; background: linear-gradient(135deg, rgba(21, 128, 61, .10), rgba(21, 128, 61, .03));
   box-shadow: 0 0 0 1px rgba(21, 128, 61, .2);
 }
 .model-row.doculigent-row .model-row-info h3 { color: #15803d; }
-/* Extra pop on top of the ordinary .primary button — a glow ring plus a slight lift, so
-   the Sign in/Upgrade CTA reads as more urgent than a routine Edit/Save action. */
 .cta-highlight {
   box-shadow: 0 0 0 3px rgba(91, 75, 245, .22), 0 2px 6px rgba(91, 75, 245, .25);
   font-weight: 700;
 }
 .cta-highlight:hover { box-shadow: 0 0 0 3px rgba(91, 75, 245, .3), 0 2px 8px rgba(91, 75, 245, .3); }
 
-/* Separates "ready to use" rows (LLM profiles, downloaded Whisper sizes, Doculigent) from
-   "not downloaded yet" Whisper sizes below it — a plain label rather than a full rule so it
-   doesn't read as a section boundary as heavy as the field labels above it. */
+.storage-path-preview { line-height: 1.7; }
+.storage-path-preview code {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+  padding: 1px 5px; font-size: 11px; color: var(--text);
+}
+
 .model-size-divider {
   font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em;
   margin: 12px 0 6px; padding-top: 10px; border-top: 1px solid var(--border);
 }
 
-/* Not-yet-downloaded Whisper sizes stay boxed cards (unlike the list rows above) — a
-   deliberately different shape so "things I could still get" reads as a distinct picker
-   rather than more rows in the same list. */
 .model-size-options { display: flex; flex-direction: row; gap: 10px; flex-wrap: wrap; }
 .model-size-card {
   display: flex; flex-direction: column; align-items: stretch; gap: 6px;
   border: 1px solid var(--border); border-radius: 12px; padding: 6px; background: var(--bg);
   box-shadow: 0 1px 2px rgba(15, 23, 42, .04);
   transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease, transform 150ms ease;
-  /* Fixed rather than content-sized — otherwise the whole row reflows every time a
-     card's status text changes length (e.g. "~1560MB" vs "Downloading…"), most
-     noticeably while a download is actually in progress. */
   width: 190px; flex-shrink: 0;
 }
 .model-size-card:hover { border-color: var(--accent); box-shadow: 0 4px 12px rgba(91, 75, 245, .12); transform: translateY(-1px); }
-/* Clicking a card (its label area) previews that size's description/hardware
-   recommendation below the grid — see SettingsPage.tsx's previewedSize. */
 .model-size-card.previewed { border-color: var(--accent); background: rgba(91, 75, 245, .1); }
 .model-size-card-main {
   display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; width: 100%;
@@ -160,8 +136,6 @@
   opacity: .6; cursor: not-allowed; background: var(--muted); border-color: var(--muted); box-shadow: none;
 }
 
-/* "+ Add an app" cards (GitHub/Slack/Teams) — each opens AppIntegrationForm pre-fixed to
-   that kind, so unlike the Models tab there's no separate "+ Add" button + kind dropdown. */
 .app-add-grid { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
 .app-add-card {
   display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 10px;
@@ -169,15 +143,10 @@
   cursor: pointer; transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
 }
 .app-add-card:hover { border-color: var(--accent); box-shadow: 0 4px 12px rgba(91, 75, 245, .12); transform: translateY(-1px); }
-/* A colored badge (brand background, white glyph) rather than a flat tinted line-icon —
-   reads as the app's actual icon at a glance instead of a generic monochrome symbol. */
 .app-icon {
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   width: 22px; height: 22px; border-radius: 6px; color: #fff; font-size: 13px; line-height: 1;
 }
-/* Slack's mark already carries its own four real brand colors (see SlackMark in
-   src/providers/apps) — no background tint, just enough padding to keep its squares off
-   the badge's own rounded corners. */
 .app-icon.multicolor { padding: 2px; }
 .app-icon.multicolor svg { width: 100%; height: 100%; }
 .app-add-card .app-icon { width: 26px; height: 26px; font-size: 15px; }

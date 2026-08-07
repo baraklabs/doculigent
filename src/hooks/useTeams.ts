@@ -30,10 +30,11 @@ export function useTeam(teamId: string | null) {
   });
 }
 
-export function useTeamFiles(teamId: string, status: TeamFileStatus) {
+export function useTeamFiles(teamId: string, status: TeamFileStatus, enabled = true) {
   return useQuery({
     queryKey: ["teamFiles", teamId, status],
     queryFn: () => TeamsService.listFiles(teamId, status),
+    enabled,
   });
 }
 

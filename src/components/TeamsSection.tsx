@@ -1,7 +1,7 @@
 import { useEffect, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, Loader2, Plus, Trash2, Upload, UserPlus, Users } from "lucide-react";
+import { ArrowLeft, Check, Cloud, Loader2, LogIn, Plus, Trash2, Upload, UserPlus, Users } from "lucide-react";
 import type { TeamFile, TeamMember } from "@shared/types/team";
 import { planLabel, teamLimitForTier } from "@shared/constants/plans";
 import {
@@ -22,6 +22,8 @@ import {
 import { TeamsService } from "../services/teams/TeamsService";
 import { useAuthStore } from "../store/authStore";
 import { useToast } from "../hooks/useToast";
+import { useStoragePreference } from "../hooks/useStorage";
+import { LocalStorageTeamView } from "./LocalStorageTeamView";
 import "./TeamsSection.css";
 
 const MEDIA_EXTENSIONS = new Set([
@@ -42,15 +44,45 @@ function formatBytes(bytes: number): string {
 }
 
 export function TeamsSection() {
+  const navigate = useNavigate();
   const session = useAuthStore((s) => s.session);
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
+  const { data: storagePreference, isLoading: storagePreferenceLoading } = useStoragePreference();
+
+  if (storagePreferenceLoading) {
+    return (
+      <div className="shared-empty">
+        <p className="muted">Loading…</p>
+      </div>
+    );
+  }
+
+  if (storagePreference && storagePreference.provider !== "doculigent") {
+    return <LocalStorageTeamView />;
+  }
 
   if (!session) {
     return (
       <div className="shared-empty">
-        <p className="muted">
-          Sign in with doculigent.com to collaborate with teams — <Link to="/account">go to Account</Link>.
-        </p>
+        <Users size={26} className="shared-empty-icon" />
+        <h2>Sign in to collaborate</h2>
+        <p className="muted">Sign in with doculigent.com to create teams and share files with colleagues.</p>
+        <div className="actions shared-empty-actions">
+          <button type="button" className="primary" onClick={() => navigate("/account")}>
+            <LogIn size={14} /> Go to Account
+          </button>
+        </div>
+
+        <div className="shared-empty-divider">
+          <span>or</span>
+        </div>
+
+        <p className="muted sub">Prefer your own storage?</p>
+        <div className="actions shared-empty-actions">
+          <button type="button" onClick={() => navigate("/settings?section=storage")}>
+            <Cloud size={14} /> Set up bring-your-own S3
+          </button>
+        </div>
       </div>
     );
   }

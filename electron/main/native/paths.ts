@@ -42,3 +42,7 @@ export function libraryStoreFilePath(): string {
   fs.mkdirSync(dir, { recursive: true });
   return path.join(dir, "library.json");
 }
+
+export function shareLinksFilePath(): string {
+  return path.join(app.getPath("userData"), "share-links.json");
+}

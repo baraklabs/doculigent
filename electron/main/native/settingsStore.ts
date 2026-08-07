@@ -6,6 +6,7 @@ import type { ProjectManager } from "@shared/types/projectManager";
 import type { CustomPersona } from "@shared/types/persona";
 import type { AuthUser } from "@shared/types/auth";
 import type { WhisperModelSize } from "@shared/constants/whisperModels";
+import type { StoragePreference } from "@shared/types/storage";
 import { settingsFilePath } from "./paths";
 
 interface StoredSettings {
@@ -28,7 +29,10 @@ interface StoredSettings {
   useDoculigentModel?: boolean;
   transcriptionByokProfileId?: string | null;
   autoTranscribe?: AutoTranscribeSettings;
+  storagePreference?: StoragePreference;
 }
+
+const DEFAULT_STORAGE_PREFERENCE: StoragePreference = { provider: "doculigent" };
 
 const DEFAULT_AUTO_TRANSCRIBE: AutoTranscribeSettings = {
   all: true,
@@ -236,6 +240,14 @@ export function getAutoTranscribeSettings(): AutoTranscribeSettings {
 
 export function setAutoTranscribeSettings(settings: AutoTranscribeSettings): void {
   writeStored({ ...readStored(), autoTranscribe: settings });
+}
+
+export function getStoragePreference(): StoragePreference {
+  return readStored().storagePreference ?? DEFAULT_STORAGE_PREFERENCE;
+}
+
+export function setStoragePreference(preference: StoragePreference): void {
+  writeStored({ ...readStored(), storagePreference: preference });
 }
 
 export function getCursorOverride(): boolean {

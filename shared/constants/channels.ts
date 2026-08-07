@@ -143,4 +143,18 @@ export const Channels = {
     save: "persona:save",
     delete: "persona:delete",
   },
+  storage: {
+    getPreference: "storage:getPreference",
+    setPreference: "storage:setPreference",
+    listTeams: "storage:listTeams",
+    createTeam: "storage:createTeam",
+    deleteTeam: "storage:deleteTeam",
+    listFiles: "storage:listFiles",
+    uploadFile: "storage:uploadFile",
+    uploadProgress: "storage:uploadProgress",
+    downloadToLibrary: "storage:downloadToLibrary",
+    deleteFile: "storage:deleteFile",
+    getShareableLink: "storage:getShareableLink",
+    getCachedShareLink: "storage:getCachedShareLink",
+  },
 } as const;

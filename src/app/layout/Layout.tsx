@@ -88,7 +88,7 @@ export function Layout() {
   const [indicator, setIndicator] = useState<{ left: number; width: number } | null>(null);
   useLayoutEffect(() => {
     const active = stagesRef.current?.querySelector<HTMLElement>(".stage.active");
-    if (active) setIndicator({ left: active.offsetLeft, width: active.offsetWidth });
+    setIndicator(active ? { left: active.offsetLeft, width: active.offsetWidth } : null);
   }, [location.pathname]);
 
   return (

@@ -2,14 +2,40 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useVideo } from "../hooks/useVideos";
 import { teamErrorCode, teamErrorMessage, useTeams, useUploadTeamFile } from "../hooks/useTeams";
+import { useStoragePreference } from "../hooks/useStorage";
+import { ShareToStoragePanel } from "../components/ShareToStoragePanel";
 import { TeamsService } from "../services/teams/TeamsService";
 import { useAuthStore } from "../store/authStore";
 import "./SharePage.css";
 
 export function SharePage() {
   const { id } = useParams<{ id: string }>();
-  const session = useAuthStore((s) => s.session);
   const { data: video } = useVideo(id);
+  const { data: storagePreference, isLoading: storagePreferenceLoading } = useStoragePreference();
+
+  if (storagePreferenceLoading) {
+    return (
+      <section className="panel share">
+        <h1>Share</h1>
+        <p className="muted">Loading…</p>
+      </section>
+    );
+  }
+
+  if (storagePreference && storagePreference.provider !== "doculigent") {
+    return (
+      <section className="panel share">
+        <h1>Share</h1>
+        <ShareToStoragePanel video={video ? { filePath: video.filePath, title: video.title } : undefined} />
+      </section>
+    );
+  }
+
+  return <DoculigentTeamShare video={video ? { filePath: video.filePath, title: video.title } : undefined} />;
+}
+
+function DoculigentTeamShare({ video }: { video?: { filePath: string; title: string } }) {
+  const session = useAuthStore((s) => s.session);
   const { data: teams = [], isLoading: teamsLoading } = useTeams(!!session);
   const [teamId, setTeamId] = useState<string>("");
   useEffect(() => {

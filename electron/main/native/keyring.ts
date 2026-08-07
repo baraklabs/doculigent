@@ -48,3 +48,17 @@ export function getRefreshToken(): Promise<string | null> {
 export async function clearRefreshToken(): Promise<void> {
   await keytar.deletePassword(SERVICE, AUTH_ACCOUNT);
 }
+
+const S3_SECRET_ACCOUNT = "storage:s3SecretKey";
+
+export function setS3SecretKey(secret: string): Promise<void> {
+  return keytar.setPassword(SERVICE, S3_SECRET_ACCOUNT, secret);
+}
+
+export function getS3SecretKey(): Promise<string | null> {
+  return keytar.getPassword(SERVICE, S3_SECRET_ACCOUNT);
+}
+
+export async function deleteS3SecretKey(): Promise<void> {
+  await keytar.deletePassword(SERVICE, S3_SECRET_ACCOUNT);
+}

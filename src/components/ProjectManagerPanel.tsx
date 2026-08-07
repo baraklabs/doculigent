@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronLeft, ChevronRight, Files, Info, MessageCircle, Settings, Sparkles, X } from "lucide-react";
 import type { Video } from "@shared/types/models";
-import type { TeamFile } from "@shared/types/team";
 import type { PmPersonaId, PmRunResult, ProjectManager } from "@shared/types/projectManager";
 import type { CustomPersona } from "@shared/types/persona";
 import { listAllPersonas, resolvePersonaById } from "@shared/constants/pmPersonas";
@@ -11,6 +10,7 @@ import { DEFAULT_TRANSCRIPTION_LANGUAGE } from "@shared/constants/languages";
 import { WHISPER_MODELS } from "@shared/constants/whisperModels";
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
 import { useTeamFiles } from "../hooks/useTeams";
+import { useStorageFiles } from "../hooks/useStorage";
 import { useLlmProfiles } from "../hooks/useLlmProfiles";
 import {
   useDeleteProjectManager,
@@ -21,6 +21,7 @@ import {
   useSaveProjectManager,
 } from "../hooks/useProjectManagers";
 import { TeamsService } from "../services/teams/TeamsService";
+import { StorageService } from "../services/storage/StorageService";
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
 import { SettingsService } from "../services/settings/SettingsService";
 import { AiService } from "../services/ai/AiService";
@@ -41,6 +42,12 @@ function transcriptText(video: Video | undefined): string | null {
 
 const MAX_CONTEXT_CHARS_PER_FILE = 6000;
 
+interface PmFile {
+  id: string;
+  name: string;
+  uploadedBy?: string;
+}
+
 function InsightSkeleton({ className }: { className: string }) {
   return (
     <div className={`${className} pm-skeleton`}>
@@ -51,12 +58,13 @@ function InsightSkeleton({ className }: { className: string }) {
   );
 }
 
-function buildSystemPrompt(pm: ProjectManager, files: TeamFile[], videosByFile: Record<string, Video>, customPersonas: CustomPersona[]): string {
+function buildSystemPrompt(pm: ProjectManager, files: PmFile[], videosByFile: Record<string, Video>, customPersonas: CustomPersona[]): string {
   const persona = resolvePersonaById(pm.persona, customPersonas);
   const sections = files.map((f) => {
     const insight = pm.insights.find((i) => i.fileId === f.id);
     const body = insight?.detailed ?? transcriptText(videosByFile[f.id]) ?? "(not transcribed yet)";
-    return `### ${f.name} (uploaded by ${f.uploadedBy})\n${body.slice(0, MAX_CONTEXT_CHARS_PER_FILE)}`;
+    const header = f.uploadedBy ? `${f.name} (uploaded by ${f.uploadedBy})` : f.name;
+    return `### ${header}\n${body.slice(0, MAX_CONTEXT_CHARS_PER_FILE)}`;
   });
   return (
     `You are acting as a ${persona.name} for the team "${pm.teamName}". Focus on ${persona.focus}. ` +
@@ -104,7 +112,13 @@ export function ProjectManagerPanel({
   onDeleted: () => void;
   onManagePersonas: () => void;
 }) {
-  const { data: files = [], isLoading: filesLoading } = useTeamFiles(pm.teamId, "active");
+  const isS3 = pm.storageProvider === "s3";
+  const { data: teamFiles = [], isLoading: teamFilesLoading } = useTeamFiles(pm.teamId, "active", !isS3);
+  const { data: storageFiles = [], isLoading: storageFilesLoading } = useStorageFiles(pm.teamId, isS3);
+  const files: PmFile[] = isS3
+    ? storageFiles.map((f) => ({ id: f.id, name: f.name }))
+    : teamFiles.map((f) => ({ id: f.id, name: f.name, uploadedBy: f.uploadedBy }));
+  const filesLoading = isS3 ? storageFilesLoading : teamFilesLoading;
   const { data: customPersonas = [] } = useCustomPersonas();
   const persona = resolvePersonaById(pm.persona, customPersonas);
   const { data: profiles = [] } = useLlmProfiles();
@@ -118,11 +132,12 @@ export function ProjectManagerPanel({
   useEffect(() => {
     for (const file of files) {
       if (videosByFile[file.id]) continue;
-      TeamsService.downloadToLibrary(pm.teamId, file.id)
+      const download = isS3 ? StorageService.downloadToLibrary(file.id) : TeamsService.downloadToLibrary(pm.teamId, file.id);
+      download
         .then((v) => setVideosByFile((m) => ({ ...m, [file.id]: v })))
         .catch(() => {});
     }
-  }, [files, pm.teamId]);
+  }, [files, pm.teamId, isS3]);
 
   const [modelStatuses, setModelStatuses] = useState<WhisperModelStatus[] | null>(null);
   useEffect(() => {
@@ -158,11 +173,13 @@ export function ProjectManagerPanel({
   const [fileError, setFileError] = useState<{ id: string; message: string } | null>(null);
   const [overallError, setOverallError] = useState<string | null>(null);
 
-  async function transcribeFile(file: TeamFile): Promise<Video | null> {
+  async function transcribeFile(file: PmFile): Promise<Video | null> {
     setTranscribingId(file.id);
     setFileError(null);
     try {
-      const video = videosByFile[file.id] ?? (await TeamsService.downloadToLibrary(pm.teamId, file.id));
+      const video =
+        videosByFile[file.id] ??
+        (await (isS3 ? StorageService.downloadToLibrary(file.id) : TeamsService.downloadToLibrary(pm.teamId, file.id)));
       const { modelSize, byokId } = resolveTranscribeSelection();
       const transcript = await TranscriptionService.transcribe(video.filePath, DEFAULT_TRANSCRIPTION_LANGUAGE, modelSize, byokId);
       const updated = await setVideoTranscript.mutateAsync({ id: video.id, transcript });
@@ -351,8 +368,8 @@ export function ProjectManagerPanel({
                   return (
                     <div key={file.id} className={`pm-file-card pm-file-card-${statusKind}`}>
                       <div className="pm-file-card-header">
-                        <span className="pm-file-card-user">{file.uploadedBy}</span>
-                        <span className="pm-file-card-name">{file.name}</span>
+                        <span className="pm-file-card-user">{file.uploadedBy ?? file.name}</span>
+                        {file.uploadedBy && <span className="pm-file-card-name">{file.name}</span>}
                       </div>
 
                       {insight ? (
@@ -420,7 +437,7 @@ function PmChat({
   customPersonas,
 }: {
   pm: ProjectManager;
-  files: TeamFile[];
+  files: PmFile[];
   videosByFile: Record<string, Video>;
   chatProfiles: { id: string; name: string }[];
   customPersonas: CustomPersona[];

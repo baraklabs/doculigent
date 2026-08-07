@@ -29,6 +29,7 @@ import { isBilledTier } from "@shared/constants/plans";
 import { useVideo, useVideos, useSetVideoTranscript } from "../hooks/useVideos";
 import { useLlmProfiles } from "../hooks/useLlmProfiles";
 import { useTeams } from "../hooks/useTeams";
+import { useStoragePreference, useStorageTeams } from "../hooks/useStorage";
 import { useProjectManagers, useSaveProjectManager } from "../hooks/useProjectManagers";
 import { useCustomPersonas } from "../hooks/useCustomPersonas";
 import {
@@ -352,7 +353,11 @@ export function AiAssistantPage() {
 
   const { data: projectManagers = [] } = useProjectManagers();
   const { data: customPersonas = [] } = useCustomPersonas();
-  const { data: teams = [] } = useTeams();
+  const { data: storagePreference } = useStoragePreference();
+  const usingS3Storage = storagePreference?.provider === "s3";
+  const { data: teams = [] } = useTeams(!usingS3Storage);
+  const { data: storageTeams = [] } = useStorageTeams(usingS3Storage);
+  const pmTeams: { id: string; name: string }[] = usingS3Storage ? storageTeams : teams;
   const saveProjectManager = useSaveProjectManager();
   const [activePmId, setActivePmId] = useState<string | null>(null);
   const activePm = projectManagers.find((pm) => pm.id === activePmId) ?? null;
@@ -373,14 +378,14 @@ export function AiAssistantPage() {
   function openAddPm() {
     setNewPmName("");
     setNewPmPersona(PM_PERSONAS[0].id);
-    setNewPmTeamId(teams[0]?.id ?? "");
+    setNewPmTeamId(pmTeams[0]?.id ?? "");
     setNewPmChatProfileId(chatProfiles[0]?.id ?? "");
     setNewPmTranscribeModel(pmTranscribeOptions[0]?.value ?? "");
     setAddPmOpen(true);
   }
 
   async function createProjectManager() {
-    const team = teams.find((t) => t.id === newPmTeamId);
+    const team = pmTeams.find((t) => t.id === newPmTeamId);
     if (!team || !newPmName.trim() || creatingPm) return;
     setCreatingPm(true);
     try {
@@ -389,6 +394,7 @@ export function AiAssistantPage() {
         name: newPmName.trim(),
         teamId: team.id,
         teamName: team.name,
+        storageProvider: usingS3Storage ? "s3" : "doculigent",
         persona: newPmPersona,
         triggerMode: "manual",
         scheduleTime: null,
@@ -1317,15 +1323,15 @@ export function AiAssistantPage() {
             <div className="retranscribe-row">
               <label className="field">
                 <span>Team</span>
-                <select value={newPmTeamId} onChange={(e) => setNewPmTeamId(e.target.value)} disabled={teams.length === 0}>
-                  {teams.length === 0 && <option value="">No teams yet</option>}
-                  {teams.map((t) => (
+                <select value={newPmTeamId} onChange={(e) => setNewPmTeamId(e.target.value)} disabled={pmTeams.length === 0}>
+                  {pmTeams.length === 0 && <option value="">No teams yet</option>}
+                  {pmTeams.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.name}
                     </option>
                   ))}
                 </select>
-                {teams.length === 0 && (
+                {pmTeams.length === 0 && (
                   <small className="field-hint">Create a team in Library &gt; Team first.</small>
                 )}
               </label>

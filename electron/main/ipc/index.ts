@@ -13,6 +13,7 @@ import { registerAuthIpc } from "./auth";
 import { registerTeamsIpc } from "./teams";
 import { registerProjectManagersIpc } from "./projectManagers";
 import { registerPersonasIpc } from "./personas";
+import { registerStorageIpc } from "./storage";
 
 export function registerIpcHandlers(): void {
   registerCaptureIpc();
@@ -30,4 +31,5 @@ export function registerIpcHandlers(): void {
   registerTeamsIpc();
   registerProjectManagersIpc();
   registerPersonasIpc();
+  registerStorageIpc();
 }

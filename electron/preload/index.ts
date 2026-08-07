@@ -5,6 +5,7 @@ import type { AuthSession, LoginStatus } from "@shared/types/auth";
 import type { AnnotationCommand, AnnotationState } from "@shared/types/annotation";
 import type { Video } from "@shared/types/models";
 import type { TeamFileStatus } from "@shared/types/team";
+import type { StoragePreference } from "@shared/types/storage";
 
 const api: DoculigentApi = {
   system: {
@@ -218,6 +219,26 @@ const api: DoculigentApi = {
     list: () => ipcRenderer.invoke(Channels.persona.list),
     save: (persona) => ipcRenderer.invoke(Channels.persona.save, persona),
     delete: (id) => ipcRenderer.invoke(Channels.persona.delete, id),
+  },
+  storage: {
+    getPreference: () => ipcRenderer.invoke(Channels.storage.getPreference),
+    setPreference: (preference: StoragePreference, s3SecretKey?: string | null) =>
+      ipcRenderer.invoke(Channels.storage.setPreference, preference, s3SecretKey),
+    listTeams: () => ipcRenderer.invoke(Channels.storage.listTeams),
+    createTeam: (name) => ipcRenderer.invoke(Channels.storage.createTeam, name),
+    deleteTeam: (teamId) => ipcRenderer.invoke(Channels.storage.deleteTeam, teamId),
+    listFiles: (teamId) => ipcRenderer.invoke(Channels.storage.listFiles, teamId),
+    uploadFile: (uploadId, teamId, filePath, displayName) =>
+      ipcRenderer.invoke(Channels.storage.uploadFile, uploadId, teamId, filePath, displayName),
+    onUploadProgress: (callback) => {
+      const listener = (_event: unknown, progress: { uploadId: string; percent: number }) => callback(progress);
+      ipcRenderer.on(Channels.storage.uploadProgress, listener);
+      return () => ipcRenderer.removeListener(Channels.storage.uploadProgress, listener);
+    },
+    downloadToLibrary: (fileId) => ipcRenderer.invoke(Channels.storage.downloadToLibrary, fileId),
+    deleteFile: (fileId) => ipcRenderer.invoke(Channels.storage.deleteFile, fileId),
+    getShareableLink: (fileId) => ipcRenderer.invoke(Channels.storage.getShareableLink, fileId),
+    getCachedShareLink: (fileId) => ipcRenderer.invoke(Channels.storage.getCachedShareLink, fileId),
   },
 };
 

@@ -19,6 +19,7 @@ import type { WhisperModelSize, WhisperModelStatus } from "../constants/whisperM
 import type { FileDownloadTicket, Team, TeamFile, TeamFileStatus, TeamMember } from "./team";
 import type { PmRunResult, ProjectManager } from "./projectManager";
 import type { CustomPersona } from "./persona";
+import type { ShareLink, StorageFile, StoragePreference, StorageTeam } from "./storage";
 
 export interface DoculigentApi {
  
@@ -221,5 +222,19 @@ export interface DoculigentApi {
     list(): Promise<CustomPersona[]>;
     save(persona: CustomPersona): Promise<CustomPersona>;
     delete(id: string): Promise<void>;
+  };
+  storage: {
+    getPreference(): Promise<StoragePreference>;
+    setPreference(preference: StoragePreference, s3SecretKey?: string | null): Promise<void>;
+    listTeams(): Promise<StorageTeam[]>;
+    createTeam(name: string): Promise<StorageTeam>;
+    deleteTeam(teamId: string): Promise<void>;
+    listFiles(teamId: string): Promise<StorageFile[]>;
+    uploadFile(uploadId: string, teamId: string, filePath: string, displayName?: string): Promise<StorageFile>;
+    onUploadProgress(callback: (progress: { uploadId: string; percent: number }) => void): () => void;
+    downloadToLibrary(fileId: string): Promise<Video>;
+    deleteFile(fileId: string): Promise<void>;
+    getShareableLink(fileId: string): Promise<ShareLink>;
+    getCachedShareLink(fileId: string): Promise<ShareLink | null>;
   };
 }
