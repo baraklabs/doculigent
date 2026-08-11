@@ -13,6 +13,8 @@ import "@fontsource/geist-sans/700.css";
 // modules that own them (src/pages/*.css, src/components/*.css).
 import "./styles/base.css";
 
+document.documentElement.dataset.platform = window.api.system.platform;
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <App />

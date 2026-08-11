@@ -114,7 +114,7 @@ export function AnnotationToolbar() {
         }
         return;
       }
-      if (!e.ctrlKey) return;
+      if (!e.ctrlKey && !e.metaKey) return;
       if (e.key === "z" || e.key === "Z") {
         e.preventDefault();
         window.api.annotation.undo().catch(() => {});

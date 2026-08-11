@@ -15,6 +15,8 @@ const api: DoculigentApi = {
   },
   capture: {
     listTargets: () => ipcRenderer.invoke(Channels.capture.listTargets),
+    getPermissionStatus: () => ipcRenderer.invoke(Channels.capture.getPermissionStatus),
+    openScreenRecordingSettings: () => ipcRenderer.invoke(Channels.capture.openScreenRecordingSettings),
   },
   cursor: {
     apply: (style) => ipcRenderer.invoke(Channels.cursor.apply, style),

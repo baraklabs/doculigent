@@ -14,6 +14,11 @@
 .topbar-right { display: flex; align-items: center; gap: 10px; }
 .stages { display: flex; gap: 6px; position: relative; }
 
+/* macOS draws its own traffic-light controls over the window, inset from the top-left —
+   make room for them and drop our Windows-style controls so the two don't double up. */
+:root[data-platform="darwin"] .topbar { padding-left: 78px; }
+:root[data-platform="darwin"] .window-controls { display: none; }
+
 .stage {
   background: transparent; border: 1px solid var(--border); color: var(--muted);
   padding: 5px 12px; border-radius: 8px; text-transform: capitalize; cursor: pointer;

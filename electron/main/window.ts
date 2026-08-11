@@ -11,6 +11,8 @@ export function toggleMaximize(win: BrowserWindow): boolean {
   return true;
 }
 
+const ICON_FILENAME = process.platform === "darwin" ? "icon.icns" : process.platform === "linux" ? "icon.png" : "icon.ico";
+
 export function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1100,
@@ -19,9 +21,10 @@ export function createMainWindow(): BrowserWindow {
     minHeight: 520,
     resizable: true,
     maximizable: true,
-    frame: false,
+    frame: process.platform === "darwin" ? true : false,
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : undefined,
     title: "Doculigent",
-    icon: path.join(__dirname, "../../resources/icon.ico"),
+    icon: path.join(__dirname, "../../resources", ICON_FILENAME),
     show: false,
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),

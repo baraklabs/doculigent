@@ -57,7 +57,7 @@ Doculigent is an **open-source, local-first AI workspace** for meetings, demos, 
 * ☁️ **Bring Your Own S3-Compatible Storage** — use Amazon S3, Cloudflare R2, MinIO, Backblaze B2, DigitalOcean Spaces, or any S3-compatible storage instead of Doculigent Cloud.
 * 📚 **Recording library** — search, organize, and manage recordings, transcripts, and AI-generated knowledge in one place.
 * 🔄 **Optional cloud sync & sharing** — use Doculigent Cloud or your own S3 storage to sync recordings and securely share them with your team.
-* 🖥️ **Cross-platform desktop app** — available for Windows, with macOS and Linux support coming soon.
+* 🖥️ **Cross-platform desktop app** — available for Windows, macOS, and Linux.
 
 
 ## In Action
@@ -119,6 +119,8 @@ Doculigent is an [Electron](https://www.electronjs.org/) app built with [electro
 
 - [Node.js](https://nodejs.org/) 18 or later
 - npm (comes with Node.js)
+- **macOS only:** Xcode Command Line Tools, for compiling native modules (`xcode-select --install`)
+- **Linux only:** `libsecret-1-dev` (Debian/Ubuntu: `sudo apt-get install libsecret-1-dev`), required to build the `keytar` native module used for secure credential storage
 
 ### Setup
 

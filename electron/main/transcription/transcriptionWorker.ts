@@ -91,6 +91,19 @@ let transcriberModelId: string | null = null;
 // unspecified.
 const MODEL_DTYPE = "q8";
 
+// onnxruntime-node — the native ONNX Runtime binding @huggingface/transformers uses for
+// on-device inference — only ships a darwin/arm64 build, not darwin/x64 (see its
+// bin/napi-v6/darwin/ directory: arm64 only). There's no in-process fallback for this:
+// the pure-WASM backend (onnxruntime-web) can't be substituted here because
+// @huggingface/transformers's web/WASM bundle hard-assumes "running under Node" means
+// "use the native onnxruntime-node binding" and stubs out its own ONNX runtime handle
+// otherwise — confirmed by tracing it directly, not documented behavior. Working around
+// that would mean forking and maintaining a patched copy of that bundle indefinitely, so
+// on an unsupported platform/arch this fails fast with a clear, specific message instead.
+function isUnsupportedOnnxRuntimePlatform(): boolean {
+  return process.platform === "darwin" && process.arch !== "arm64";
+}
+
 /** First call for a given model id downloads + caches it from Hugging Face; every call
  *  after that is instant. Re-resolves (and reloads) if the requested model id changes
  *  between calls — otherwise cached for this worker process's lifetime.
@@ -104,7 +117,14 @@ const MODEL_DTYPE = "q8";
 function getTranscriber(modelId: string, cacheDir: string): Promise<WhisperTranscriber> {
   if (!transcriberPromise || transcriberModelId !== modelId) {
     transcriberModelId = modelId;
-    transcriberPromise = import("@huggingface/transformers").then(async ({ pipeline, env }) => {
+    transcriberPromise = (async () => {
+      if (isUnsupportedOnnxRuntimePlatform()) {
+        throw new Error(
+          "On-device transcription requires an Apple Silicon Mac (M1 or later) — Intel Macs " +
+            "aren't supported. Use a cloud/BYOK transcription provider in Settings instead."
+        );
+      }
+      const { pipeline, env } = await import("@huggingface/transformers");
       env.cacheDir = cacheDir;
       try {
         const transcriber = await pipeline("automatic-speech-recognition", modelId, {
@@ -120,7 +140,7 @@ function getTranscriber(modelId: string, cacheDir: string): Promise<WhisperTrans
         });
         return transcriber as unknown as WhisperTranscriber;
       }
-    });
+    })();
   }
   return transcriberPromise;
 }

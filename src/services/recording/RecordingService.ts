@@ -86,6 +86,16 @@ class RecordingService {
   async start(targetId: string, overlay: OverlayConfig, mic: MicConfig): Promise<void> {
     this.overlay = overlay;
 
+    if (window.api.system.platform === "darwin") {
+      const permission = await window.api.capture.getPermissionStatus();
+      if (permission.screen !== "granted") {
+        await window.api.capture.openScreenRecordingSettings();
+        throw new Error(
+          "Screen Recording permission is required. Enable Doculigent under System Settings > Privacy & Security > Screen Recording, then restart the app."
+        );
+      }
+    }
+
     // Tried first and unconditionally: only Windows + a whole-display target support it,
     // and it silently reports unavailable everywhere else so this always falls through to
     // the ordinary pipeline below.

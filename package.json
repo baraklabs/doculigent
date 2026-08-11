@@ -4,6 +4,10 @@
   "private": true,
   "description": "Open-source, local-first screen recorder + AI video workspace.",
   "license": "AGPL-3.0-only",
+  "author": {
+    "name": "Baraklabs",
+    "email": "info@baraklabs.com"
+  },
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",

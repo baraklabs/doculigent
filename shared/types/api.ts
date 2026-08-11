@@ -30,6 +30,12 @@ export interface DoculigentApi {
   };
   capture: {
     listTargets(): Promise<CaptureTarget[]>;
+    // macOS-only: reflects TCC (Privacy & Security) access. Always "granted" on other platforms.
+    getPermissionStatus(): Promise<{
+      screen: "not-determined" | "granted" | "denied" | "restricted" | "unknown";
+      microphone: "not-determined" | "granted" | "denied" | "restricted" | "unknown";
+    }>;
+    openScreenRecordingSettings(): Promise<void>;
   };
   cursor: {
 

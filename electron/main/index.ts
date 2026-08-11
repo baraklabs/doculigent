@@ -10,6 +10,35 @@ import { initTranscriptionWorkerClient, terminateTranscriptionWorker } from "./t
 import { registerProtocolClient, handleOpenUrl, handleSecondInstanceArgv, handleInitialArgv } from "./auth/deepLink";
 import { startProjectManagerScheduler } from "./projectManagers/scheduler";
 
+function buildDarwinMenu(): Menu {
+  return Menu.buildFromTemplate([
+    {
+      label: "Doculigent",
+      submenu: [
+        { role: "about" },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" },
+      ],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "selectAll" },
+      ],
+    },
+  ]);
+}
+
 registerMediaScheme();
 
 initTranscriptionWorkerClient(__dirname);
@@ -32,7 +61,7 @@ if (!gotSingleInstanceLock) {
   };
 
   app.whenReady().then(() => {
-    Menu.setApplicationMenu(null);
+    Menu.setApplicationMenu(process.platform === "darwin" ? buildDarwinMenu() : null);
 
     registerProtocolClient();
 

@@ -150,7 +150,7 @@ export function AnnotationDrawPage() {
         if (tool !== "pointer") window.api.annotation.setTool("pointer").catch(() => { });
         return;
       }
-      if (!e.ctrlKey) return;
+      if (!e.ctrlKey && !e.metaKey) return;
       if (e.key === "z" || e.key === "Z") {
         e.preventDefault();
         doUndo();

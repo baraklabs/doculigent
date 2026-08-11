@@ -2,6 +2,8 @@
 export const Channels = {
   capture: {
     listTargets: "capture:listTargets",
+    getPermissionStatus: "capture:getPermissionStatus",
+    openScreenRecordingSettings: "capture:openScreenRecordingSettings",
   },
   cursor: {
     apply: "cursor:apply",
