@@ -14,7 +14,7 @@
     "build": "electron-vite build && electron-builder",
     "build:unpack": "electron-vite build && electron-builder --dir",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "postinstall": "electron-builder install-app-deps && node scripts/ensure-mac-koffi-arches.cjs"
+    "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1105.0",

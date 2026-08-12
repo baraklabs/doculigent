@@ -27,7 +27,11 @@
  * from the registry (SPI_SETCURSORS) — the standard way other apps undo SetSystemCursor.
  * No per-style undo state is needed since none of this touches the registry itself.
  */
-import koffi from "koffi";
+// Loaded lazily, only once bind()/bindGdiplus() has confirmed we're on win32 — koffi ships
+// a native addon per platform/arch, and this whole module is Windows-only, so importing it
+// unconditionally at the top level would make every platform pay to load (and bundle) a
+// native binary purely to satisfy a require() that's never actually used off Windows.
+import type { LibraryHandle } from "koffi";
 import type { CursorHighlightStyle } from "@shared/types/models";
 import { clearCursorOverride, getCursorOverride, setCursorOverride } from "./settingsStore";
 
@@ -54,8 +58,15 @@ const COLOR_HAND_ARGB = 0xff6d5efc;
 const OUTLINE_ARGB = 0xff1c1e2a;
 
 type Fn = (...args: unknown[]) => unknown;
+type KoffiModule = typeof import("koffi");
 
-let user32: ReturnType<typeof koffi.load> | null = null;
+let koffi: KoffiModule | null = null;
+function loadKoffi(): KoffiModule {
+  koffi ??= require("koffi") as KoffiModule;
+  return koffi;
+}
+
+let user32: LibraryHandle | null = null;
 let loadCursorW: Fn | null = null;
 let loadCursorFromFileW: Fn | null = null;
 let copyIcon: Fn | null = null;
@@ -66,7 +77,7 @@ function bind(): boolean {
   if (process.platform !== "win32") return false;
   if (user32) return true;
   try {
-    user32 = koffi.load("user32.dll");
+    user32 = loadKoffi().load("user32.dll");
     loadCursorW = user32.func("__stdcall", "LoadCursorW", "void *", ["void *", "uintptr_t"]) as Fn;
     loadCursorFromFileW = user32.func("__stdcall", "LoadCursorFromFileW", "void *", ["str16"]) as Fn;
     copyIcon = user32.func("__stdcall", "CopyIcon", "void *", ["void *"]) as Fn;
@@ -88,20 +99,12 @@ function bind(): boolean {
 // A separate, lazily-initialized binding set from user32's above — only loaded the first
 // time a colored style is actually used, since most sessions never touch it.
 
-const GdiplusStartupInputType = koffi.struct("GdiplusStartupInput", {
-  GdiplusVersion: "uint32",
-  DebugEventCallback: "void *",
-  SuppressBackgroundThread: "int32",
-  SuppressExternalCodecs: "int32",
-});
-const PointF = koffi.struct("PointF", { X: "float", Y: "float" });
-
 const PIXEL_FORMAT_32BPP_ARGB = 0x0026200a;
 const SMOOTHING_MODE_ANTIALIAS = 4;
 const UNIT_PIXEL = 2;
 const FILL_MODE_ALTERNATE = 0;
 
-let gdiplus: ReturnType<typeof koffi.load> | null = null;
+let gdiplus: LibraryHandle | null = null;
 let gdipCreateBitmapFromScan0: Fn | null = null;
 let gdipGetImageGraphicsContext: Fn | null = null;
 let gdipSetSmoothingMode: Fn | null = null;
@@ -120,7 +123,16 @@ let gdipDisposeImage: Fn | null = null;
 function bindGdiplus(): boolean {
   if (gdiplus) return true;
   try {
-    gdiplus = koffi.load("gdiplus.dll");
+    const k = loadKoffi();
+    const GdiplusStartupInputType = k.struct("GdiplusStartupInput", {
+      GdiplusVersion: "uint32",
+      DebugEventCallback: "void *",
+      SuppressBackgroundThread: "int32",
+      SuppressExternalCodecs: "int32",
+    });
+    const PointF = k.struct("PointF", { X: "float", Y: "float" });
+
+    gdiplus = k.load("gdiplus.dll");
     const startup = gdiplus.func("__stdcall", "GdiplusStartup", "int32", ["void *", "void *", "void *"]) as Fn;
     gdipCreateBitmapFromScan0 = gdiplus.func("__stdcall", "GdipCreateBitmapFromScan0", "int32", [
       "int32",
@@ -161,14 +173,14 @@ function bindGdiplus(): boolean {
     gdipFillPolygon = gdiplus.func("__stdcall", "GdipFillPolygon", "int32", [
       "void *",
       "void *",
-      koffi.pointer(PointF),
+      k.pointer(PointF),
       "int32",
       "int32",
     ]) as Fn;
     gdipDrawPolygon = gdiplus.func("__stdcall", "GdipDrawPolygon", "int32", [
       "void *",
       "void *",
-      koffi.pointer(PointF),
+      k.pointer(PointF),
       "int32",
     ]) as Fn;
     gdipCreateHICONFromBitmap = gdiplus.func("__stdcall", "GdipCreateHICONFromBitmap", "int32", [
@@ -187,7 +199,7 @@ function bindGdiplus(): boolean {
       SuppressExternalCodecs: 0,
     };
     const tokenBuf = Buffer.alloc(8);
-    const status = startup(tokenBuf, koffi.as([input], koffi.pointer(GdiplusStartupInputType)), null);
+    const status = startup(tokenBuf, k.as([input], k.pointer(GdiplusStartupInputType)), null);
     if (status !== 0) {
       gdiplus = null;
       return false;

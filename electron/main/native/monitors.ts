@@ -15,22 +15,21 @@
  * child process is not guaranteed to be, which is part of why this lives in the main
  * process rather than being computed once and handed to a worker.
  */
-import koffi from "koffi";
-
-const RECT = koffi.struct("RECT", { left: "int32", top: "int32", right: "int32", bottom: "int32" });
-const MONITORINFO = koffi.struct("MONITORINFO", {
-  cbSize: "uint32",
-  rcMonitor: RECT,
-  rcWork: RECT,
-  dwFlags: "uint32",
-});
+// Loaded lazily, only once bind() has confirmed we're on win32 — koffi ships a native
+// addon per platform/arch, and this whole module is Windows-only, so importing it
+// unconditionally at the top level would make every platform pay to load (and bundle) a
+// native binary purely to satisfy a require() that's never actually used off Windows.
+import type { TypeObject, LibraryHandle } from "koffi";
 
 const MONITORINFOF_PRIMARY = 0x1;
 
 type Fn = (...args: unknown[]) => unknown;
+type KoffiModule = typeof import("koffi");
 
-let user32: ReturnType<typeof koffi.load> | null = null;
-let monitorEnumProc: ReturnType<typeof koffi.proto> | null = null;
+let koffi: KoffiModule | null = null;
+let MONITORINFO: TypeObject | null = null;
+let user32: LibraryHandle | null = null;
+let monitorEnumProc: TypeObject | null = null;
 let enumDisplayMonitors: Fn | null = null;
 let getMonitorInfoW: Fn | null = null;
 
@@ -38,6 +37,14 @@ function bind(): boolean {
   if (process.platform !== "win32") return false;
   if (user32) return true;
   try {
+    koffi = require("koffi") as KoffiModule;
+    const RECT = koffi.struct("RECT", { left: "int32", top: "int32", right: "int32", bottom: "int32" });
+    MONITORINFO = koffi.struct("MONITORINFO", {
+      cbSize: "uint32",
+      rcMonitor: RECT,
+      rcWork: RECT,
+      dwFlags: "uint32",
+    });
     user32 = koffi.load("user32.dll");
     monitorEnumProc = koffi.proto("bool __stdcall MonitorEnumProc(void *, void *, void *, intptr_t)");
     enumDisplayMonitors = user32.func("__stdcall", "EnumDisplayMonitors", "bool", [
@@ -74,12 +81,15 @@ interface MonitorInfoOut {
 
 export function listPhysicalMonitors(): PhysicalMonitor[] {
   if (!bind() || !enumDisplayMonitors || !getMonitorInfoW || !monitorEnumProc) return [];
+  // bind() having returned true guarantees koffi/MONITORINFO are populated.
+  const k = koffi as KoffiModule;
+  const monitorInfo = MONITORINFO as TypeObject;
   const getInfo = getMonitorInfoW;
   const proto = monitorEnumProc;
 
   const results: PhysicalMonitor[] = [];
-  const callback = koffi.register((hMonitor: unknown) => {
-    const info: MonitorInfoOut = { cbSize: koffi.sizeof(MONITORINFO), rcMonitor: { left: 0, top: 0, right: 0, bottom: 0 }, dwFlags: 0 };
+  const callback = k.register((hMonitor: unknown) => {
+    const info: MonitorInfoOut = { cbSize: k.sizeof(monitorInfo), rcMonitor: { left: 0, top: 0, right: 0, bottom: 0 }, dwFlags: 0 };
     if (getInfo(hMonitor, info)) {
       const r = info.rcMonitor;
       results.push({
@@ -88,12 +98,12 @@ export function listPhysicalMonitors(): PhysicalMonitor[] {
       });
     }
     return true;
-  }, koffi.pointer(proto));
+  }, k.pointer(proto));
 
   try {
     enumDisplayMonitors(null, null, callback, 0);
   } finally {
-    koffi.unregister(callback);
+    k.unregister(callback);
   }
   return results;
 }
