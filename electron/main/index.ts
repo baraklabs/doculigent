@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Menu } from "electron";
+import path from "node:path";
 import { createMainWindow } from "./window";
 import { closeAnnotationOverlay, setMainWindowForAnnotation } from "./annotationWindow";
 import { registerIpcHandlers } from "./ipc";
@@ -61,6 +62,10 @@ if (!gotSingleInstanceLock) {
   };
 
   app.whenReady().then(() => {
+    if (process.platform === "darwin" && !app.isPackaged) {
+      app.dock?.setIcon(path.join(__dirname, "../../resources/icon.png"));
+    }
+
     Menu.setApplicationMenu(process.platform === "darwin" ? buildDarwinMenu() : null);
 
     registerProtocolClient();

@@ -85,7 +85,16 @@ export function RecordPage() {
   const { data: targets = [] } = useQuery<CaptureTarget[]>({
     queryKey: ["captureTargets"],
     queryFn: () => window.api.capture.listTargets(),
+    // Re-checked on focus: granting Screen Recording access happens in System Settings,
+    // outside the app, so this is the only signal we get that it's worth asking again.
+    refetchOnWindowFocus: true,
   });
+  const { data: screenPermission } = useQuery({
+    queryKey: ["screenPermission"],
+    queryFn: () => window.api.capture.getPermissionStatus(),
+    refetchOnWindowFocus: true,
+  });
+  const screenPermissionDenied = targets.length === 0 && screenPermission && screenPermission.screen !== "granted";
   const [targetId, setTargetId] = useState("");
 
   const [overlay, setOverlay] = useState<OverlayConfig>(DEFAULT_OVERLAY);
@@ -410,6 +419,15 @@ export function RecordPage() {
                 ))}
               </select>
             </label>
+            {screenPermissionDenied && (
+              <p className="error">
+                Screen Recording permission is required.{" "}
+                <button type="button" className="link-btn" onClick={() => window.api.capture.openScreenRecordingSettings()}>
+                  Open System Settings
+                </button>
+                , enable it there, then restart Doculigent.
+              </p>
+            )}
           </div>
 
           <fieldset className="record-block record-block-camera" disabled={recording || busy}>
