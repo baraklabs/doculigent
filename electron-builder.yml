@@ -27,14 +27,11 @@ nsis:
   allowToChangeInstallationDirectory: true
   license: resources/LICENSE-EULA.txt
 mac:
+  extendInfo:
+    NSCameraUsageDescription: Doculigent uses your camera for the optional camera bubble overlay while recording.
+    NSMicrophoneUsageDescription: Doculigent uses your microphone to record voice-over alongside your screen recording.
   target:
     - target: dmg
-      # electron-builder defaults to only the host runner's own arch when this is
-      # omitted — GitHub's macos-latest runners are Apple Silicon, so without this,
-      # CI would silently produce an arm64-only dmg with no Intel Mac build at all.
-      # Built as two separate per-arch dmgs (not a universal binary): keeps native
-      # module packaging (keytar, ffmpeg-static) simple, since both already ship
-      # separate x64/arm64 prebuilds and a universal merge adds its own failure modes.
       arch:
         - x64
         - arm64
