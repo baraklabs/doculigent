@@ -1,6 +1,6 @@
 import { BrowserWindow, shell } from "electron";
 import { Channels } from "@shared/constants/channels";
-import { AUTH_CONFIG } from "@shared/constants/authConfig";
+import { AUTH_CONFIG, AUTH_CONFIGURED } from "@shared/constants/authConfig";
 import type { AuthSession, AuthUser, LoginStatus } from "@shared/types/auth";
 import { generateCodeVerifier, deriveCodeChallenge, generateState } from "./pkce";
 import { LoopbackServer, type LoopbackResult } from "./loopbackServer";
@@ -52,6 +52,11 @@ export async function getSession(): Promise<AuthSession | null> {
 }
 
 export async function login(): Promise<AuthSession> {
+  if (!AUTH_CONFIGURED) {
+    throw new Error(
+      "Sign-in isn't available in this build — it's missing VITE_WEB_URL/VITE_SUPABASE_URL (set in env/.env.production before building)."
+    );
+  }
   if (pending) throw new Error("A login is already in progress");
 
   const verifier = generateCodeVerifier();

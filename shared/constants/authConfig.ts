@@ -1,5 +1,7 @@
-const baseUrl = import.meta.env.VITE_WEB_URL.replace(/\/+$/, "");
-const functionsBaseUrl = `${import.meta.env.VITE_SUPABASE_URL.replace(/\/+$/, "")}/functions/v1`;
+export const AUTH_CONFIGURED = Boolean(import.meta.env.VITE_WEB_URL && import.meta.env.VITE_SUPABASE_URL);
+
+const baseUrl = (import.meta.env.VITE_WEB_URL ?? "").replace(/\/+$/, "");
+const functionsBaseUrl = `${(import.meta.env.VITE_SUPABASE_URL ?? "").replace(/\/+$/, "")}/functions/v1`;
 
 export const FUNCTIONS_BASE_URL = functionsBaseUrl;
 
