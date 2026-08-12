@@ -25,7 +25,7 @@ nsis:
   # off for the accept/decline terms gate below to actually show up.
   oneClick: false
   allowToChangeInstallationDirectory: true
-  license: resources/LICENSE_EULA.txt
+  license: resources/LICENSE-EULA.txt
 mac:
   target:
     - target: dmg
