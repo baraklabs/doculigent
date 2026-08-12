@@ -41,22 +41,6 @@ jobs:
           echo "VITE_WEB_URL=${{ secrets.VITE_WEB_URL }}" >> env/.env.production
 
       - name: Build and publish
-        if: matrix.os != 'macos-latest'
         run: npm run build -- --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # macOS x64 and arm64 are built as separate electron-builder invocations.
-      # Building both archs in one run leaves native modules (e.g. keytar) rebuilt
-      # for only one arch, crashing the other at launch with an architecture mismatch.
-      - name: Build and publish (mac x64)
-        if: matrix.os == 'macos-latest'
-        run: npm run build -- --publish always --x64
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and publish (mac arm64)
-        if: matrix.os == 'macos-latest'
-        run: npm run build -- --publish always --arm64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

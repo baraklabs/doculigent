@@ -34,8 +34,7 @@ mac:
   target:
     - target: dmg
       arch:
-        - x64
-        - arm64
+        - universal
   icon: resources/icon.icns
   category: public.app-category.video
 linux:
