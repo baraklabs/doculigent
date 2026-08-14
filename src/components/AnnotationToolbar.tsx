@@ -1,6 +1,6 @@
 
 import { useEffect, useState, type ReactNode } from "react";
-import { Pencil, ArrowRight, Circle, Square, Undo2, Redo2, Trash2 } from "lucide-react";
+import { Pencil, ArrowRight, Circle, Square, Undo2, Redo2, Eraser } from "lucide-react";
 import {
   ANNOTATION_COLORS,
   ANNOTATION_FADE_OPTIONS,
@@ -22,8 +22,6 @@ function NoToolIcon() {
   );
 }
 
-/** A plain diagonal stroke — the arrow tool's shaft with no head, so it reads as "arrow
- *  minus the point" rather than an unrelated new shape. */
 function LineIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
@@ -127,7 +125,6 @@ export function AnnotationToolbar() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [tool, overlayOpen]);
 
-  // No heading of its own — the Record page's "Draw on screen" block already titles it.
   return (
     <div className="annotation-toolbar">
         <div className="annotation-toolbar-group">
@@ -227,7 +224,7 @@ export function AnnotationToolbar() {
             disabled={!overlayOpen}
             onClick={() => window.api.annotation.clear().catch(() => {})}
           >
-            <Trash2 size={14} />
+            <Eraser size={14} />
           </button>
         </div>
     </div>

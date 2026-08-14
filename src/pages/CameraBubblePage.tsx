@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Circle, RectangleHorizontal, RectangleVertical, Square, Squircle, X, ZoomIn, ZoomOut } from "lucide-react";
 import type { CameraBubbleConfig, CameraBubbleShape } from "@shared/types/models";
+import { applyCameraBlur, type CameraBlurHandle } from "../services/camera/cameraBlur";
 import "./CameraBubblePage.css";
 
 const MIN_SIZE = 80;
@@ -129,6 +130,7 @@ export function CameraBubblePage() {
   useEffect(() => {
     if (!config) return;
     let stream: MediaStream | null = null;
+    let blurHandle: CameraBlurHandle | null = null;
     let cancelled = false;
     navigator.mediaDevices
       .getUserMedia({ video: config.cameraDeviceId ? { deviceId: { exact: config.cameraDeviceId } } : true })
@@ -138,15 +140,23 @@ export function CameraBubblePage() {
           return;
         }
         stream = s;
-        if (videoRef.current) videoRef.current.srcObject = s;
+        if (videoRef.current) {
+          if (config.blur === "none") {
+            videoRef.current.srcObject = s;
+          } else {
+            blurHandle = applyCameraBlur(s, config.blur);
+            videoRef.current.srcObject = blurHandle.stream;
+          }
+        }
         setCamError(null);
       })
       .catch((e) => setCamError(String(e)));
     return () => {
       cancelled = true;
+      blurHandle?.stop();
       stream?.getTracks().forEach((t) => t.stop());
     };
-  }, [config?.cameraDeviceId]);
+  }, [config?.cameraDeviceId, config?.blur]);
 
   useEffect(() => {
     if (!config || !boundsLoaded) return;

@@ -1,7 +1,13 @@
 import { ipcMain } from "electron";
 import { Channels } from "@shared/constants/channels";
 import type { AreaRect } from "@shared/types/models";
-import { startScreenCapture, stopScreenCapture } from "../native/screenCapture";
+import {
+  discardScreenCapture,
+  pauseScreenCapture,
+  resumeScreenCapture,
+  startScreenCapture,
+  stopScreenCapture,
+} from "../native/screenCapture";
 
 export function registerScreenCaptureIpc(): void {
   ipcMain.handle(
@@ -19,4 +25,8 @@ export function registerScreenCaptureIpc(): void {
       return filePath ? { available: true, filePath } : { available: false };
     }
   );
+
+  ipcMain.handle(Channels.screenCapture.pause, async (): Promise<boolean> => pauseScreenCapture());
+  ipcMain.handle(Channels.screenCapture.resume, async (): Promise<boolean> => resumeScreenCapture());
+  ipcMain.handle(Channels.screenCapture.discard, async (): Promise<void> => discardScreenCapture());
 }

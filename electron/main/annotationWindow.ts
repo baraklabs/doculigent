@@ -4,11 +4,20 @@ import path from "node:path";
 import type { AnnotationState, AnnotationTool } from "@shared/types/annotation";
 
 const drawWindows = new Map<number, BrowserWindow>();
-
-let mainWindowRef: BrowserWindow | null = null;
+const controlWindows = new Set<BrowserWindow>();
 
 export function setMainWindowForAnnotation(win: BrowserWindow): void {
-  mainWindowRef = win;
+  controlWindows.add(win);
+  win.on("closed", () => controlWindows.delete(win));
+}
+
+export function registerAnnotationControlWindow(win: BrowserWindow): void {
+  controlWindows.add(win);
+  win.on("closed", () => controlWindows.delete(win));
+}
+
+export function unregisterAnnotationControlWindow(win: BrowserWindow): void {
+  controlWindows.delete(win);
 }
 
 function loadRoute(win: BrowserWindow, hash: string): void {
@@ -41,11 +50,8 @@ function createDrawWindow(display: Display): BrowserWindow {
   
   win.setBounds(display.bounds);
   win.setAlwaysOnTop(true, "screen-saver");
-  // Starts click-through (tool defaults to "pointer") so opening the overlay doesn't
-  // immediately block interaction with whatever's on screen.
   win.setIgnoreMouseEvents(true, { forward: true });
   loadRoute(win, "/annotate/draw");
-  // showInactive, not show — never steals OS focus from whatever the user's presenting.
   win.once("ready-to-show", () => {
     win.setBounds(display.bounds);
     win.showInactive();
@@ -56,8 +62,6 @@ function createDrawWindow(display: Display): BrowserWindow {
   return win;
 }
 
-/** Sends to every window except the draw overlay windows — in practice just the main app
- *  window, but written generically rather than tracking a specific window reference. */
 function broadcastToOtherWindows(channel: string, payload: unknown): void {
   const overlayWindows = new Set<BrowserWindow>(drawWindows.values());
   for (const win of BrowserWindow.getAllWindows()) {
@@ -69,15 +73,10 @@ export function isAnnotationOverlayOpen(): boolean {
   return drawWindows.size > 0;
 }
 
-/** BrowserWindow ids of the currently open draw windows — used by ipc/annotation.ts to
- *  prune per-window undo/redo state for windows that have since closed. */
 export function getDrawWindowIds(): number[] {
   return [...drawWindows.values()].map((win) => win.id);
 }
 
-/** Creates one overlay window per currently connected display if none exist yet, or just
- *  re-shows them if they do (idempotent — safe to call from a toggle button that doesn't
- *  track open state). */
 export function openAnnotationOverlay(): void {
   if (drawWindows.size > 0) {
     for (const win of drawWindows.values()) win.showInactive();
@@ -92,8 +91,6 @@ export function openAnnotationOverlay(): void {
   broadcastToOtherWindows("annotation:overlayOpenChanged", true);
 }
 
-/** Destroys every overlay window — any unsaved strokes are discarded (this is a live
- *  annotation tool, not a persisted-document editor). */
 export function closeAnnotationOverlay(): void {
   const wasOpen = drawWindows.size > 0;
   for (const win of drawWindows.values()) win.close();
@@ -130,14 +127,17 @@ export function setStrokeActive(active: boolean): void {
 
 function pollCursorAgainstMainWindow(): void {
   if (strokeActive) return;
-  if (!mainWindowRef || mainWindowRef.isDestroyed()) {
-    applyClickThroughIfChanged(false);
-    return;
-  }
   const cursor = screen.getCursorScreenPoint();
-  const b = mainWindowRef.getBounds();
-  const overMainWindow = cursor.x >= b.x && cursor.x < b.x + b.width && cursor.y >= b.y && cursor.y < b.y + b.height;
-  applyClickThroughIfChanged(overMainWindow);
+  let overControlWindow = false;
+  for (const win of controlWindows) {
+    if (win.isDestroyed() || !win.isVisible()) continue;
+    const b = win.getBounds();
+    if (cursor.x >= b.x && cursor.x < b.x + b.width && cursor.y >= b.y && cursor.y < b.y + b.height) {
+      overControlWindow = true;
+      break;
+    }
+  }
+  applyClickThroughIfChanged(overControlWindow);
 }
 
 
@@ -153,8 +153,6 @@ export function updateClickThroughForTool(tool: AnnotationTool): void {
   }
 }
 
-/** Every draw window (needs it to know how/what to draw) and the main window's embedded
- *  toolbar (needs it to reflect the current selection) get this. */
 export function broadcastAnnotationState(state: AnnotationState): void {
   for (const win of BrowserWindow.getAllWindows()) win.webContents.send("annotation:stateChanged", state);
 }
@@ -163,8 +161,6 @@ export function sendAnnotationCommand(type: "undo" | "redo" | "clear"): void {
   for (const win of drawWindows.values()) win.webContents.send("annotation:command", type);
 }
 
-/** Only the main window's embedded toolbar needs this, to enable/disable its undo/redo
- *  buttons — each draw window already knows its own history. */
 export function sendAnnotationHistoryState(canUndo: boolean, canRedo: boolean): void {
   broadcastToOtherWindows("annotation:historyStateChanged", { canUndo, canRedo });
 }

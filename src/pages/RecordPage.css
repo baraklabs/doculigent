@@ -95,8 +95,11 @@
 
 .record-block-source { --block-accent: #5b4bf5; --block-tint: rgba(91, 75, 245, .09); }
 .record-block-camera { --block-accent: #0284c7; --block-tint: rgba(14, 165, 233, .11); }
+.record-block-camera .record-block-head { margin-bottom: 0; }
 .record-block-audio  { --block-accent: #15803d; --block-tint: rgba(22, 163, 74, .11); }
 .record-block-system-audio { --block-accent: #0891b2; --block-tint: rgba(8, 145, 178, .11); }
+.record-block-audio .record-block-head,
+.record-block-system-audio .record-block-head { margin-bottom: 0; }
 
 .record-audio-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: stretch; }
 .record-audio-row .record-block { min-width: 0; }
@@ -214,6 +217,38 @@
 .record-cta-square { width: 10px; height: 10px; border-radius: 2px; background: currentColor; }
 .record-elapsed { font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600; }
 
+.record-countdown-stepper {
+  display: flex; align-items: center; gap: 8px; flex: none;
+  padding: 6px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel);
+}
+.record-countdown-step-btn {
+  width: 22px; height: 22px; padding: 0; border-radius: 50%; border: 1px solid var(--border);
+  background: transparent; color: var(--text); font-size: 14px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.record-countdown-step-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.record-countdown-step-value {
+  min-width: 26px; text-align: center; font-variant-numeric: tabular-nums;
+  font-size: 13px; font-weight: 600; color: var(--muted);
+}
+
+.record-countdown-overlay {
+  position: absolute; inset: 0; z-index: 5; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  background: rgba(13, 15, 22, .55); backdrop-filter: blur(2px);
+  animation: record-fade-down 200ms ease;
+}
+.record-countdown-number {
+  font-size: 64px; font-weight: 700; color: #fff; line-height: 1;
+  animation: record-countdown-pop 1s ease;
+}
+.record-countdown-hint { font-size: 12px; color: rgba(255, 255, 255, .7); }
+@keyframes record-countdown-pop {
+  0% { transform: scale(1.35); opacity: 0; }
+  30% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
 
 .overlay-cfg {
   border: none; background: transparent; padding: 0;
@@ -255,6 +290,15 @@
 .record-block-head > .camera-header-toggles { flex: none; min-width: 0; }
 .camera-header-toggles { display: flex; align-items: center; gap: 12px; margin-left: auto; }
 .camera-header-toggles .header-toggle { margin-left: 0; }
+
+.header-icon-toggle {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: auto; height: auto; padding: 5px; border-radius: 7px;
+  border: none; cursor: default;
+  transition: filter 150ms ease;
+}
+.header-icon-toggle:hover:not(:disabled) { filter: brightness(0.92); }
+.header-icon-toggle:disabled { opacity: .4; cursor: not-allowed; }
 
 
 

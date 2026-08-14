@@ -14,6 +14,9 @@ export const Channels = {
   screenCapture: {
     start: "screenCapture:start",
     stop: "screenCapture:stop",
+    pause: "screenCapture:pause",
+    resume: "screenCapture:resume",
+    discard: "screenCapture:discard",
   },
   cameraBubble: {
     open: "cameraBubble:open",
@@ -27,6 +30,22 @@ export const Channels = {
     configChanged: "cameraBubble:configChanged",
     closedByUser: "cameraBubble:closedByUser",
     hoverChanged: "cameraBubble:hoverChanged",
+  },
+  recordingDock: {
+    open: "recordingDock:open",
+    close: "recordingDock:close",
+    setOrientation: "recordingDock:setOrientation",
+    getBounds: "recordingDock:getBounds",
+    setBounds: "recordingDock:setBounds",
+    sendAction: "recordingDock:sendAction",
+    syncTimer: "recordingDock:syncTimer",
+    showMainWindow: "recordingDock:showMainWindow",
+    hideMainWindow: "recordingDock:hideMainWindow",
+    isMainWindowVisible: "recordingDock:isMainWindowVisible",
+    configChanged: "recordingDock:configChanged",
+    action: "recordingDock:action",
+    timerSync: "recordingDock:timerSync",
+    mainWindowVisibilityChanged: "recordingDock:mainWindowVisibilityChanged",
   },
   areaSelect: {
     open: "areaSelect:open",

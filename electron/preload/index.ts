@@ -3,7 +3,14 @@ import { Channels } from "@shared/constants/channels";
 import type { DoculigentApi } from "@shared/types/api";
 import type { AuthSession, LoginStatus } from "@shared/types/auth";
 import type { AnnotationCommand, AnnotationState } from "@shared/types/annotation";
-import type { AreaSelectResult, CameraBubbleConfig, Video } from "@shared/types/models";
+import type {
+  AreaSelectResult,
+  CameraBubbleConfig,
+  RecordingDockAction,
+  RecordingDockConfig,
+  RecordingDockTimerSync,
+  Video,
+} from "@shared/types/models";
 import type { TeamFileStatus } from "@shared/types/team";
 import type { StoragePreference } from "@shared/types/storage";
 
@@ -27,6 +34,9 @@ const api: DoculigentApi = {
   screenCapture: {
     start: (targetId, hideCursor, area) => ipcRenderer.invoke(Channels.screenCapture.start, targetId, hideCursor, area),
     stop: () => ipcRenderer.invoke(Channels.screenCapture.stop),
+    pause: () => ipcRenderer.invoke(Channels.screenCapture.pause),
+    resume: () => ipcRenderer.invoke(Channels.screenCapture.resume),
+    discard: () => ipcRenderer.invoke(Channels.screenCapture.discard),
   },
   cameraBubble: {
     open: (config) => ipcRenderer.invoke(Channels.cameraBubble.open, config),
@@ -51,6 +61,38 @@ const api: DoculigentApi = {
       const listener = (_event: unknown, hovering: boolean) => callback(hovering);
       ipcRenderer.on(Channels.cameraBubble.hoverChanged, listener);
       return () => ipcRenderer.removeListener(Channels.cameraBubble.hoverChanged, listener);
+    },
+  },
+  recordingDock: {
+    open: () => ipcRenderer.invoke(Channels.recordingDock.open),
+    close: () => ipcRenderer.invoke(Channels.recordingDock.close),
+    setOrientation: (orientation) => ipcRenderer.invoke(Channels.recordingDock.setOrientation, orientation),
+    getBounds: () => ipcRenderer.invoke(Channels.recordingDock.getBounds),
+    setBounds: (bounds) => ipcRenderer.invoke(Channels.recordingDock.setBounds, bounds),
+    sendAction: (action) => ipcRenderer.invoke(Channels.recordingDock.sendAction, action),
+    syncTimer: (sync) => ipcRenderer.invoke(Channels.recordingDock.syncTimer, sync),
+    showMainWindow: () => ipcRenderer.invoke(Channels.recordingDock.showMainWindow),
+    hideMainWindow: () => ipcRenderer.invoke(Channels.recordingDock.hideMainWindow),
+    isMainWindowVisible: () => ipcRenderer.invoke(Channels.recordingDock.isMainWindowVisible),
+    onConfigChanged: (callback) => {
+      const listener = (_event: unknown, config: RecordingDockConfig) => callback(config);
+      ipcRenderer.on(Channels.recordingDock.configChanged, listener);
+      return () => ipcRenderer.removeListener(Channels.recordingDock.configChanged, listener);
+    },
+    onAction: (callback) => {
+      const listener = (_event: unknown, action: RecordingDockAction) => callback(action);
+      ipcRenderer.on(Channels.recordingDock.action, listener);
+      return () => ipcRenderer.removeListener(Channels.recordingDock.action, listener);
+    },
+    onTimerSync: (callback) => {
+      const listener = (_event: unknown, sync: RecordingDockTimerSync) => callback(sync);
+      ipcRenderer.on(Channels.recordingDock.timerSync, listener);
+      return () => ipcRenderer.removeListener(Channels.recordingDock.timerSync, listener);
+    },
+    onMainWindowVisibilityChanged: (callback) => {
+      const listener = (_event: unknown, visible: boolean) => callback(visible);
+      ipcRenderer.on(Channels.recordingDock.mainWindowVisibilityChanged, listener);
+      return () => ipcRenderer.removeListener(Channels.recordingDock.mainWindowVisibilityChanged, listener);
     },
   },
   areaSelect: {

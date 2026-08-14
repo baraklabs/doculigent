@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import logo from "../../assets/logo.png";
 import { planLabel } from "@shared/constants/plans";
 import { useAuthStore } from "../../store/authStore";
-import { useSavingRecording, watchRecordingSaves } from "../../store/recordingStore";
+import { useRecordingStore, useSavingRecording, watchRecordingSaves } from "../../store/recordingStore";
 import { useMeetingRecordingStore } from "../../store/meetingRecordingStore";
 import { RecordingSaveToast } from "../../components/RecordingSaveToast";
 import { ToastStack } from "../../components/ToastStack";
@@ -17,6 +17,7 @@ const DOCS_URL = "https://doculigent.com";
 
 const SAVING_HINT = "Saving your recording — you can switch tabs once it's done";
 const MEETING_RECORDING_HINT = "Meeting is recording — stop it before switching tabs";
+const RECORDING_HINT = "Recording — use the floating dock to pause, restart, or stop";
 
 function WindowGlyph({ d }: { d: string }) {
   return (
@@ -53,8 +54,15 @@ export function Layout() {
   }, [initAuth]);
   const savingRecording = useSavingRecording();
   const meetingRecording = useMeetingRecordingStore((s) => s.recording);
-  const navLocked = savingRecording || meetingRecording;
-  const navLockHint = savingRecording ? SAVING_HINT : meetingRecording ? MEETING_RECORDING_HINT : undefined;
+  const recording = useRecordingStore((s) => s.recording);
+  const navLocked = savingRecording || meetingRecording || recording;
+  const navLockHint = savingRecording
+    ? SAVING_HINT
+    : meetingRecording
+      ? MEETING_RECORDING_HINT
+      : recording
+        ? RECORDING_HINT
+        : undefined;
   useEffect(() => {
     watchRecordingSaves();
   }, []);

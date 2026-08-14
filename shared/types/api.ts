@@ -14,6 +14,11 @@ import type {
   LlmProviderKind,
   MicConfig,
   OverlayConfig,
+  RecordingDockAction,
+  RecordingDockBounds,
+  RecordingDockConfig,
+  RecordingDockOrientation,
+  RecordingDockTimerSync,
   SystemAudioConfig,
   Summary,
   Transcript,
@@ -54,11 +59,14 @@ export interface DoculigentApi {
   screenCapture: {
     start(targetId: string, hideCursor: boolean, area?: AreaRect): Promise<{ available: boolean }>;
     stop(): Promise<{ available: boolean; filePath?: string }>;
+    pause(): Promise<boolean>;
+    resume(): Promise<boolean>;
+    discard(): Promise<void>;
   };
   cameraBubble: {
-    open(config: Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId">): Promise<void>;
+    open(config: Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId" | "blur">): Promise<void>;
     close(): Promise<void>;
-    updateConfig(config: Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId">): Promise<void>;
+    updateConfig(config: Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId" | "blur">): Promise<void>;
     setShape(shape: Pick<CameraBubbleConfig, "shape" | "roundedCorners" | "freeformResize">): Promise<void>;
     setShapeRegion(rects: CameraBubbleBounds[]): Promise<void>;
     isOpen(): Promise<boolean>;
@@ -67,6 +75,25 @@ export interface DoculigentApi {
     onConfigChanged(callback: (config: CameraBubbleConfig) => void): () => void;
     onClosedByUser(callback: () => void): () => void;
     onHoverChanged(callback: (hovering: boolean) => void): () => void;
+  };
+  recordingDock: {
+    open(): Promise<void>;
+    close(): Promise<void>;
+    setOrientation(orientation: RecordingDockOrientation): Promise<void>;
+    getBounds(): Promise<RecordingDockBounds | null>;
+    setBounds(bounds: RecordingDockBounds): Promise<void>;
+    /** Dock -> app window: a button was clicked on the dock. */
+    sendAction(action: RecordingDockAction): Promise<void>;
+    /** App window -> dock: current elapsed/paused state, sent on start and on every
+     *  pause/resume transition (not once a second — the dock ticks its own local timer). */
+    syncTimer(sync: RecordingDockTimerSync): Promise<void>;
+    showMainWindow(): Promise<void>;
+    hideMainWindow(): Promise<void>;
+    isMainWindowVisible(): Promise<boolean>;
+    onConfigChanged(callback: (config: RecordingDockConfig) => void): () => void;
+    onAction(callback: (action: RecordingDockAction) => void): () => void;
+    onTimerSync(callback: (sync: RecordingDockTimerSync) => void): () => void;
+    onMainWindowVisibilityChanged(callback: (visible: boolean) => void): () => void;
   };
   areaSelect: {
     open(): Promise<void>;

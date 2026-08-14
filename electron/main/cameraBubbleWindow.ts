@@ -21,10 +21,11 @@ const DEFAULT_CONFIG: CameraBubbleConfig = {
   freeformResize: false,
   mirror: true,
   cameraDeviceId: null,
+  blur: "none",
 };
 
 const persisted = getCameraBubbleState();
-let lastConfig: CameraBubbleConfig = persisted.config ?? DEFAULT_CONFIG;
+let lastConfig: CameraBubbleConfig = persisted.config ? { ...DEFAULT_CONFIG, ...persisted.config } : DEFAULT_CONFIG;
 let lastBounds: CameraBubbleBounds | null = persisted.bounds;
 
 function persist(): void {
@@ -89,7 +90,7 @@ export function getCameraBubbleBounds(): CameraBubbleBounds | null {
 }
 
 
-export function openCameraBubbleWindow(partial: Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId">): void {
+export function openCameraBubbleWindow(partial: Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId" | "blur">): void {
   lastConfig = { ...lastConfig, ...partial };
   persist();
 
@@ -147,7 +148,7 @@ export function closeCameraBubbleWindow(): void {
 }
 
 
-export function updateCameraBubbleConfig(partial: Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId">): void {
+export function updateCameraBubbleConfig(partial: Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId" | "blur">): void {
   lastConfig = { ...lastConfig, ...partial };
   persist();
   if (!win || win.isDestroyed()) return;

@@ -1,0 +1,118 @@
+html, body, #root { background: transparent; }
+
+.recording-dock-root {
+  position: fixed;
+  inset: 0;
+  overflow: visible;
+  user-select: none;
+  display: flex;
+}
+.recording-dock-root[data-orientation="horizontal"] { align-items: flex-end; justify-content: center; }
+.recording-dock-root[data-orientation="vertical"] { align-items: center; justify-content: flex-end; }
+
+.recording-dock-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px;
+  background: rgba(20, 21, 28, .92);
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 16px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .45);
+}
+.recording-dock-root[data-orientation="vertical"] .recording-dock-bar { flex-direction: column; }
+
+.recording-dock-grip {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 18px; height: 30px; color: rgba(255, 255, 255, .4);
+  cursor: grab; touch-action: none;
+}
+.recording-dock-grip:hover { color: rgba(255, 255, 255, .7); }
+.recording-dock-grip:active { cursor: grabbing; }
+.recording-dock-root[data-orientation="vertical"] .recording-dock-grip { width: 30px; height: 18px; }
+
+.recording-dock-timer {
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 6px; color: #fff; font-variant-numeric: tabular-nums;
+  font-size: 13px; font-weight: 600; white-space: nowrap;
+}
+.recording-dock-timer-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: #e0574a;
+  animation: recording-dock-pulse 1.4s ease-in-out infinite;
+}
+.recording-dock-timer-dot.paused { animation: none; background: #d8ab3a; }
+@keyframes recording-dock-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+
+.recording-dock-btn {
+  -webkit-app-region: no-drag; position: relative;
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; padding: 0; border-radius: 9px; border: none;
+  background: transparent; color: rgba(255, 255, 255, .8); cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+.recording-dock-btn:hover { color: #fff; background: rgba(255, 255, 255, .12); }
+.recording-dock-btn.active, .recording-dock-btn.open { color: #fff; background: rgba(91, 75, 245, .55); }
+.recording-dock-btn-stop { color: #f2a19b; }
+.recording-dock-btn-stop:hover { color: #fff; background: #b3261e; }
+.recording-dock-btn-danger { color: rgba(255, 255, 255, .5); }
+.recording-dock-btn-danger:hover { color: #fff; background: #b3261e; }
+
+.recording-dock-divider {
+  width: 1px; align-self: stretch; margin: 4px 2px; background: rgba(255, 255, 255, .14); flex: none;
+}
+.recording-dock-root[data-orientation="vertical"] .recording-dock-divider { width: auto; height: 1px; align-self: stretch; margin: 2px 4px; }
+
+.recording-dock-color-swatch, .recording-dock-width-dot {
+  border-radius: 50%; background: currentColor; display: block;
+}
+.recording-dock-color-swatch { width: 14px; height: 14px; border: 1px solid rgba(255, 255, 255, .4); }
+.recording-dock-width-dot { background: #fff; }
+
+.recording-dock-popover-anchor { position: relative; -webkit-app-region: no-drag; }
+
+.recording-dock-popover {
+  -webkit-app-region: no-drag;
+  position: absolute; z-index: 10;
+  display: flex; flex-wrap: wrap; align-content: flex-start; gap: 6px;
+  width: 148px; padding: 8px;
+  background: rgba(28, 29, 38, .97); border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 12px; box-shadow: 0 8px 22px rgba(0, 0, 0, .5);
+}
+.recording-dock-root[data-orientation="horizontal"] .recording-dock-popover {
+  bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+}
+.recording-dock-root[data-orientation="vertical"] .recording-dock-popover {
+  right: calc(100% + 8px); top: 50%; transform: translateY(-50%);
+}
+
+.recording-dock-popover-btn {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; padding: 0; border-radius: 8px; border: none;
+  background: rgba(255, 255, 255, .06); color: rgba(255, 255, 255, .8);
+}
+.recording-dock-popover-btn:hover { color: #fff; background: rgba(255, 255, 255, .16); }
+.recording-dock-popover-btn.active { color: #fff; background: #5b4bf5; }
+
+.recording-dock-swatch-btn {
+  width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 2px solid transparent;
+}
+.recording-dock-swatch-btn.active { border-color: #fff; }
+
+/* Same CSS-only tooltip technique as camera-bubble-toolbar-btn — no JS, just attr(). */
+[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 8px;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, .9);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  border-radius: 5px;
+  pointer-events: none;
+  z-index: 20;
+}

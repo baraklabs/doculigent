@@ -36,6 +36,8 @@ export interface CursorMetadata {
   points: CursorTrackPoint[];
 }
 
+export type CameraBlurLevel = "none" | "soft" | "aggressive";
+
 export interface OverlayConfig {
   corner: "top-left" | "top-right" | "bottom-left" | "bottom-right";
   sizePct: number;
@@ -44,6 +46,7 @@ export interface OverlayConfig {
   cameraDeviceId: string | null;
   cursorHighlight: CursorHighlightStyle;
   mirrorCamera: boolean;
+  cameraBlur: CameraBlurLevel;
 }
 
 export type CameraBubbleShape = "round" | "square" | "rectangle" | "rectangle-vertical";
@@ -54,6 +57,7 @@ export interface CameraBubbleConfig {
   freeformResize: boolean;
   mirror: boolean;
   cameraDeviceId: string | null;
+  blur: CameraBlurLevel;
 }
 
 export interface CameraBubbleBounds {
@@ -61,6 +65,26 @@ export interface CameraBubbleBounds {
   y: number;
   width: number;
   height: number;
+}
+
+export type RecordingDockOrientation = "horizontal" | "vertical";
+
+export interface RecordingDockConfig {
+  orientation: RecordingDockOrientation;
+}
+
+export interface RecordingDockBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export type RecordingDockAction = "pause" | "resume" | "restart" | "stop" | "discard";
+
+export interface RecordingDockTimerSync {
+  elapsedMs: number;
+  paused: boolean;
 }
 
 export interface MicConfig {

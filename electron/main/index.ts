@@ -3,6 +3,7 @@ import path from "node:path";
 import { createMainWindow } from "./window";
 import { closeAnnotationOverlay, setMainWindowForAnnotation } from "./annotationWindow";
 import { closeCameraBubbleWindow } from "./cameraBubbleWindow";
+import { closeRecordingDockWindow, setMainWindowForRecordingDock } from "./recordingDockWindow";
 import { closeAreaSelectOverlay } from "./areaSelectWindow";
 import { registerIpcHandlers } from "./ipc";
 import { registerMediaScheme, registerMediaHandler } from "./mediaProtocol";
@@ -60,9 +61,11 @@ if (!gotSingleInstanceLock) {
   const openMainWindow = (): void => {
     const win = createMainWindow();
     setMainWindowForAnnotation(win);
+    setMainWindowForRecordingDock(win);
     win.on("closed", () => {
       closeAnnotationOverlay();
       closeCameraBubbleWindow();
+      closeRecordingDockWindow();
       closeAreaSelectOverlay();
     });
   };
@@ -98,6 +101,7 @@ if (!gotSingleInstanceLock) {
     restoreCursor();
     closeAnnotationOverlay();
     closeCameraBubbleWindow();
+    closeRecordingDockWindow();
     closeAreaSelectOverlay();
     killPendingFfmpegJobs();
     killPendingScreenCapture();

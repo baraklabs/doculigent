@@ -60,6 +60,7 @@ const AUDIO_OVERLAY: OverlayConfig = {
   cameraDeviceId: null,
   cursorHighlight: "default",
   mirrorCamera: false,
+  cameraBlur: "none",
 };
 
 function recordingDir(saveDir: string, id: string): string {
@@ -166,8 +167,6 @@ export function registerRecordingIpc(): void {
     const recDir = recordingDir(saveDir, id);
     await fs.mkdir(recDir, { recursive: true });
     const finalMp4 = path.join(recDir, "recording.mp4");
-    // Written up front, next to the media rather than inside the app's own data dir, so
-    // the cursor track travels with the recording the same way transcript.srt does.
     await writeCursorMetadata(id, recDir);
     void finishRecordingSave(id, finalMp4, input, event.sender);
 

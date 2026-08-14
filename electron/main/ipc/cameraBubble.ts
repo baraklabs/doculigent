@@ -12,7 +12,7 @@ import {
   updateCameraBubbleConfig,
 } from "../cameraBubbleWindow";
 
-type RecordPageConfig = Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId">;
+type RecordPageConfig = Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId" | "blur">;
 type BubbleShapeConfig = Pick<CameraBubbleConfig, "shape" | "roundedCorners" | "freeformResize">;
 
 export function registerCameraBubbleIpc(): void {

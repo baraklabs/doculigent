@@ -11,6 +11,8 @@ import type {
   LlmModelProfile,
   MicConfig,
   OverlayConfig,
+  RecordingDockBounds,
+  RecordingDockConfig,
   SystemAudioConfig,
 } from "@shared/types/models";
 import type { ProjectManager } from "@shared/types/projectManager";
@@ -46,6 +48,8 @@ interface StoredSettings {
   storagePreference?: StoragePreference;
   cameraBubbleConfig?: CameraBubbleConfig;
   cameraBubbleBounds?: CameraBubbleBounds;
+  recordingDockConfig?: RecordingDockConfig;
+  recordingDockBounds?: RecordingDockBounds;
 }
 
 const DEFAULT_STORAGE_PREFERENCE: StoragePreference = { provider: "doculigent" };
@@ -257,6 +261,18 @@ export function getCameraBubbleState(): { config: CameraBubbleConfig | null; bou
 
 export function setCameraBubbleState(config: CameraBubbleConfig, bounds: CameraBubbleBounds | null): void {
   writeStored({ ...readStored(), cameraBubbleConfig: config, cameraBubbleBounds: bounds ?? undefined });
+}
+
+export function getRecordingDockState(): { config: RecordingDockConfig | null; bounds: RecordingDockBounds | null } {
+  const stored = readStored();
+  return {
+    config: stored.recordingDockConfig ?? null,
+    bounds: stored.recordingDockBounds ?? null,
+  };
+}
+
+export function setRecordingDockState(config: RecordingDockConfig, bounds: RecordingDockBounds | null): void {
+  writeStored({ ...readStored(), recordingDockConfig: config, recordingDockBounds: bounds ?? undefined });
 }
 
 export function getWhisperModel(): WhisperModelSize | null {

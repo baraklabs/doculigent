@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import type {
   AreaRect,
+  CameraBlurLevel,
   CaptureMode,
   CaptureTarget,
   MicConfig,
@@ -26,6 +27,7 @@ import { useRecordingStore, useSavingRecording } from "../store/recordingStore";
 import { desktopConstraints } from "../services/recording/constraints";
 import { recordingService } from "../services/recording/RecordingService";
 import { drawLetterboxed, CANVAS_WIDTH, CANVAS_HEIGHT } from "../services/recording/compositor";
+import { applyCameraBlur, preloadCameraBlurModel, type CameraBlurHandle } from "../services/camera/cameraBlur";
 import { getSystemAudioStream } from "../services/recording/AudioRecordingService";
 import { SettingsService } from "../services/settings/SettingsService";
 import { AnnotationToolbar } from "../components/AnnotationToolbar";
@@ -39,11 +41,40 @@ const DEFAULT_OVERLAY: OverlayConfig = {
   cameraDeviceId: null,
   cursorHighlight: "hidden",
   mirrorCamera: true,
+  cameraBlur: "none",
 };
+
+const BLUR_CYCLE: CameraBlurLevel[] = ["none", "soft", "aggressive"];
+const BLUR_META: Record<CameraBlurLevel, { label: string; color: string; bg: string }> = {
+  none: { label: "Background blur: Off", color: "var(--muted)", bg: "rgba(92, 98, 115, 0.1)" },
+  soft: { label: "Background blur: Low", color: "#0ea5e9", bg: "rgba(14, 165, 233, 0.16)" },
+  aggressive: { label: "Background blur: High", color: "#075985", bg: "rgba(7, 89, 133, 0.22)" },
+};
+
+function BlurIcon({ level }: { level: CameraBlurLevel }) {
+  const stdDeviation = level === "none" ? 0 : level === "soft" ? 0.7 : 1.6;
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      {stdDeviation > 0 && (
+        <defs>
+          <filter id={`blur-icon-${level}`} x="-60%" y="-60%" width="220%" height="220%">
+            <feGaussianBlur stdDeviation={stdDeviation} />
+          </filter>
+        </defs>
+      )}
+      <circle
+        cx="8"
+        cy="8"
+        r="4.5"
+        fill="currentColor"
+        filter={stdDeviation > 0 ? `url(#blur-icon-${level})` : undefined}
+      />
+    </svg>
+  );
+}
 
 const ARROW_PATH = "M3 2l0 15 4-4 2.5 5.5 2.5-1.2-2.4-5.3 5.4 0z";
 
-/** The real Windows arrow, so "System cursor" shows what it actually is. */
 function ArrowCursorIcon() {
   return (
     <svg viewBox="0 0 22 22" width="16" height="16" aria-hidden="true">
@@ -96,7 +127,7 @@ function defaultRecordingTitle(): string {
 }
 
 export function RecordPage() {
-  const { recording, busy, error, start, stop } = useRecordingStore();
+  const { recording, paused, busy, error, start, stop, pause, resume, restart, discard } = useRecordingStore();
   const saving = useSavingRecording();
 
   const { data: targets = [] } = useQuery<CaptureTarget[]>({
@@ -133,7 +164,7 @@ export function RecordPage() {
           captureMode: savedCaptureMode,
           areaRect: savedAreaRect,
         }) => {
-          if (savedOverlay) setOverlay(savedOverlay);
+          if (savedOverlay) setOverlay({ ...DEFAULT_OVERLAY, ...savedOverlay });
           setPreferredTargetId(savedTargetId);
           if (savedMic) setMic(savedMic);
           if (savedSystemAudio) setSystemAudio(savedSystemAudio);
@@ -150,8 +181,10 @@ export function RecordPage() {
       window.api.cameraBubble.close().catch(() => {});
       return;
     }
-    window.api.cameraBubble.open({ mirror: overlay.mirrorCamera, cameraDeviceId: overlay.cameraDeviceId }).catch(() => {});
-  }, [overlay.showCamera, overlay.mirrorCamera, overlay.cameraDeviceId, captureMode]);
+    window.api.cameraBubble
+      .open({ mirror: overlay.mirrorCamera, cameraDeviceId: overlay.cameraDeviceId, blur: overlay.cameraBlur })
+      .catch(() => {});
+  }, [overlay.showCamera, overlay.mirrorCamera, overlay.cameraDeviceId, overlay.cameraBlur, captureMode]);
 
   useEffect(() => {
     return window.api.cameraBubble.onClosedByUser(() => {
@@ -162,6 +195,48 @@ export function RecordPage() {
   useEffect(() => {
     return () => {
       window.api.cameraBubble.close().catch(() => {});
+    };
+  }, []);
+
+  function syncDockTimer() {
+    window.api.recordingDock
+      .syncTimer({ elapsedMs: recordingService.getElapsedMs(), paused: recordingService.isPaused() })
+      .catch(() => {});
+  }
+
+  useEffect(() => {
+    if (recording) {
+      window.api.recordingDock.open().catch(() => {});
+      window.api.recordingDock.hideMainWindow().catch(() => {});
+      syncDockTimer();
+    } else {
+      window.api.recordingDock.close().catch(() => {});
+      window.api.recordingDock.showMainWindow().catch(() => {});
+    }
+  }, [recording]);
+
+  useEffect(() => {
+    if (!recording) return;
+    syncDockTimer();
+  }, [paused, recording]);
+
+  useEffect(() => {
+    return window.api.recordingDock.onAction(async (action) => {
+      if (action === "pause") await pause();
+      else if (action === "resume") await resume();
+      else if (action === "stop") await handleStop();
+      else if (action === "restart") {
+        await restart();
+        syncDockTimer();
+      } else if (action === "discard") {
+        await discard();
+      }
+    });
+  }, [pause, resume, restart, discard]);
+
+  useEffect(() => {
+    return () => {
+      window.api.recordingDock.close().catch(() => {});
     };
   }, []);
 
@@ -246,6 +321,20 @@ export function RecordPage() {
   const camVideoRef = useRef<HTMLVideoElement>(null);
   const [micLevel, setMicLevel] = useState(0);
   const [camError, setCamError] = useState<string | null>(null);
+  const [blurLoading, setBlurLoading] = useState(false);
+  const [countdownSecs, setCountdownSecs] = useState(3);
+  const [countdownRemaining, setCountdownRemaining] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (countdownRemaining === null) return;
+    if (countdownRemaining === 0) {
+      setCountdownRemaining(null);
+      void beginRecording();
+      return;
+    }
+    const timer = setTimeout(() => setCountdownRemaining((c) => (c === null ? null : c - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [countdownRemaining]);
   const [micError, setMicError] = useState<string | null>(null);
   const screenVideoRef = useRef<HTMLVideoElement>(null);
   const [screenError, setScreenError] = useState<string | null>(null);
@@ -294,6 +383,7 @@ export function RecordPage() {
       return;
     }
     let stream: MediaStream | null = null;
+    let blurHandle: CameraBlurHandle | null = null;
     let cancelled = false;
     navigator.mediaDevices
       .getUserMedia({ video: overlay.cameraDeviceId ? { deviceId: { exact: overlay.cameraDeviceId } } : true })
@@ -303,16 +393,24 @@ export function RecordPage() {
           return;
         }
         stream = s;
-        if (camVideoRef.current) camVideoRef.current.srcObject = s;
+        if (camVideoRef.current) {
+          if (overlay.cameraBlur === "none") {
+            camVideoRef.current.srcObject = s;
+          } else {
+            blurHandle = applyCameraBlur(s, overlay.cameraBlur);
+            camVideoRef.current.srcObject = blurHandle.stream;
+          }
+        }
         setCamError(null);
         refreshDevices();
       })
       .catch((e) => setCamError(String(e)));
     return () => {
       cancelled = true;
+      blurHandle?.stop();
       stream?.getTracks().forEach((t) => t.stop());
     };
-  }, [overlay.cameraDeviceId, recording, captureMode]);
+  }, [overlay.cameraDeviceId, overlay.cameraBlur, recording, captureMode]);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -458,8 +556,20 @@ export function RecordPage() {
     if (saveDir) window.api.settings.setSaveDir(saveDir).catch(() => {});
   }
 
-  async function handleStart() {
+  async function beginRecording() {
     await start(targetId, overlay, mic, systemAudio, title, "record", captureMode, captureMode === "area" ? areaRect : null);
+  }
+
+  function handleStart() {
+    if (countdownSecs > 0) {
+      setCountdownRemaining(countdownSecs);
+    } else {
+      void beginRecording();
+    }
+  }
+
+  function cancelCountdown() {
+    setCountdownRemaining(null);
   }
 
   async function handleStop() {
@@ -483,6 +593,14 @@ export function RecordPage() {
                 <span className="record-live-dot" />
                 REC
               </span>
+            )}
+            {countdownRemaining !== null && (
+              <div className="record-countdown-overlay" onClick={cancelCountdown}>
+                <span key={countdownRemaining} className="record-countdown-number">
+                  {countdownRemaining}
+                </span>
+                <span className="record-countdown-hint">Click to cancel</span>
+              </div>
             )}
             {recording && !recordingService.isNativeCapture() ? (
               <div ref={recordingPreviewRef} className="recording-canvas-host" />
@@ -529,15 +647,36 @@ export function RecordPage() {
 
           <div className="record-cta">
             {!recording ? (
-              <button
-                className="record-cta-btn"
-                onClick={handleStart}
-                disabled={startDisabled}
-                title={saving ? "Finishing the previous recording…" : undefined}
-              >
-                <span className="record-cta-dot" />
-                {busy ? "Starting…" : "Start recording"}
-              </button>
+              <>
+                <button
+                  className="record-cta-btn"
+                  onClick={handleStart}
+                  disabled={startDisabled || countdownRemaining !== null}
+                  title={saving ? "Finishing the previous recording…" : undefined}
+                >
+                  <span className="record-cta-dot" />
+                  {countdownRemaining !== null ? "Starting…" : busy ? "Starting…" : "Start recording"}
+                </button>
+                <div className="record-countdown-stepper" title="Countdown before recording starts">
+                  <button
+                    type="button"
+                    className="record-countdown-step-btn"
+                    disabled={countdownSecs <= 0 || countdownRemaining !== null}
+                    onClick={() => setCountdownSecs((s) => Math.max(0, s - 1))}
+                  >
+                    −
+                  </button>
+                  <span className="record-countdown-step-value">{countdownSecs}s</span>
+                  <button
+                    type="button"
+                    className="record-countdown-step-btn"
+                    disabled={countdownSecs >= 10 || countdownRemaining !== null}
+                    onClick={() => setCountdownSecs((s) => Math.min(10, s + 1))}
+                  >
+                    +
+                  </button>
+                </div>
+              </>
             ) : (
               <button className="record-cta-btn stop" onClick={handleStop} disabled={busy}>
                 <span className="record-cta-square" />
@@ -720,6 +859,32 @@ export function RecordPage() {
                 )}
               </div>
               <div className="camera-header-toggles">
+                {(captureMode === "camera" || overlay.showCamera) &&
+                  (() => {
+                    const { label, color, bg } = BLUR_META[overlay.cameraBlur];
+                    return (
+                      <button
+                        type="button"
+                        className={`header-icon-toggle${overlay.cameraBlur !== "none" ? " on" : ""}`}
+                        style={{ color, backgroundColor: bg }}
+                        aria-pressed={overlay.cameraBlur !== "none"}
+                        aria-label={label}
+                        title={blurLoading ? "Loading blur model…" : label}
+                        data-tooltip={blurLoading ? "Loading blur model…" : label}
+                        disabled={blurLoading}
+                        onClick={() => {
+                          const next = BLUR_CYCLE[(BLUR_CYCLE.indexOf(overlay.cameraBlur) + 1) % BLUR_CYCLE.length];
+                          setOverlay({ ...overlay, cameraBlur: next });
+                          if (next !== "none") {
+                            setBlurLoading(true);
+                            preloadCameraBlurModel().finally(() => setBlurLoading(false));
+                          }
+                        }}
+                      >
+                        <BlurIcon level={overlay.cameraBlur} />
+                      </button>
+                    );
+                  })()}
                 {(captureMode === "camera" || overlay.showCamera) && (
                   <button
                     type="button"

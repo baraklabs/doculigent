@@ -13,8 +13,24 @@ export interface RecordingSaveStatus {
   message?: string;
 }
 
+interface StartArgs {
+  targetId: string;
+  overlay: OverlayConfig;
+  mic: MicConfig;
+  systemAudio: SystemAudioConfig;
+  title: string;
+  source: "record" | "meeting";
+  captureMode: CaptureMode;
+  areaRect: AreaRect | null;
+}
+
+/** Remembered outside the store's reactive state — restart() replays these, and nothing
+ *  needs to re-render when they're set. */
+let lastStartArgs: StartArgs | null = null;
+
 interface RecordingState {
   recording: boolean;
+  paused: boolean;
   busy: boolean;
   stopping: boolean;
   error: string | null;
@@ -34,10 +50,15 @@ interface RecordingState {
     areaRect?: AreaRect | null
   ) => Promise<void>;
   stop: () => Promise<{ id: string } | null>;
+  pause: () => Promise<void>;
+  resume: () => Promise<void>;
+  restart: () => Promise<void>;
+  discard: () => Promise<void>;
 }
 
 export const useRecordingStore = create<RecordingState>((set, get) => ({
   recording: false,
+  paused: false,
   busy: false,
   stopping: false,
   error: null,
@@ -63,7 +84,8 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
     set({ busy: true, error: null, title, source });
     try {
       await recordingService.start(targetId, overlay, mic, systemAudio, captureMode, areaRect);
-      set({ recording: true });
+      lastStartArgs = { targetId, overlay, mic, systemAudio, title, source, captureMode, areaRect };
+      set({ recording: true, paused: false });
     } catch (e) {
       set({ error: String(e) });
     } finally {
@@ -76,8 +98,10 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
     set({ busy: true, stopping: true });
     try {
       const result = await recordingService.stop(get().title, get().source);
+      lastStartArgs = null;
       set({
         recording: false,
+        paused: false,
         saveStatus: result ? { id: result.id, status: "processing", percent: 0 } : null,
       });
       return result;
@@ -86,6 +110,48 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
       return null;
     } finally {
       set({ busy: false, stopping: false });
+    }
+  },
+
+  async pause() {
+    if (!get().recording || get().paused) return;
+    await recordingService.pause();
+    set({ paused: true });
+  },
+
+  async resume() {
+    if (!get().recording || !get().paused) return;
+    await recordingService.resume();
+    set({ paused: false });
+  },
+
+  async restart() {
+    if (get().busy || !get().recording || !lastStartArgs) return;
+    const args = lastStartArgs;
+    set({ busy: true, error: null, title: args.title, source: args.source });
+    try {
+      await recordingService.discard();
+      set({ recording: false, paused: false });
+      await recordingService.start(args.targetId, args.overlay, args.mic, args.systemAudio, args.captureMode, args.areaRect);
+      set({ recording: true, paused: false });
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ busy: false });
+    }
+  },
+
+  async discard() {
+    if (get().busy || !get().recording) return;
+    set({ busy: true, error: null });
+    try {
+      await recordingService.discard();
+      lastStartArgs = null;
+      set({ recording: false, paused: false, saveStatus: null });
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ busy: false });
     }
   },
 }));
