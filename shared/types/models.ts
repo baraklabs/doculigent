@@ -1,16 +1,10 @@
 
 export interface CaptureTarget {
-  id: string; // "display:{index}" | "window:{platformId}"
+  id: string; 
   title: string;
   kind: "display" | "window";
 }
 
-/** "hidden" keeps the real pointer completely untouched on screen but excludes it from the
- *  recorded video — see native/screenCapture.ts for how (gdigrab's draw_mouse, Windows +
- *  whole-display captures only; elsewhere this falls back to the ordinary pipeline, where
- *  the pointer ends up baked in same as any other style). Either way it leaves the frames
- *  free for the Edit section to draw its own cursor from the sidecar track. "default"
- *  leaves the real pointer's appearance alone too, but doesn't try to exclude it. */
 export type CursorHighlightStyle =
   | "hidden"
   | "default"
@@ -21,49 +15,52 @@ export type CursorHighlightStyle =
   | "colorArrow"
   | "colorHand";
 
-/** One sampled pointer position. `t` is milliseconds since capture started; `x`/`y` are
- *  screen coordinates in DIPs, the same space as Electron's Display.bounds. */
 export interface CursorTrackPoint {
   t: number;
   x: number;
   y: number;
 }
 
-/**
- * Sidecar written to `<recording folder>/metadata/cursor.json`. Records where the pointer
- * was for every frame of the capture so the Edit section can re-draw it in any style —
- * smoothed, enlarged, click-animated — instead of being stuck with whatever was baked into
- * the pixels. `appVersion` is stamped so a later build can migrate an older track.
- */
 export interface CursorMetadata {
   appVersion: string;
   recordingId: string;
   createdAt: string; // ISO 8601
-  /** Which style the real pointer was wearing while recording. "hidden" means the frames
-   *  contain no pointer at all and Edit can render one freely; any other value is baked
-   *  into the pixels, so a drawn cursor sits on top of it. */
   cursorStyle: CursorHighlightStyle;
   capture: {
     targetId: string;
     kind: "display" | "window";
-    /** The captured display in DIPs — the frame of reference for every point. Null for a
-     *  window capture, where points can't be mapped to the frame reliably. */
     bounds: { x: number; y: number; width: number; height: number } | null;
     scaleFactor: number;
   };
-  /** Nominal sampling rate; actual spacing is in each point's `t`. */
   sampleRateHz: number;
-  /** Sampled only when the pointer actually moved, so gaps mean "held still". */
   points: CursorTrackPoint[];
 }
 
 export interface OverlayConfig {
   corner: "top-left" | "top-right" | "bottom-left" | "bottom-right";
-  sizePct: number; 
+  sizePct: number;
   circular: boolean;
   showCamera: boolean;
   cameraDeviceId: string | null;
   cursorHighlight: CursorHighlightStyle;
+  mirrorCamera: boolean;
+}
+
+export type CameraBubbleShape = "round" | "square" | "rectangle" | "rectangle-vertical";
+
+export interface CameraBubbleConfig {
+  shape: CameraBubbleShape;
+  roundedCorners: boolean;
+  freeformResize: boolean;
+  mirror: boolean;
+  cameraDeviceId: string | null;
+}
+
+export interface CameraBubbleBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface MicConfig {
@@ -71,9 +68,25 @@ export interface MicConfig {
   muted: boolean;
 }
 
-/** Library-wide "transcribe automatically" preferences (Settings > Preferences). `all` is
- *  a convenience master switch kept in sync with the four below it — turning it on/off sets
- *  every other field to match, and it reads as on only once every other field is. */
+export interface SystemAudioConfig {
+  enabled: boolean;
+  sourceId: string | null;
+}
+
+export type CaptureMode = "display" | "window" | "area" | "camera";
+
+export interface AreaRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface AreaSelectResult {
+  targetId: string;
+  rect: AreaRect;
+}
+
 export interface AutoTranscribeSettings {
   all: boolean;
   recording: boolean;

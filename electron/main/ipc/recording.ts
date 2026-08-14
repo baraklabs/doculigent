@@ -59,6 +59,7 @@ const AUDIO_OVERLAY: OverlayConfig = {
   showCamera: false,
   cameraDeviceId: null,
   cursorHighlight: "default",
+  mirrorCamera: false,
 };
 
 function recordingDir(saveDir: string, id: string): string {
@@ -67,11 +68,7 @@ function recordingDir(saveDir: string, id: string): string {
 
 const pendingSaves = new Map<string, AbortController>();
 
-/** Produces `finalMp4` from `input`, picking the right ffmpeg step for whichever pipeline
- *  recorded it: a plain remux for the ordinary webm pipeline, or — for the gdigrab
- *  pipeline — a stream copy (screen only), an audio mux (screen + mic clip), or an overlay
- *  (screen + camera-bubble clip), so the fast no-camera/no-mic case never pays for a
- *  needless re-encode. */
+
 async function buildFinalMp4(
   id: string,
   input: SaveRecordingInput,

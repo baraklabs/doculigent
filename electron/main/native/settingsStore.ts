@@ -1,7 +1,18 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { AppIntegration, AutoTranscribeSettings, LlmModelProfile, MicConfig, OverlayConfig } from "@shared/types/models";
+import type {
+  AppIntegration,
+  AreaRect,
+  AutoTranscribeSettings,
+  CameraBubbleBounds,
+  CameraBubbleConfig,
+  CaptureMode,
+  LlmModelProfile,
+  MicConfig,
+  OverlayConfig,
+  SystemAudioConfig,
+} from "@shared/types/models";
 import type { ProjectManager } from "@shared/types/projectManager";
 import type { CustomPersona } from "@shared/types/persona";
 import type { AuthUser } from "@shared/types/auth";
@@ -19,6 +30,9 @@ interface StoredSettings {
   recordOverlay?: OverlayConfig;
   recordTargetId?: string | null;
   recordMic?: MicConfig;
+  recordSystemAudio?: SystemAudioConfig;
+  recordCaptureMode?: CaptureMode;
+  recordAreaRect?: AreaRect;
   meetingLanguage?: string;
   meetingMicEnabled?: boolean;
   meetingMicDeviceId?: string | null;
@@ -30,6 +44,8 @@ interface StoredSettings {
   transcriptionByokProfileId?: string | null;
   autoTranscribe?: AutoTranscribeSettings;
   storagePreference?: StoragePreference;
+  cameraBubbleConfig?: CameraBubbleConfig;
+  cameraBubbleBounds?: CameraBubbleBounds;
 }
 
 const DEFAULT_STORAGE_PREFERENCE: StoragePreference = { provider: "doculigent" };
@@ -163,17 +179,38 @@ export function getRecordSettings(): {
   overlay: OverlayConfig | null;
   targetId: string | null;
   mic: MicConfig | null;
+  systemAudio: SystemAudioConfig | null;
+  captureMode: CaptureMode | null;
+  areaRect: AreaRect | null;
 } {
   const stored = readStored();
   return {
     overlay: stored.recordOverlay ?? null,
     targetId: stored.recordTargetId ?? null,
     mic: stored.recordMic ?? null,
+    systemAudio: stored.recordSystemAudio ?? null,
+    captureMode: stored.recordCaptureMode ?? null,
+    areaRect: stored.recordAreaRect ?? null,
   };
 }
 
-export function setRecordSettings(overlay: OverlayConfig, targetId: string | null, mic: MicConfig | null): void {
-  writeStored({ ...readStored(), recordOverlay: overlay, recordTargetId: targetId, recordMic: mic ?? undefined });
+export function setRecordSettings(
+  overlay: OverlayConfig,
+  targetId: string | null,
+  mic: MicConfig | null,
+  systemAudio: SystemAudioConfig | null,
+  captureMode: CaptureMode | null,
+  areaRect: AreaRect | null
+): void {
+  writeStored({
+    ...readStored(),
+    recordOverlay: overlay,
+    recordTargetId: targetId,
+    recordMic: mic ?? undefined,
+    recordSystemAudio: systemAudio ?? undefined,
+    recordCaptureMode: captureMode ?? undefined,
+    recordAreaRect: areaRect ?? undefined,
+  });
 }
 
 export function getMeetingSettings(): {
@@ -208,6 +245,18 @@ export function setMeetingSettings(
     meetingSystemAudioEnabled: systemAudioEnabled,
     meetingSystemAudioSourceId: systemAudioSourceId,
   });
+}
+
+export function getCameraBubbleState(): { config: CameraBubbleConfig | null; bounds: CameraBubbleBounds | null } {
+  const stored = readStored();
+  return {
+    config: stored.cameraBubbleConfig ?? null,
+    bounds: stored.cameraBubbleBounds ?? null,
+  };
+}
+
+export function setCameraBubbleState(config: CameraBubbleConfig, bounds: CameraBubbleBounds | null): void {
+  writeStored({ ...readStored(), cameraBubbleConfig: config, cameraBubbleBounds: bounds ?? undefined });
 }
 
 export function getWhisperModel(): WhisperModelSize | null {

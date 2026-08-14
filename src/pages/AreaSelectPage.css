@@ -1,0 +1,126 @@
+html, body, #root { background: transparent; }
+
+.area-select-root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  cursor: crosshair;
+  user-select: none;
+  touch-action: none;
+}
+
+.area-select-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+}
+
+.area-select-idle-dim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, .28);
+  pointer-events: none;
+}
+
+.area-select-box {
+  position: absolute;
+  border: 2px solid #5b4bf5;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, .45);
+  cursor: move;
+  touch-action: none;
+}
+
+.area-select-handle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin: -9px;
+  border-radius: 4px;
+  background: #5b4bf5;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .4);
+  touch-action: none;
+}
+.area-select-handle-nw { top: 0; left: 0; cursor: nwse-resize; }
+.area-select-handle-se { bottom: 0; right: 0; cursor: nwse-resize; }
+.area-select-handle-ne { top: 0; right: 0; cursor: nesw-resize; }
+.area-select-handle-sw { bottom: 0; left: 0; cursor: nesw-resize; }
+
+.area-select-ratio-label {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 6px;
+  padding: 3px 8px;
+  background: rgba(20, 20, 30, .85);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.area-select-toolbar {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: rgba(20, 20, 30, .88);
+  border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .35);
+  cursor: default;
+}
+
+.area-select-hint {
+  color: rgba(255, 255, 255, .75);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.area-select-presets {
+  display: flex;
+  gap: 6px;
+}
+.area-select-presets button {
+  background: rgba(255, 255, 255, .08);
+  border: 1px solid rgba(255, 255, 255, .18);
+  color: #fff;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.area-select-presets button:hover { background: rgba(91, 75, 245, .5); border-color: #5b4bf5; }
+
+.area-select-confirm {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: #5b4bf5;
+  border: none;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  transition: background 120ms ease;
+}
+.area-select-confirm:hover { background: #4638d1; }
+
+.area-select-cancel {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, .6);
+  font-size: 12px;
+  padding: 5px 8px;
+}
+.area-select-cancel:hover { color: #fff; }

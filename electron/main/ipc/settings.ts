@@ -2,7 +2,16 @@ import { dialog, ipcMain, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { Channels } from "@shared/constants/channels";
-import type { AutoTranscribeSettings, LlmModelProfile, LlmProviderKind, MicConfig, OverlayConfig } from "@shared/types/models";
+import type {
+  AreaRect,
+  AutoTranscribeSettings,
+  CaptureMode,
+  LlmModelProfile,
+  LlmProviderKind,
+  MicConfig,
+  OverlayConfig,
+  SystemAudioConfig,
+} from "@shared/types/models";
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
 import { defaultLlmConfig } from "@shared/constants/llmDefaults";
 import { getSaveDir, setSaveDir } from "../native/paths";
@@ -72,14 +81,28 @@ export function registerSettingsIpc(): void {
 
   ipcMain.handle(
     Channels.settings.getRecordSettings,
-    async (): Promise<{ overlay: OverlayConfig | null; targetId: string | null; mic: MicConfig | null }> =>
-      getRecordSettings()
+    async (): Promise<{
+      overlay: OverlayConfig | null;
+      targetId: string | null;
+      mic: MicConfig | null;
+      systemAudio: SystemAudioConfig | null;
+      captureMode: CaptureMode | null;
+      areaRect: AreaRect | null;
+    }> => getRecordSettings()
   );
 
   ipcMain.handle(
     Channels.settings.setRecordSettings,
-    async (_event, overlay: OverlayConfig, targetId: string | null, mic: MicConfig | null): Promise<void> => {
-      setRecordSettings(overlay, targetId, mic);
+    async (
+      _event,
+      overlay: OverlayConfig,
+      targetId: string | null,
+      mic: MicConfig | null,
+      systemAudio: SystemAudioConfig | null,
+      captureMode: CaptureMode | null,
+      areaRect: AreaRect | null
+    ): Promise<void> => {
+      setRecordSettings(overlay, targetId, mic, systemAudio, captureMode, areaRect);
     }
   );
 
@@ -125,9 +148,6 @@ export function registerSettingsIpc(): void {
 
   ipcMain.handle(Channels.settings.deleteWhisperModel, async (_event, size: WhisperModelSize): Promise<void> => {
     deleteWhisperModelCache(size);
-    // Clearing the files out from under the active model would otherwise leave it
-    // "active" but silently untranscribable until the next implicit-download attempt —
-    // dropping it back to no-active-model instead surfaces that in Settings/Meeting.
     if (getWhisperModel() === size) setWhisperModel(null);
   });
 

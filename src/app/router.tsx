@@ -10,6 +10,8 @@ import { SharePage } from "../pages/SharePage";
 import { SettingsPage } from "../pages/SettingsPage";
 import { AccountPage } from "../pages/AccountPage";
 import { AnnotationDrawPage } from "../pages/AnnotationDrawPage";
+import { CameraBubblePage } from "../pages/CameraBubblePage";
+import { AreaSelectPage } from "../pages/AreaSelectPage";
 
 export const router = createHashRouter([
   {
@@ -28,4 +30,6 @@ export const router = createHashRouter([
     ],
   },
   { path: "annotate/draw", element: <AnnotationDrawPage /> },
+  { path: "camera-bubble", element: <CameraBubblePage /> },
+  { path: "area-select", element: <AreaSelectPage /> },
 ]);

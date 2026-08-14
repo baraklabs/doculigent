@@ -1,0 +1,180 @@
+
+import { BrowserWindow, screen } from "electron";
+import path from "node:path";
+import type { CameraBubbleBounds, CameraBubbleConfig, CameraBubbleShape } from "@shared/types/models";
+import { getCameraBubbleState, setCameraBubbleState } from "./native/settingsStore";
+
+let win: BrowserWindow | null = null;
+
+function loadRoute(w: BrowserWindow, hash: string): void {
+  if (process.env.ELECTRON_RENDERER_URL) {
+    w.loadURL(`${process.env.ELECTRON_RENDERER_URL}#${hash}`);
+  } else {
+    w.loadFile(path.join(__dirname, "../renderer/index.html"), { hash });
+  }
+}
+
+const EDGE_MARGIN = 40;
+const DEFAULT_CONFIG: CameraBubbleConfig = {
+  shape: "round",
+  roundedCorners: true,
+  freeformResize: false,
+  mirror: true,
+  cameraDeviceId: null,
+};
+
+const persisted = getCameraBubbleState();
+let lastConfig: CameraBubbleConfig = persisted.config ?? DEFAULT_CONFIG;
+let lastBounds: CameraBubbleBounds | null = persisted.bounds;
+
+function persist(): void {
+  setCameraBubbleState(lastConfig, lastBounds);
+}
+
+function defaultSizeFor(shape: CameraBubbleShape): { width: number; height: number } {
+  switch (shape) {
+    case "rectangle":
+      return { width: 260, height: 160 };
+    case "rectangle-vertical":
+      return { width: 160, height: 260 };
+    default:
+      return { width: 220, height: 220 };
+  }
+}
+
+function resolveBounds(shape: CameraBubbleShape): CameraBubbleBounds {
+  if (lastBounds) return lastBounds;
+  const display = screen.getPrimaryDisplay();
+  const { width, height } = defaultSizeFor(shape);
+  return {
+    x: display.workArea.x + display.workArea.width - width - EDGE_MARGIN,
+    y: display.workArea.y + display.workArea.height - height - EDGE_MARGIN,
+    width,
+    height,
+  };
+}
+
+
+let hoverPollTimer: ReturnType<typeof setInterval> | null = null;
+let isHovering = false;
+
+function startHoverPoll(): void {
+  if (hoverPollTimer) return;
+  hoverPollTimer = setInterval(() => {
+    if (!win || win.isDestroyed()) return;
+    const cursor = screen.getCursorScreenPoint();
+    const b = win.getBounds();
+    const inside = cursor.x >= b.x && cursor.x < b.x + b.width && cursor.y >= b.y && cursor.y < b.y + b.height;
+    if (inside === isHovering) return;
+    isHovering = inside;
+    win.webContents.send("cameraBubble:hoverChanged", isHovering);
+  }, 50);
+}
+
+function stopHoverPoll(): void {
+  if (hoverPollTimer) {
+    clearInterval(hoverPollTimer);
+    hoverPollTimer = null;
+  }
+  isHovering = false;
+}
+
+export function isCameraBubbleWindowOpen(): boolean {
+  return !!win && !win.isDestroyed();
+}
+
+export function getCameraBubbleBounds(): CameraBubbleBounds | null {
+  if (win && !win.isDestroyed()) return win.getBounds();
+  return lastBounds;
+}
+
+
+export function openCameraBubbleWindow(partial: Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId">): void {
+  lastConfig = { ...lastConfig, ...partial };
+  persist();
+
+  if (win && !win.isDestroyed()) {
+    win.webContents.send("cameraBubble:configChanged", lastConfig);
+    win.showInactive();
+    startHoverPoll();
+    return;
+  }
+
+  const bounds = resolveBounds(lastConfig.shape);
+  win = new BrowserWindow({
+    ...bounds,
+    transparent: true,
+    frame: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    resizable: false,
+    fullscreenable: false,
+    focusable: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "../preload/index.js"),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  win.setAlwaysOnTop(true, "screen-saver");
+
+  win.setBounds(bounds);
+  loadRoute(win, "/camera-bubble");
+
+  const openedWin = win;
+  openedWin.once("ready-to-show", () => {
+    if (openedWin.isDestroyed()) return;
+    openedWin.setBounds(bounds);
+    openedWin.webContents.send("cameraBubble:configChanged", lastConfig);
+    openedWin.showInactive();
+    startHoverPoll();
+  });
+  
+  openedWin.on("closed", () => {
+    if (win === openedWin) win = null;
+    stopHoverPoll();
+    for (const other of BrowserWindow.getAllWindows()) other.webContents.send("cameraBubble:closedByUser");
+  });
+}
+
+export function closeCameraBubbleWindow(): void {
+  stopHoverPoll();
+  if (win && !win.isDestroyed()) win.close();
+  win = null;
+}
+
+
+export function updateCameraBubbleConfig(partial: Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId">): void {
+  lastConfig = { ...lastConfig, ...partial };
+  persist();
+  if (!win || win.isDestroyed()) return;
+  win.webContents.send("cameraBubble:configChanged", lastConfig);
+}
+
+
+export function setCameraBubbleShape(
+  partial: Pick<CameraBubbleConfig, "shape" | "roundedCorners" | "freeformResize">
+): void {
+  lastConfig = { ...lastConfig, ...partial };
+  persist();
+  if (!win || win.isDestroyed()) return;
+  win.webContents.send("cameraBubble:configChanged", lastConfig);
+}
+
+
+export function setCameraBubbleBounds(bounds: CameraBubbleBounds): void {
+  lastBounds = bounds;
+  persist();
+  if (!win || win.isDestroyed()) return;
+  win.setBounds(bounds);
+}
+
+
+export function setCameraBubbleShapeRegion(rects: { x: number; y: number; width: number; height: number }[]): void {
+  if (process.platform === "darwin") return;
+  if (!win || win.isDestroyed()) return;
+  win.setShape(rects);
+}

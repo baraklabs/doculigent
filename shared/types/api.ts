@@ -1,7 +1,12 @@
 import type {
   AppIntegration,
   AppIntegrationKind,
+  AreaRect,
+  AreaSelectResult,
   AutoTranscribeSettings,
+  CameraBubbleBounds,
+  CameraBubbleConfig,
+  CaptureMode,
   CaptureTarget,
   ChatMessage,
   CursorHighlightStyle,
@@ -9,6 +14,7 @@ import type {
   LlmProviderKind,
   MicConfig,
   OverlayConfig,
+  SystemAudioConfig,
   Summary,
   Transcript,
   Video,
@@ -46,8 +52,29 @@ export interface DoculigentApi {
     stopCapture(): Promise<void>;
   };
   screenCapture: {
-    start(targetId: string, hideCursor: boolean): Promise<{ available: boolean }>;
+    start(targetId: string, hideCursor: boolean, area?: AreaRect): Promise<{ available: boolean }>;
     stop(): Promise<{ available: boolean; filePath?: string }>;
+  };
+  cameraBubble: {
+    open(config: Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId">): Promise<void>;
+    close(): Promise<void>;
+    updateConfig(config: Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId">): Promise<void>;
+    setShape(shape: Pick<CameraBubbleConfig, "shape" | "roundedCorners" | "freeformResize">): Promise<void>;
+    setShapeRegion(rects: CameraBubbleBounds[]): Promise<void>;
+    isOpen(): Promise<boolean>;
+    getBounds(): Promise<CameraBubbleBounds | null>;
+    setBounds(bounds: CameraBubbleBounds): Promise<void>;
+    onConfigChanged(callback: (config: CameraBubbleConfig) => void): () => void;
+    onClosedByUser(callback: () => void): () => void;
+    onHoverChanged(callback: (hovering: boolean) => void): () => void;
+  };
+  areaSelect: {
+    open(): Promise<void>;
+    activate(): Promise<void>;
+    complete(targetId: string, rect: AreaRect): Promise<void>;
+    cancel(): Promise<void>;
+    onCompleted(callback: (result: AreaSelectResult) => void): () => void;
+    onCancelled(callback: () => void): () => void;
   };
   annotation: {
   
@@ -115,8 +142,22 @@ export interface DoculigentApi {
     saveLlmProfile(profile: LlmModelProfile, apiKey?: string | null): Promise<void>;
     deleteLlmProfile(id: string): Promise<void>;
     defaultProfileTemplate(kind: LlmProviderKind): Promise<LlmModelProfile>;
-    getRecordSettings(): Promise<{ overlay: OverlayConfig | null; targetId: string | null; mic: MicConfig | null }>;
-    setRecordSettings(overlay: OverlayConfig, targetId: string | null, mic: MicConfig | null): Promise<void>;
+    getRecordSettings(): Promise<{
+      overlay: OverlayConfig | null;
+      targetId: string | null;
+      mic: MicConfig | null;
+      systemAudio: SystemAudioConfig | null;
+      captureMode: CaptureMode | null;
+      areaRect: AreaRect | null;
+    }>;
+    setRecordSettings(
+      overlay: OverlayConfig,
+      targetId: string | null,
+      mic: MicConfig | null,
+      systemAudio: SystemAudioConfig | null,
+      captureMode: CaptureMode | null,
+      areaRect: AreaRect | null
+    ): Promise<void>;
     getMeetingSettings(): Promise<{
       language: string | null;
       micEnabled: boolean | null;

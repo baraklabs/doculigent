@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { MicConfig, OverlayConfig, Video } from "@shared/types/models";
+import type { AreaRect, CaptureMode, MicConfig, OverlayConfig, SystemAudioConfig, Video } from "@shared/types/models";
 import { recordingService } from "../services/recording/RecordingService";
 import { SettingsService } from "../services/settings/SettingsService";
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
@@ -27,8 +27,11 @@ interface RecordingState {
     targetId: string,
     overlay: OverlayConfig,
     mic: MicConfig,
+    systemAudio: SystemAudioConfig,
     title: string,
-    source?: "record" | "meeting"
+    source?: "record" | "meeting",
+    captureMode?: CaptureMode,
+    areaRect?: AreaRect | null
   ) => Promise<void>;
   stop: () => Promise<{ id: string } | null>;
 }
@@ -55,11 +58,11 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
     }
   },
 
-  async start(targetId, overlay, mic, title, source = "record") {
+  async start(targetId, overlay, mic, systemAudio, title, source = "record", captureMode = "display", areaRect = null) {
     if (get().busy || get().recording) return;
     set({ busy: true, error: null, title, source });
     try {
-      await recordingService.start(targetId, overlay, mic);
+      await recordingService.start(targetId, overlay, mic, systemAudio, captureMode, areaRect);
       set({ recording: true });
     } catch (e) {
       set({ error: String(e) });
@@ -100,8 +103,6 @@ async function autoTranscribeRecording(video: Video): Promise<void> {
     queryClient.invalidateQueries({ queryKey: ["videos"] });
     queryClient.setQueryData(["video", updated.id], updated);
   } catch {
-    // Best-effort — the recording is already saved either way; the user can still
-    // transcribe it by hand from the Library if this fails (e.g. no model configured).
   }
 }
 
@@ -123,8 +124,6 @@ export function watchRecordingSaves(): void {
     useRecordingStore.setState((s) =>
       s.saveStatus?.id === video.id ? { saveStatus: { id: video.id, status: "ready", percent: 100 } } : {}
     );
-    // Meeting-source saves already carry a transcript (built live during the call, see
-    // MeetingPage's transcribePcm usage) — only plain screen recordings land here untranscribed.
     if (!video.transcript) void autoTranscribeRecording(video);
   });
 

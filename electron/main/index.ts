@@ -2,6 +2,8 @@ import { app, BrowserWindow, Menu } from "electron";
 import path from "node:path";
 import { createMainWindow } from "./window";
 import { closeAnnotationOverlay, setMainWindowForAnnotation } from "./annotationWindow";
+import { closeCameraBubbleWindow } from "./cameraBubbleWindow";
+import { closeAreaSelectOverlay } from "./areaSelectWindow";
 import { registerIpcHandlers } from "./ipc";
 import { registerMediaScheme, registerMediaHandler } from "./mediaProtocol";
 import { restorePendingCursorOverride, restoreCursor } from "./native/systemCursor";
@@ -58,7 +60,11 @@ if (!gotSingleInstanceLock) {
   const openMainWindow = (): void => {
     const win = createMainWindow();
     setMainWindowForAnnotation(win);
-    win.on("closed", () => closeAnnotationOverlay());
+    win.on("closed", () => {
+      closeAnnotationOverlay();
+      closeCameraBubbleWindow();
+      closeAreaSelectOverlay();
+    });
   };
 
   app.whenReady().then(() => {
@@ -91,6 +97,8 @@ if (!gotSingleInstanceLock) {
   app.on("before-quit", () => {
     restoreCursor();
     closeAnnotationOverlay();
+    closeCameraBubbleWindow();
+    closeAreaSelectOverlay();
     killPendingFfmpegJobs();
     killPendingScreenCapture();
     terminateTranscriptionWorker();

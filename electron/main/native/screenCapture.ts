@@ -27,6 +27,7 @@ import os from "node:os";
 import { randomUUID } from "node:crypto";
 import ffmpegStaticPath from "ffmpeg-static";
 import { OUTPUT_HEIGHT, OUTPUT_WIDTH } from "@shared/lib/cameraBubble";
+import type { AreaRect } from "@shared/types/models";
 import { listPhysicalMonitors, type PhysicalMonitor } from "./monitors";
 
 const ffmpegPath = (ffmpegStaticPath ?? "ffmpeg").replace("app.asar", "app.asar.unpacked");
@@ -40,12 +41,6 @@ interface ActiveCapture {
 
 let active: ActiveCapture | null = null;
 
-/** Matches an Electron Display to its true physical-pixel monitor rect by size (DIP size *
- *  scaleFactor should equal the physical size regardless of position, even when DPI
- *  virtualization scrambles positions — see native/monitors.ts) with primary-ness as a
- *  tiebreaker for same-sized monitors. Returns null rather than guess when nothing lines
- *  up, so callers can cleanly fall back to the ordinary capture pipeline instead of
- *  recording the wrong region. */
 function matchPhysicalRect(display: Electron.Display, monitors: PhysicalMonitor[]): PhysicalMonitor["rect"] | null {
   const expectedW = Math.round(display.bounds.width * display.scaleFactor);
   const expectedH = Math.round(display.bounds.height * display.scaleFactor);
@@ -73,20 +68,24 @@ async function resolveDisplayRect(targetId: string): Promise<PhysicalMonitor["re
   return matchPhysicalRect(display, monitors);
 }
 
-/** True only for the case this module actually handles — everything else (window targets,
- *  non-Windows) should keep using the existing getUserMedia pipeline. */
 export function canCaptureTarget(targetId: string): boolean {
   return process.platform === "win32" && targetId.startsWith("screen:");
 }
 
-/** Starts recording `targetId` to a fresh temp file. Resolves `null` (not a rejection)
- *  whenever this path doesn't apply or the target display couldn't be resolved — the
- *  caller's job is to fall back cleanly, not to surface an error for an expected case. */
-export async function startScreenCapture(targetId: string, hideCursor: boolean): Promise<boolean> {
+export async function startScreenCapture(targetId: string, hideCursor: boolean, area?: AreaRect): Promise<boolean> {
   if (active || !canCaptureTarget(targetId)) return false;
 
-  const rect = await resolveDisplayRect(targetId);
-  if (!rect) return false;
+  const displayRect = await resolveDisplayRect(targetId);
+  if (!displayRect) return false;
+
+  const rect = area
+    ? {
+        x: displayRect.x + Math.round(area.x * displayRect.width),
+        y: displayRect.y + Math.round(area.y * displayRect.height),
+        width: Math.max(2, Math.round(area.width * displayRect.width)),
+        height: Math.max(2, Math.round(area.height * displayRect.height)),
+      }
+    : displayRect;
 
   const outputPath = path.join(os.tmpdir(), `doculigent-screen-${randomUUID()}.mp4`);
   const args = [
@@ -105,8 +104,6 @@ export async function startScreenCapture(targetId: string, hideCursor: boolean):
     `${rect.width}x${rect.height}`,
     "-i",
     "desktop",
-    // Fits the captured display into the fixed output frame the rest of the app assumes,
-    // the same centered-on-black behavior as compositor.ts's drawLetterboxed.
     "-vf",
     `scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease,` +
       `pad=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
@@ -129,11 +126,6 @@ export async function startScreenCapture(targetId: string, hideCursor: boolean):
   });
 }
 
-/** Stops the running capture and returns its file path, or null if nothing was running.
- *  Stops gdigrab the graceful way (a 'q' on stdin, same as an interactive ffmpeg session)
- *  so the mp4's trailer gets written properly — killing the process outright can leave the
- *  file without a readable duration/index. Falls back to a hard kill if ffmpeg doesn't
- *  exit promptly, so a stuck process can never block "stop recording" indefinitely. */
 export async function stopScreenCapture(): Promise<string | null> {
   if (!active) return null;
   const { proc, outputPath } = active;

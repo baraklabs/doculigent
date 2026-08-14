@@ -40,6 +40,7 @@
 .record-controls-col .record-block:nth-of-type(3) { animation-delay: 180ms; }
 .record-controls-col .record-block:nth-of-type(4) { animation-delay: 240ms; }
 .record-controls-col .record-block:nth-of-type(5) { animation-delay: 300ms; }
+.record-controls-col .record-block:nth-of-type(6) { animation-delay: 360ms; }
 @keyframes record-block-in {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
@@ -48,38 +49,62 @@
   from { opacity: 0; transform: translateY(-6px); }
   to { opacity: 1; transform: translateY(0); }
 }
-.record-block .record-block-title { color: var(--block-accent); }
+.record-block .record-block-title, .record-block .record-block-title-select { color: var(--block-accent); }
 .record-block-icon { background: #fff; }
 /* Inputs keep a white surface so they stay legible against the tint. */
 .record-block select,
 .record-block input[type="text"],
 .record-block input[type="search"] { background: #fff; border-color: rgba(255, 255, 255, .9); }
 .record-block-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.record-block-head > div { flex: 1 1 auto; min-width: 0; }
 .record-block-icon {
   width: 30px; height: 30px; min-width: 30px; border-radius: 10px;
   display: flex; align-items: center; justify-content: center; font-size: 15px;
   background: var(--block-tint); color: var(--block-accent);
 }
-.record-block-title { font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+.record-block-title, .record-block-title-select {
+  font-size: 13px; font-weight: 600; letter-spacing: -.01em; font-family: inherit; line-height: 1.3;
+}
 .record-block-sub { font-size: 11px; color: var(--muted); margin: 0; }
+
+.record-block-title-picker { position: relative; margin: 0; }
+.record-block-sub-picker-icon {
+  position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
+  pointer-events: none; color: var(--muted);
+}
+.record-block .record-block-title-select {
+  display: block; width: 100%;
+  border: none; background: transparent; padding: 0 16px 0 0; margin: 0; appearance: none; cursor: default;
+  max-width: 100%; vertical-align: middle;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.record-block-title-slot { position: relative; padding-top: 3px; padding-bottom: 6px; }
+
+.record-block-sub-meter {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  height: 2px; border-radius: 999px; overflow: hidden; background: var(--border);
+}
+.record-block-sub-meter-fill {
+  height: 100%; border-radius: 999px; background: var(--block-accent);
+  transition: width 80ms linear;
+}
 .record-block .field { margin: 0; }
 .record-block .field + .field { margin-top: 10px; }
-/* .save-location isn't a .field (see RecordPage.tsx's Save-to block), so the sibling rule
-   above doesn't reach it — without this it had no top margin at all and sat flush against
-   the Title field right above it, reading as overlapping. */
 .record-block .field + .save-location { margin-top: 10px; }
 
 .record-block-source { --block-accent: #5b4bf5; --block-tint: rgba(91, 75, 245, .09); }
 .record-block-camera { --block-accent: #0284c7; --block-tint: rgba(14, 165, 233, .11); }
 .record-block-audio  { --block-accent: #15803d; --block-tint: rgba(22, 163, 74, .11); }
+.record-block-system-audio { --block-accent: #0891b2; --block-tint: rgba(8, 145, 178, .11); }
+
+.record-audio-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: stretch; }
+.record-audio-row .record-block { min-width: 0; }
+.record-audio-row .mic-cfg { grid-template-columns: 1fr; }
 .record-block-cursor { --block-accent: #b45309; --block-tint: rgba(245, 158, 11, .13); }
 .record-block-draw   { --block-accent: #db2777; --block-tint: rgba(236, 72, 153, .1); }
 .record-block-output { --block-accent: #0f766e; --block-tint: rgba(15, 118, 110, .1); }
 
-/* --- Preview -------------------------------------------------------------------- */
-
-/* A gradient frame around the preview — the accent runs through the whole palette used by
-   the blocks below, tying the page together and turning red while recording. */
 .stage-preview {
   position: relative; background: #0d0f16;
   border: 3px solid transparent; border-radius: 18px;
@@ -110,7 +135,6 @@
 .recording-canvas-host { width: 100%; height: 100%; }
 .recording-canvas-host canvas { width: 100%; height: 100%; object-fit: cover; display: block; }
 
-/* Live "REC" pill over the preview, the one thing that should be unmissable. */
 .record-live-pill {
   position: absolute; top: 12px; left: 12px; z-index: 2;
   display: flex; align-items: center; gap: 6px;
@@ -128,20 +152,41 @@
 }
 @keyframes record-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
 
-.cam-bubble {
-  position: absolute; overflow: hidden; background: #000;
-  border: 2px solid #fff; border-radius: 10px;
-  box-shadow: 0 4px 14px rgba(20, 20, 40, .25);
-  animation: record-bubble-in 260ms cubic-bezier(.2, .8, .2, 1);
-}
-@keyframes record-bubble-in {
-  from { opacity: 0; transform: scale(.9); }
-  to { opacity: 1; transform: scale(1); }
-}
-.cam-bubble.circular { border-radius: 50%; }
-.cam-bubble video { width: 100%; height: 100%; object-fit: cover; display: block; transform: scaleX(-1); }
+.area-crop-preview { width: 100%; height: 100%; object-fit: contain; display: block; }
 
-/* --- Start / stop --------------------------------------------------------------- */
+.capture-tile-action {
+  background: var(--block-accent); color: #fff; border: none;
+  padding: 3px 8px; border-radius: 999px; font-size: 9px; font-weight: 600;
+  transition: opacity 150ms ease;
+}
+.capture-tile-action:hover:not(:disabled) { opacity: .85; }
+.capture-tile-action:disabled { opacity: .5; cursor: not-allowed; }
+
+
+.capture-mode-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
+.capture-tile {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; min-height: 98px;
+  background: #fff; border: 1px solid var(--border); border-radius: 10px;
+  padding: 8px 6px; text-align: center; color: var(--text);
+  transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
+}
+.capture-tile:hover:not(:disabled):not([aria-disabled="true"]) { border-color: var(--block-accent); }
+.capture-tile.active {
+  border-color: var(--block-accent); box-shadow: 0 0 0 1px var(--block-accent); background: var(--block-tint);
+}
+.capture-tile:disabled, .capture-tile[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+.capture-tile-head {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  font-size: 10px; font-weight: 600; color: var(--block-accent); line-height: 1.2;
+}
+.capture-tile-select {
+  font-size: 10px; color: var(--text); width: 100%; text-align: center; text-align-last: center;
+  border: 1px solid var(--border); border-radius: 6px; padding: 2px 3px; background: #fff;
+}
+.capture-tile-note { font-size: 8px; color: var(--muted); margin: 0; line-height: 1.2; }
+
+@media (max-width: 420px) { .capture-mode-grid { grid-template-columns: repeat(2, 1fr); } }
+
 
 .record-cta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .record-cta-btn {
@@ -169,7 +214,6 @@
 .record-cta-square { width: 10px; height: 10px; border-radius: 2px; background: currentColor; }
 .record-elapsed { font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600; }
 
-/* --- Overlay (camera bubble) config --------------------------------------------- */
 
 .overlay-cfg {
   border: none; background: transparent; padding: 0;
@@ -185,7 +229,34 @@
 .overlay-cfg .checkbox { justify-content: flex-start; gap: 8px; font-size: 13px; color: var(--text); flex-wrap: wrap; }
 .overlay-cfg input[type="range"] { accent-color: var(--block-accent); }
 
-/* --- Cursor picker -------------------------------------------------------------- */
+
+.header-toggle {
+  margin-left: auto; flex: none;
+  display: flex; align-items: center; gap: 8px;
+  background: transparent; border: none; color: var(--muted);
+  padding: 0; font-size: 12px; font-weight: 500; cursor: default;
+  transition: color 150ms ease;
+}
+.header-toggle:hover:not(:disabled) { color: var(--text); }
+.header-toggle.on { color: var(--block-accent); }
+.header-toggle:disabled { opacity: .4; cursor: not-allowed; }
+.header-toggle > span:first-child { min-width: 24px; text-align: right; }
+.header-toggle-switch {
+  flex: none; width: 30px; height: 17px; border-radius: 999px; padding: 2px;
+  background: var(--border); display: flex; transition: background 150ms ease;
+}
+.header-toggle.on .header-toggle-switch { background: var(--block-accent); }
+.header-toggle-knob {
+  width: 13px; height: 13px; border-radius: 50%; background: var(--bg);
+  transition: transform 150ms ease;
+}
+.header-toggle.on .header-toggle-knob { transform: translateX(13px); }
+
+.record-block-head > .camera-header-toggles { flex: none; min-width: 0; }
+.camera-header-toggles { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.camera-header-toggles .header-toggle { margin-left: 0; }
+
+
 
 .cursor-style-picker { display: flex; flex-direction: column; gap: 10px; font-size: 12px; }
 
@@ -193,8 +264,6 @@
   display: flex; align-items: center; gap: 10px; width: 100%;
   background: var(--bg); border: 1px solid var(--border); color: var(--muted);
   padding: 8px 10px; border-radius: 11px; font-size: 12px; text-align: left;
-  /* Same reasoning as .cursor-style-btn below: no `pointer`, which would swap in
-     IDC_HAND and fight the cursor preview. */
   cursor: default;
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
@@ -217,16 +286,11 @@
 .cursor-hide-toggle.on .cursor-hide-knob { transform: translateX(14px); }
 
 .cursor-style-options { display: flex; flex-direction: row; gap: 6px; flex-wrap: wrap; }
-/* The tiles stay visible while the cursor is hidden — they're what the toggle is turning
-   off, so hiding them entirely would make the toggle look like it removed a setting. */
 .cursor-style-options.dimmed { opacity: .45; }
 .cursor-style-btn {
   display: flex; align-items: center; justify-content: center;
   background: var(--bg); border: 1px solid var(--border); color: var(--muted);
   width: 36px; height: 36px; padding: 0; border-radius: 11px;
-  /* Deliberately NOT `pointer`. Hovering a tile previews the style by swapping the system
-     arrow (OCR_NORMAL); a `pointer` cursor makes Windows draw IDC_HAND instead, so the
-     swap happens to a cursor that isn't on screen and the preview looks broken. */
   cursor: default;
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease, transform 120ms ease;
 }
@@ -248,7 +312,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .record-hero, .record-block, .stage-preview, .stage-preview.is-recording, .record-live-pill,
-  .cam-bubble, .record-cta-dot, .cursor-style-btn.active {
+  .record-cta-dot, .cursor-style-btn.active {
     animation: none;
   }
 }

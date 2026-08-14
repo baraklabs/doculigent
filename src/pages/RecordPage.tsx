@@ -1,10 +1,32 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Pencil, Monitor, Video, Mic, MousePointer2, FolderOpen, Info } from "lucide-react";
-import type { CaptureTarget, MicConfig, OverlayConfig } from "@shared/types/models";
+import {
+  Pencil,
+  Monitor,
+  AppWindow,
+  Crop,
+  Camera,
+  Video,
+  Mic,
+  Volume2,
+  MousePointer2,
+  FolderOpen,
+  Info,
+  ChevronDown,
+} from "lucide-react";
+import type {
+  AreaRect,
+  CaptureMode,
+  CaptureTarget,
+  MicConfig,
+  OverlayConfig,
+  SystemAudioConfig,
+} from "@shared/types/models";
 import { useRecordingStore, useSavingRecording } from "../store/recordingStore";
 import { desktopConstraints } from "../services/recording/constraints";
 import { recordingService } from "../services/recording/RecordingService";
+import { drawLetterboxed, CANVAS_WIDTH, CANVAS_HEIGHT } from "../services/recording/compositor";
+import { getSystemAudioStream } from "../services/recording/AudioRecordingService";
 import { SettingsService } from "../services/settings/SettingsService";
 import { AnnotationToolbar } from "../components/AnnotationToolbar";
 import "./RecordPage.css";
@@ -16,6 +38,7 @@ const DEFAULT_OVERLAY: OverlayConfig = {
   showCamera: false,
   cameraDeviceId: null,
   cursorHighlight: "hidden",
+  mirrorCamera: true,
 };
 
 const ARROW_PATH = "M3 2l0 15 4-4 2.5 5.5 2.5-1.2-2.4-5.3 5.4 0z";
@@ -29,8 +52,6 @@ function ArrowCursorIcon() {
   );
 }
 
-/** The same arrow struck through — the usual "off" reading, and it makes clear that what's
- *  hidden is the pointer itself rather than some highlight effect on top of it. */
 function NoCursorIcon() {
   return (
     <svg viewBox="0 0 22 22" width="16" height="16" aria-hidden="true">
@@ -59,14 +80,10 @@ const CURSOR_STYLES: {
 const CURSOR_HINT =
   "";
 
-/** Where the toggle returns to when the cursor is switched back on, if the user never
- *  picked a style themselves. */
+
 const FALLBACK_VISIBLE_STYLE: OverlayConfig["cursorHighlight"] = "default";
 
-/** "Recording 29-07-26 11:23" — the default title, timestamped so a batch of
- *  never-renamed recordings in the Library are still distinguishable from each other
- *  instead of all reading as the same "Untitled recording" (same idea as MeetingPage.tsx's
- *  defaultMeetingTitle). */
+
 function defaultRecordingTitle(): string {
   const now = new Date();
   const pad = (n: number) => n.toString().padStart(2, "0");
@@ -85,8 +102,6 @@ export function RecordPage() {
   const { data: targets = [] } = useQuery<CaptureTarget[]>({
     queryKey: ["captureTargets"],
     queryFn: () => window.api.capture.listTargets(),
-    // Re-checked on focus: granting Screen Recording access happens in System Settings,
-    // outside the app, so this is the only signal we get that it's worth asking again.
     refetchOnWindowFocus: true,
   });
   const { data: screenPermission } = useQuery({
@@ -96,57 +111,99 @@ export function RecordPage() {
   });
   const screenPermissionDenied = targets.length === 0 && screenPermission && screenPermission.screen !== "granted";
   const [targetId, setTargetId] = useState("");
+  const [captureMode, setCaptureMode] = useState<CaptureMode>("display");
+  const [areaRect, setAreaRect] = useState<AreaRect | null>(null);
+  const windowTargets = useMemo(() => targets.filter((t) => t.kind === "window"), [targets]);
 
   const [overlay, setOverlay] = useState<OverlayConfig>(DEFAULT_OVERLAY);
   const [title, setTitle] = useState(() => defaultRecordingTitle());
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [preferredTargetId, setPreferredTargetId] = useState<string | null>(null);
   const [mic, setMic] = useState<MicConfig>({ deviceId: null, muted: false });
+  const [systemAudio, setSystemAudio] = useState<SystemAudioConfig>({ enabled: false, sourceId: null });
+
   useEffect(() => {
     SettingsService.getRecordSettings()
-      .then(({ overlay: savedOverlay, targetId: savedTargetId, mic: savedMic }) => {
-        if (savedOverlay) setOverlay(savedOverlay);
-        setPreferredTargetId(savedTargetId);
-        if (savedMic) setMic(savedMic);
-      })
+      .then(
+        ({
+          overlay: savedOverlay,
+          targetId: savedTargetId,
+          mic: savedMic,
+          systemAudio: savedSystemAudio,
+          captureMode: savedCaptureMode,
+          areaRect: savedAreaRect,
+        }) => {
+          if (savedOverlay) setOverlay(savedOverlay);
+          setPreferredTargetId(savedTargetId);
+          if (savedMic) setMic(savedMic);
+          if (savedSystemAudio) setSystemAudio(savedSystemAudio);
+          if (savedCaptureMode) setCaptureMode(savedCaptureMode);
+          if (savedAreaRect) setAreaRect(savedAreaRect);
+        }
+      )
       .finally(() => setSettingsLoaded(true));
   }, []);
 
   useEffect(() => {
-    if (targetId || targets.length === 0) return;
-    const preferred = preferredTargetId && targets.some((t) => t.id === preferredTargetId) ? preferredTargetId : targets[0].id;
-    setTargetId(preferred);
-  }, [targets, targetId, preferredTargetId]);
+    const shouldShow = overlay.showCamera && captureMode !== "camera";
+    if (!shouldShow) {
+      window.api.cameraBubble.close().catch(() => {});
+      return;
+    }
+    window.api.cameraBubble.open({ mirror: overlay.mirrorCamera, cameraDeviceId: overlay.cameraDeviceId }).catch(() => {});
+  }, [overlay.showCamera, overlay.mirrorCamera, overlay.cameraDeviceId, captureMode]);
 
   useEffect(() => {
-    if (!settingsLoaded || !targetId) return;
-    SettingsService.setRecordSettings(overlay, targetId, mic).catch(() => {});
-  }, [overlay, targetId, mic, settingsLoaded]);
+    return window.api.cameraBubble.onClosedByUser(() => {
+      setOverlay((prev) => (prev.showCamera ? { ...prev, showCamera: false } : prev));
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      window.api.cameraBubble.close().catch(() => {});
+    };
+  }, []);
+
+  const [displayTargets, setDisplayTargets] = useState<CaptureTarget[]>([]);
+  useEffect(() => {
+    const displays = targets.filter((t) => t.kind === "display");
+    setDisplayTargets(displays);
+    setSystemAudio((current) => (current.sourceId ? current : { ...current, sourceId: displays[0]?.id ?? null }));
+  }, [targets]);
+
+  useEffect(() => {
+    if (captureMode === "camera") return;
+    const pool = captureMode === "window" ? windowTargets : displayTargets;
+    if (pool.length === 0) {
+      if (targetId) setTargetId("");
+      return;
+    }
+    if (targetId && pool.some((t) => t.id === targetId)) return;
+    const preferred = preferredTargetId && pool.some((t) => t.id === preferredTargetId) ? preferredTargetId : pool[0].id;
+    setTargetId(preferred);
+  }, [captureMode, windowTargets, displayTargets, targetId, preferredTargetId]);
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    SettingsService.setRecordSettings(overlay, targetId || null, mic, systemAudio, captureMode, areaRect).catch(() => {});
+  }, [overlay, targetId, mic, systemAudio, captureMode, areaRect, settingsLoaded]);
 
   const recordingRef = useRef(recording);
   useEffect(() => {
     recordingRef.current = recording;
   }, [recording]);
 
-  // Selecting or hovering a style previews it on the real pointer. "hidden" is the one
-  // style with nothing to preview — it's applied by RecordingService once recording
-  // starts, so here it just means "leave the pointer alone".
   function applyCursorForStyle(style: OverlayConfig["cursorHighlight"]) {
     if (style === "default" || style === "hidden") window.api.cursor.restore().catch(() => {});
     else window.api.cursor.apply(style).catch(() => {});
   }
   useEffect(() => {
-    // Never while recording: whatever the pointer looked like when recording started is
-    // already what's being captured (baked in for the swap styles, or excluded entirely
-    // for "hidden" via gdigrab's draw_mouse) — touching it mid-take would just desync the
-    // picker's preview from the actual capture.
     if (recordingRef.current) return;
     applyCursorForStyle(overlay.cursorHighlight);
   }, [overlay.cursorHighlight]);
 
   const cursorHidden = overlay.cursorHighlight === "hidden";
-  // Toggling the cursor back on should land on the style the user had before hiding it,
-  // not reset them to the system arrow every time.
   const [lastVisibleStyle, setLastVisibleStyle] =
     useState<OverlayConfig["cursorHighlight"]>(FALLBACK_VISIBLE_STYLE);
   function toggleCursorHidden() {
@@ -192,14 +249,9 @@ export function RecordPage() {
   const [micError, setMicError] = useState<string | null>(null);
   const screenVideoRef = useRef<HTMLVideoElement>(null);
   const [screenError, setScreenError] = useState<string | null>(null);
+  const [screenVideoSize, setScreenVideoSize] = useState({ width: 0, height: 0 });
   useEffect(() => {
-    if (!targetId) return;
-    // The ordinary pipeline's canvas takes over as the visible preview once recording
-    // starts (see the recordingPreviewRef effect below), so this raw stream is torn down —
-    // except in native (gdigrab) mode, where there's no compositing canvas and this stream
-    // stays the preview for the whole recording. Read fresh rather than from React state:
-    // recordingService.start() has already resolved by the time `recording` flips true and
-    // this effect re-runs, so the value is correct with no extra render lag.
+    if (!targetId || captureMode === "camera") return;
     if (recording && !recordingService.isNativeCapture()) return;
     let stream: MediaStream | null = null;
     let cancelled = false;
@@ -219,7 +271,7 @@ export function RecordPage() {
       cancelled = true;
       stream?.getTracks().forEach((t) => t.stop());
     };
-  }, [targetId, recording]);
+  }, [targetId, recording, captureMode]);
 
   const recordingPreviewRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -237,7 +289,7 @@ export function RecordPage() {
   }, [recording]);
 
   useEffect(() => {
-    if (!overlay.showCamera || (recording && !recordingService.isNativeCapture())) {
+    if (captureMode !== "camera" || (recording && !recordingService.isNativeCapture())) {
       setCamError(null);
       return;
     }
@@ -260,7 +312,7 @@ export function RecordPage() {
       cancelled = true;
       stream?.getTracks().forEach((t) => t.stop());
     };
-  }, [overlay.showCamera, overlay.cameraDeviceId, recording]);
+  }, [overlay.cameraDeviceId, recording, captureMode]);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -300,6 +352,93 @@ export function RecordPage() {
     };
   }, [mic.deviceId]);
 
+  const [systemAudioLevel, setSystemAudioLevel] = useState(0);
+  const [systemAudioError, setSystemAudioError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!systemAudio.enabled || !systemAudio.sourceId || recording) {
+      setSystemAudioLevel(0);
+      setSystemAudioError(null);
+      return;
+    }
+    let stream: MediaStream | null = null;
+    let audioCtx: AudioContext | null = null;
+    let raf = 0;
+    let cancelled = false;
+    getSystemAudioStream(systemAudio.sourceId)
+      .then(async (s) => {
+        if (cancelled) {
+          s.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        stream = s;
+        audioCtx = new AudioContext();
+        await audioCtx.resume().catch(() => {});
+        const source = audioCtx.createMediaStreamSource(s);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        const tick = () => {
+          analyser.getByteFrequencyData(data);
+          setSystemAudioLevel(data.reduce((a, b) => a + b, 0) / data.length);
+          raf = requestAnimationFrame(tick);
+        };
+        tick();
+        setSystemAudioError(null);
+      })
+      .catch((e) => setSystemAudioError(String(e)));
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      stream?.getTracks().forEach((t) => t.stop());
+      audioCtx?.close();
+    };
+  }, [systemAudio.enabled, systemAudio.sourceId, recording]);
+
+  const stagePreviewRef = useRef<HTMLDivElement>(null);
+
+  const [selectingArea, setSelectingArea] = useState(false);
+  async function openAreaSelector() {
+    setSelectingArea(true);
+    try {
+      await window.api.areaSelect.open();
+    } catch {
+      setSelectingArea(false);
+    }
+  }
+  useEffect(() => {
+    const unsubCompleted = window.api.areaSelect.onCompleted(({ targetId: pickedTargetId, rect }) => {
+      setSelectingArea(false);
+      setCaptureMode("area");
+      setTargetId(pickedTargetId);
+      setAreaRect(rect);
+    });
+    const unsubCancelled = window.api.areaSelect.onCancelled(() => setSelectingArea(false));
+    return () => {
+      unsubCompleted();
+      unsubCancelled();
+    };
+  }, []);
+
+  const areaCropCanvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    if (captureMode !== "area" || !areaRect || recording) return;
+    const canvas = areaCropCanvasRef.current;
+    const video = screenVideoRef.current;
+    if (!canvas || !video) return;
+    canvas.width = CANVAS_WIDTH;
+    canvas.height = CANVAS_HEIGHT;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    let raf = 0;
+    const draw = () => {
+      drawLetterboxed(ctx, video, CANVAS_WIDTH, CANVAS_HEIGHT, areaRect);
+      raf = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => cancelAnimationFrame(raf);
+  }, [captureMode, areaRect, recording]);
+
   async function browseSaveDir() {
 
     if (pickingDir) return;
@@ -320,26 +459,25 @@ export function RecordPage() {
   }
 
   async function handleStart() {
-    await start(targetId, overlay, mic, title);
+    await start(targetId, overlay, mic, systemAudio, title, "record", captureMode, captureMode === "area" ? areaRect : null);
   }
 
   async function handleStop() {
     await stop();
   }
 
-  const bubbleStyle: CSSProperties = {
-    position: "absolute",
-    width: `${overlay.sizePct}%`,
-    aspectRatio: "1 / 1",
-    ...(overlay.corner.startsWith("top") ? { top: 0 } : { bottom: 0 }),
-    ...(overlay.corner.endsWith("left") ? { left: 0 } : { right: 0 }),
-  };
+  const startDisabled =
+    (captureMode !== "camera" && !targetId) || (captureMode === "area" && !areaRect) || busy || saving;
+
+  const selectedCameraLabel = overlay.cameraDeviceId
+    ? cameraDevices.find((d) => d.deviceId === overlay.cameraDeviceId)?.label || "Camera"
+    : "Default camera";
 
   return (
     <section className="panel record-page">
          <div className="record-layout">
         <div className="record-preview-col">
-          <div className={`stage-preview${recording ? " is-recording" : ""}`}>
+          <div className={`stage-preview${recording ? " is-recording" : ""}`} ref={stagePreviewRef}>
             {recording && (
               <span className="record-live-pill">
                 <span className="record-live-dot" />
@@ -348,21 +486,45 @@ export function RecordPage() {
             )}
             {recording && !recordingService.isNativeCapture() ? (
               <div ref={recordingPreviewRef} className="recording-canvas-host" />
+            ) : captureMode === "camera" ? (
+              camError ? (
+                <div className="stage-empty">Camera unavailable: {camError}</div>
+              ) : (
+                <video
+                  ref={camVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  style={overlay.mirrorCamera ? undefined : { transform: "scaleX(-1)" }}
+                />
+              )
             ) : screenError ? (
               <div className="stage-empty">Screen preview unavailable: {screenError}</div>
             ) : (
-              <video ref={screenVideoRef} autoPlay muted playsInline />
+              <>
+                <video
+                  ref={screenVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  style={captureMode === "area" && areaRect && !recording ? { display: "none" } : undefined}
+                  onLoadedMetadata={(e) => {
+                    const v = e.currentTarget;
+                    setScreenVideoSize({ width: v.videoWidth, height: v.videoHeight });
+                  }}
+                />
+                {/* Once an area is picked, show only that cropped region — the rest of the
+                    frame black — instead of the full display with a selection rectangle drawn
+                    over it. */}
+                {captureMode === "area" && areaRect && !recording && (
+                  <canvas ref={areaCropCanvasRef} className="area-crop-preview" />
+                )}
+              </>
             )}
-            {/* In the ordinary pipeline, the compositing canvas above already has the
-                bubble baked in once recording starts, so this floating preview is only
-                needed before recording. In native (gdigrab) mode there's no such canvas —
-                the screen goes straight to disk — so this stays the camera preview
-                throughout, same as before recording. */}
-            {overlay.showCamera && (!recording || recordingService.isNativeCapture()) && (
-              <div className={`cam-bubble${overlay.circular ? " circular" : ""}`} style={bubbleStyle}>
-                <video ref={camVideoRef} autoPlay muted playsInline />
-              </div>
-            )}
+            {/* No in-app bubble preview here anymore — "Show camera" opens a real floating
+                desktop window (see cameraBubbleWindow.ts) which shows up in this preview on
+                its own, exactly like it would in the actual recording, once it's positioned
+                somewhere within whatever's being captured. */}
           </div>
 
           <div className="record-cta">
@@ -370,7 +532,7 @@ export function RecordPage() {
               <button
                 className="record-cta-btn"
                 onClick={handleStart}
-                disabled={!targetId || busy || saving}
+                disabled={startDisabled}
                 title={saving ? "Finishing the previous recording…" : undefined}
               >
                 <span className="record-cta-dot" />
@@ -405,20 +567,123 @@ export function RecordPage() {
               <span className="record-block-icon"><Monitor size={16} /></span>
               <div>
                 <div className="record-block-title">What to capture</div>
-                <p className="record-block-sub">Pick a screen or a single window</p>
               </div>
             </div>
-            <label className="field">
-              <span>Capture source</span>
-              <select value={targetId} onChange={(e) => setTargetId(e.target.value)} disabled={recording || busy}>
-                {targets.length === 0 && <option value="">(no sources found)</option>}
-                {targets.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.kind}: {t.title}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className="capture-mode-grid">
+              <button
+                type="button"
+                className={`capture-tile${captureMode === "display" ? " active" : ""}`}
+                disabled={recording || busy}
+                onClick={() => setCaptureMode("display")}
+              >
+                <div className="capture-tile-head">
+                  <Monitor size={36} />
+                  <span>Display</span>
+                </div>
+                <select
+                  className="capture-tile-select"
+                  value={captureMode === "display" ? targetId : ""}
+                  disabled={recording || busy || displayTargets.length === 0}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => {
+                    setCaptureMode("display");
+                    setTargetId(e.target.value);
+                  }}
+                >
+                  {displayTargets.length === 0 && <option value="">(no displays found)</option>}
+                  {displayTargets.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.title}
+                    </option>
+                  ))}
+                </select>
+              </button>
+
+              <button
+                type="button"
+                className={`capture-tile${captureMode === "window" ? " active" : ""}`}
+                disabled={recording || busy}
+                onClick={() => setCaptureMode("window")}
+              >
+                <div className="capture-tile-head">
+                  <AppWindow size={36} />
+                  <span>Window</span>
+                </div>
+                <select
+                  className="capture-tile-select"
+                  value={captureMode === "window" ? targetId : ""}
+                  disabled={recording || busy || windowTargets.length === 0}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => {
+                    setCaptureMode("window");
+                    setTargetId(e.target.value);
+                  }}
+                >
+                  {windowTargets.length === 0 && <option value="">(no windows found)</option>}
+                  {windowTargets.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.title}
+                    </option>
+                  ))}
+                </select>
+              </button>
+
+              {/* A <div>, not a <button> like the other tiles — it hosts a real nested
+                  "Select area…" button (see below), and a button can't nest a button. */}
+              <div
+                role="button"
+                tabIndex={0}
+                aria-pressed={captureMode === "area"}
+                className={`capture-tile${captureMode === "area" ? " active" : ""}`}
+                aria-disabled={recording || busy}
+                onClick={() => {
+                  if (!recording && !busy) setCaptureMode("area");
+                }}
+                onKeyDown={(e) => {
+                  if ((e.key === "Enter" || e.key === " ") && !recording && !busy) {
+                    e.preventDefault();
+                    setCaptureMode("area");
+                  }
+                }}
+              >
+                <div className="capture-tile-head">
+                  <Crop size={36} />
+                  <span>Area</span>
+                </div>
+                <button
+                  type="button"
+                  className="capture-tile-action"
+                  disabled={recording || busy || selectingArea}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openAreaSelector();
+                  }}
+                >
+                  {selectingArea ? "Selecting…" : "Select area…"}
+                </button>
+                {areaRect && (
+                  <p className="capture-tile-note">
+                    {Math.round((screenVideoSize.width || 0) * areaRect.width)} ×{" "}
+                    {Math.round((screenVideoSize.height || 0) * areaRect.height)}
+                  </p>
+                )}
+              </div>
+
+              <button
+                type="button"
+                className={`capture-tile${captureMode === "camera" ? " active" : ""}`}
+                disabled={recording || busy}
+                onClick={() => setCaptureMode("camera")}
+              >
+                <div className="capture-tile-head">
+                  <Camera size={36} />
+                  <span>Camera only</span>
+                </div>
+                {/* Read-only — the actual picker lives in the Camera block below, same as
+                    every other capture mode. */}
+                <p className="capture-tile-note">{selectedCameraLabel}</p>
+              </button>
+            </div>
             {screenPermissionDenied && (
               <p className="error">
                 Screen Recording permission is required.{" "}
@@ -434,113 +699,136 @@ export function RecordPage() {
             <div className="record-block-head">
               <span className="record-block-icon"><Video size={16} /></span>
               <div>
-                <div className="record-block-title">Camera bubble</div>
-                <p className="record-block-sub">Your webcam, composited into the corner</p>
+                {captureMode === "camera" || overlay.showCamera ? (
+                  <div className="record-block-title-picker">
+                    <select
+                      className="record-block-title-select"
+                      value={overlay.cameraDeviceId ?? ""}
+                      onChange={(e) => setOverlay({ ...overlay, cameraDeviceId: e.target.value || null })}
+                    >
+                      <option value="">Default camera</option>
+                      {cameraDevices.map((d, i) => (
+                        <option key={d.deviceId || i} value={d.deviceId}>
+                          {d.label || `Camera ${i + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown size={12} className="record-block-sub-picker-icon" />
+                  </div>
+                ) : (
+                  <div className="record-block-title">Camera</div>
+                )}
+              </div>
+              <div className="camera-header-toggles">
+                {(captureMode === "camera" || overlay.showCamera) && (
+                  <button
+                    type="button"
+                    className={`header-toggle${overlay.mirrorCamera ? " on" : ""}`}
+                    aria-pressed={overlay.mirrorCamera}
+                    onClick={() => setOverlay({ ...overlay, mirrorCamera: !overlay.mirrorCamera })}
+                  >
+                    <span>Mirror</span>
+                    <span className="header-toggle-switch" aria-hidden="true">
+                      <span className="header-toggle-knob" />
+                    </span>
+                  </button>
+                )}
+                {captureMode !== "camera" && (
+                  <button
+                    type="button"
+                    className={`header-toggle${overlay.showCamera ? " on" : ""}`}
+                    aria-pressed={overlay.showCamera}
+                    onClick={() => setOverlay({ ...overlay, showCamera: !overlay.showCamera })}
+                  >
+                    <span>{overlay.showCamera ? "On" : "Off"}</span>
+                    <span className="header-toggle-switch" aria-hidden="true">
+                      <span className="header-toggle-knob" />
+                    </span>
+                  </button>
+                )}
               </div>
             </div>
-            <div className="overlay-cfg">
-              <label className="checkbox">
-                Show camera
-                <input
-                  type="checkbox"
-                  checked={overlay.showCamera}
-                  onChange={(e) => setOverlay({ ...overlay, showCamera: e.target.checked })}
-                />
-              </label>
-              <label className="checkbox">
-                Circular bubble
-                <input
-                  type="checkbox"
-                  checked={overlay.circular}
-                  disabled={!overlay.showCamera}
-                  onChange={(e) => setOverlay({ ...overlay, circular: e.target.checked })}
-                />
-              </label>
-              <label>
-                Camera
-                <select
-                  value={overlay.cameraDeviceId ?? ""}
-                  disabled={!overlay.showCamera}
-                  onChange={(e) => setOverlay({ ...overlay, cameraDeviceId: e.target.value || null })}
-                >
-                  <option value="">Default</option>
-                  {cameraDevices.map((d, i) => (
-                    <option key={d.deviceId || i} value={d.deviceId}>
-                      {d.label || `Camera ${i + 1}`}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Corner
-                <select
-                  value={overlay.corner}
-                  disabled={!overlay.showCamera}
-                  onChange={(e) => setOverlay({ ...overlay, corner: e.target.value as OverlayConfig["corner"] })}
-                >
-                  <option value="top-left">Top left</option>
-                  <option value="top-right">Top right</option>
-                  <option value="bottom-left">Bottom left</option>
-                  <option value="bottom-right">Bottom right</option>
-                </select>
-              </label>
-              <label>
-                Size {overlay.sizePct}%
-                <input
-                  type="range"
-                  min={8}
-                  max={40}
-                  value={overlay.sizePct}
-                  disabled={!overlay.showCamera}
-                  onChange={(e) => setOverlay({ ...overlay, sizePct: Number(e.target.value) })}
-                />
-              </label>
-            </div>
+            {/* Shape/position/size are no longer set here at all — the bubble configures its
+                own look via its in-window toolbar, and is dragged/resized directly on
+                screen, the way Cap and similar tools work (see CameraBubblePage.tsx). */}
           </fieldset>
 
-          <fieldset className="record-block record-block-audio" disabled={recording || busy}>
-            <div className="record-block-head">
-              <span className="record-block-icon"><Mic size={16} /></span>
-              <div>
-                <div className="record-block-title">Microphone</div>
-                <p className="record-block-sub">Voice-over recorded alongside the screen</p>
-              </div>
-            </div>
-            <div className="overlay-cfg mic-cfg">
-              <label>
-                Device
-                <select
-                  value={mic.deviceId ?? ""}
-                  disabled={mic.muted}
-                  onChange={(e) => setMic({ ...mic, deviceId: e.target.value || null })}
+          <div className="record-audio-row">
+            <fieldset className="record-block record-block-audio" disabled={recording || busy}>
+              <div className="record-block-head">
+                <span className="record-block-icon"><Mic size={16} /></span>
+                <div className="record-block-title-slot">
+                  {mic.muted ? (
+                    <div className="record-block-title">Microphone</div>
+                  ) : (
+                    <div className="record-block-title-picker">
+                      <select
+                        className="record-block-title-select"
+                        value={mic.deviceId ?? ""}
+                        onChange={(e) => setMic({ ...mic, deviceId: e.target.value || null })}
+                      >
+                        <option value="">Default microphone</option>
+                        {micDevices.map((d, i) => (
+                          <option key={d.deviceId || i} value={d.deviceId}>
+                            {d.label || `Microphone ${i + 1}`}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown size={12} className="record-block-sub-picker-icon" />
+                    </div>
+                  )}
+                  {!mic.muted && (
+                    <div className="record-block-sub-meter">
+                      <div
+                        className="record-block-sub-meter-fill"
+                        style={{ width: `${Math.min(100, (micLevel / 160) * 100)}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className={`header-toggle${!mic.muted ? " on" : ""}`}
+                  aria-pressed={!mic.muted}
+                  onClick={() => setMic({ ...mic, muted: !mic.muted })}
                 >
-                  <option value="">Default</option>
-                  {micDevices.map((d, i) => (
-                    <option key={d.deviceId || i} value={d.deviceId}>
-                      {d.label || `Microphone ${i + 1}`}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="checkbox">
-                Mute microphone
-                <input
-                  type="checkbox"
-                  checked={mic.muted}
-                  onChange={(e) => setMic({ ...mic, muted: e.target.checked })}
-                />
-              </label>
-            </div>
-            <div className="mic-meter">
-              <span className="muted">Level{mic.muted ? " (muted)" : ""}</span>
-              <div className="mic-meter-track">
-                <div
-                  className="mic-meter-fill"
-                  style={{ width: `${mic.muted ? 0 : Math.min(100, (micLevel / 160) * 100)}%` }}
-                />
+                  <span>Mute</span>
+                  <span className="header-toggle-switch" aria-hidden="true">
+                    <span className="header-toggle-knob" />
+                  </span>
+                </button>
+              </div>
+            </fieldset>
+
+            <div className="record-block record-block-system-audio">
+              <div className="record-block-head">
+                <span className="record-block-icon"><Volume2 size={16} /></span>
+                <div className="record-block-title-slot">
+                  <div className="record-block-title">System sound</div>
+                  {systemAudio.enabled && (
+                    <div className="record-block-sub-meter" title={systemAudioError ?? undefined}>
+                      <div
+                        className="record-block-sub-meter-fill"
+                        style={{ width: `${Math.min(100, (systemAudioLevel / 160) * 100)}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className={`header-toggle${systemAudio.enabled ? " on" : ""}`}
+                  aria-pressed={systemAudio.enabled}
+                  disabled={displayTargets.length === 0 || recording || busy}
+                  onClick={() => setSystemAudio({ ...systemAudio, enabled: !systemAudio.enabled })}
+                >
+                  <span>{systemAudio.enabled ? "On" : "Off"}</span>
+                  <span className="header-toggle-switch" aria-hidden="true">
+                    <span className="header-toggle-knob" />
+                  </span>
+                </button>
               </div>
             </div>
-          </fieldset>
+          </div>
 
           <div className="record-block record-block-cursor">
             <div className="record-block-head">
@@ -579,8 +867,6 @@ export function RecordPage() {
                     type="button"
                     className={`cursor-style-btn${overlay.cursorHighlight === s.value ? " active" : ""}`}
                     disabled={busy || cursorHidden}
-                    // A plain radio choice — "System cursor" is itself an option in the
-                    // list, so there's nothing for clicking the active one to toggle to.
                     onClick={() => setOverlay({ ...overlay, cursorHighlight: s.value })}
                     onMouseEnter={() => applyCursorForStyle(s.value)}
                     onMouseLeave={() => applyCursorForStyle(overlay.cursorHighlight)}

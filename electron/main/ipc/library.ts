@@ -20,6 +20,7 @@ const NO_OVERLAY: OverlayConfig = {
   showCamera: false,
   cameraDeviceId: null,
   cursorHighlight: "default",
+  mirrorCamera: false,
 };
 
 type PickKind = "video" | "audio";

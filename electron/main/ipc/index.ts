@@ -1,6 +1,8 @@
 import { registerCaptureIpc } from "./capture";
 import { registerCursorIpc } from "./cursor";
 import { registerScreenCaptureIpc } from "./screenCapture";
+import { registerCameraBubbleIpc } from "./cameraBubble";
+import { registerAreaSelectIpc } from "./areaSelect";
 import { registerAnnotationIpc } from "./annotation";
 import { registerRecordingIpc } from "./recording";
 import { registerLibraryIpc } from "./library";
@@ -19,6 +21,8 @@ export function registerIpcHandlers(): void {
   registerCaptureIpc();
   registerCursorIpc();
   registerScreenCaptureIpc();
+  registerCameraBubbleIpc();
+  registerAreaSelectIpc();
   registerAnnotationIpc();
   registerRecordingIpc();
   registerLibraryIpc();

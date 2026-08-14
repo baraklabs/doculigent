@@ -1,4 +1,13 @@
-import type { AutoTranscribeSettings, LlmModelProfile, LlmProviderKind, MicConfig, OverlayConfig } from "@shared/types/models";
+import type {
+  AreaRect,
+  AutoTranscribeSettings,
+  CaptureMode,
+  LlmModelProfile,
+  LlmProviderKind,
+  MicConfig,
+  OverlayConfig,
+  SystemAudioConfig,
+} from "@shared/types/models";
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
 
 export const SettingsService = {
@@ -26,11 +35,25 @@ export const SettingsService = {
   defaultProfileTemplate(kind: LlmProviderKind): Promise<LlmModelProfile> {
     return window.api.settings.defaultProfileTemplate(kind);
   },
-  getRecordSettings(): Promise<{ overlay: OverlayConfig | null; targetId: string | null; mic: MicConfig | null }> {
+  getRecordSettings(): Promise<{
+    overlay: OverlayConfig | null;
+    targetId: string | null;
+    mic: MicConfig | null;
+    systemAudio: SystemAudioConfig | null;
+    captureMode: CaptureMode | null;
+    areaRect: AreaRect | null;
+  }> {
     return window.api.settings.getRecordSettings();
   },
-  setRecordSettings(overlay: OverlayConfig, targetId: string | null, mic: MicConfig | null): Promise<void> {
-    return window.api.settings.setRecordSettings(overlay, targetId, mic);
+  setRecordSettings(
+    overlay: OverlayConfig,
+    targetId: string | null,
+    mic: MicConfig | null,
+    systemAudio: SystemAudioConfig | null,
+    captureMode: CaptureMode | null,
+    areaRect: AreaRect | null
+  ): Promise<void> {
+    return window.api.settings.setRecordSettings(overlay, targetId, mic, systemAudio, captureMode, areaRect);
   },
   getMeetingSettings(): Promise<{
     language: string | null;

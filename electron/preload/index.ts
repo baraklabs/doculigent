@@ -3,7 +3,7 @@ import { Channels } from "@shared/constants/channels";
 import type { DoculigentApi } from "@shared/types/api";
 import type { AuthSession, LoginStatus } from "@shared/types/auth";
 import type { AnnotationCommand, AnnotationState } from "@shared/types/annotation";
-import type { Video } from "@shared/types/models";
+import type { AreaSelectResult, CameraBubbleConfig, Video } from "@shared/types/models";
 import type { TeamFileStatus } from "@shared/types/team";
 import type { StoragePreference } from "@shared/types/storage";
 
@@ -25,8 +25,49 @@ const api: DoculigentApi = {
     stopCapture: () => ipcRenderer.invoke(Channels.cursor.stopCapture),
   },
   screenCapture: {
-    start: (targetId, hideCursor) => ipcRenderer.invoke(Channels.screenCapture.start, targetId, hideCursor),
+    start: (targetId, hideCursor, area) => ipcRenderer.invoke(Channels.screenCapture.start, targetId, hideCursor, area),
     stop: () => ipcRenderer.invoke(Channels.screenCapture.stop),
+  },
+  cameraBubble: {
+    open: (config) => ipcRenderer.invoke(Channels.cameraBubble.open, config),
+    close: () => ipcRenderer.invoke(Channels.cameraBubble.close),
+    updateConfig: (config) => ipcRenderer.invoke(Channels.cameraBubble.updateConfig, config),
+    setShape: (shape) => ipcRenderer.invoke(Channels.cameraBubble.setShape, shape),
+    setShapeRegion: (rects) => ipcRenderer.invoke(Channels.cameraBubble.setShapeRegion, rects),
+    isOpen: () => ipcRenderer.invoke(Channels.cameraBubble.isOpen),
+    getBounds: () => ipcRenderer.invoke(Channels.cameraBubble.getBounds),
+    setBounds: (bounds) => ipcRenderer.invoke(Channels.cameraBubble.setBounds, bounds),
+    onConfigChanged: (callback) => {
+      const listener = (_event: unknown, config: CameraBubbleConfig) => callback(config);
+      ipcRenderer.on(Channels.cameraBubble.configChanged, listener);
+      return () => ipcRenderer.removeListener(Channels.cameraBubble.configChanged, listener);
+    },
+    onClosedByUser: (callback) => {
+      const listener = () => callback();
+      ipcRenderer.on(Channels.cameraBubble.closedByUser, listener);
+      return () => ipcRenderer.removeListener(Channels.cameraBubble.closedByUser, listener);
+    },
+    onHoverChanged: (callback) => {
+      const listener = (_event: unknown, hovering: boolean) => callback(hovering);
+      ipcRenderer.on(Channels.cameraBubble.hoverChanged, listener);
+      return () => ipcRenderer.removeListener(Channels.cameraBubble.hoverChanged, listener);
+    },
+  },
+  areaSelect: {
+    open: () => ipcRenderer.invoke(Channels.areaSelect.open),
+    activate: () => ipcRenderer.invoke(Channels.areaSelect.activate),
+    complete: (targetId, rect) => ipcRenderer.invoke(Channels.areaSelect.complete, targetId, rect),
+    cancel: () => ipcRenderer.invoke(Channels.areaSelect.cancel),
+    onCompleted: (callback) => {
+      const listener = (_event: unknown, result: AreaSelectResult) => callback(result);
+      ipcRenderer.on(Channels.areaSelect.completed, listener);
+      return () => ipcRenderer.removeListener(Channels.areaSelect.completed, listener);
+    },
+    onCancelled: (callback) => {
+      const listener = () => callback();
+      ipcRenderer.on(Channels.areaSelect.cancelled, listener);
+      return () => ipcRenderer.removeListener(Channels.areaSelect.cancelled, listener);
+    },
   },
   annotation: {
     open: () => ipcRenderer.invoke(Channels.annotation.open),
@@ -111,8 +152,8 @@ const api: DoculigentApi = {
     deleteLlmProfile: (id) => ipcRenderer.invoke(Channels.settings.deleteLlmProfile, id),
     defaultProfileTemplate: (kind) => ipcRenderer.invoke(Channels.settings.defaultProfileTemplate, kind),
     getRecordSettings: () => ipcRenderer.invoke(Channels.settings.getRecordSettings),
-    setRecordSettings: (overlay, targetId, mic) =>
-      ipcRenderer.invoke(Channels.settings.setRecordSettings, overlay, targetId, mic),
+    setRecordSettings: (overlay, targetId, mic, systemAudio, captureMode, areaRect) =>
+      ipcRenderer.invoke(Channels.settings.setRecordSettings, overlay, targetId, mic, systemAudio, captureMode, areaRect),
     getMeetingSettings: () => ipcRenderer.invoke(Channels.settings.getMeetingSettings),
     setMeetingSettings: (language, micEnabled, micDeviceId, systemAudioEnabled, systemAudioSourceId) =>
       ipcRenderer.invoke(

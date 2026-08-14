@@ -1,27 +1,16 @@
-/**
- * Orchestrates screen+camera+mic capture and encoding. Two capture pipelines live here:
- *
- *  - The ordinary one (unchanged from before): Chromium's getUserMedia desktop stream is
- *    drawn into a canvas frame-by-frame (letterboxed screen + camera bubble), and
- *    MediaRecorder encodes that canvas. See FUNCTIONALITY.md §7.6 for why this — rather
- *    than piping raw frames into an ffmpeg sidecar — sidesteps the frame-pacing/
- *    duration-collapse bug class entirely.
- *  - The native one, used whenever `window.api.screenCapture.start` reports it's
- *    available (Windows, whole-display target — see electron/main/native/screenCapture.ts):
- *    the screen is recorded directly to disk by ffmpeg's gdigrab, which can genuinely
- *    exclude the cursor from the frames (Chromium's `cursor: "never"` constraint is
- *    silently ignored — verified empirically, not a Chromium docs claim). In this mode the
- *    camera bubble and/or mic are recorded to a small side clip instead, and the main
- *    process combines the two when the recording is saved (see ipc/recording.ts).
- *
- * Either way, the *cursor track* (metadata sidecar for Edit to redraw a cursor from) is
- * sampled the same way regardless of which pipeline recorded the video — see
- * native/cursorTrack.ts.
- */
-import type { CaptureTarget, MicConfig, OverlayConfig } from "@shared/types/models";
+
+import type { AreaRect, CaptureMode, CaptureTarget, MicConfig, OverlayConfig, SystemAudioConfig } from "@shared/types/models";
 import { cameraBubbleRect, OUTPUT_HEIGHT, OUTPUT_WIDTH } from "@shared/lib/cameraBubble";
-import { CANVAS_HEIGHT, CANVAS_WIDTH, drawCameraBubble, drawCameraFrame, drawLetterboxed } from "./compositor";
+import {
+  CANVAS_HEIGHT,
+  CANVAS_WIDTH,
+  drawCameraBubble,
+  drawCameraFrame,
+  drawCameraFullFrame,
+  drawLetterboxed,
+} from "./compositor";
 import { desktopConstraints } from "./constraints";
+import { getSystemAudioStream } from "./AudioRecordingService";
 
 const FPS = 30;
 
@@ -37,7 +26,6 @@ interface SideClipResult {
 }
 
 class RecordingService {
-  // --- Ordinary pipeline state ---------------------------------------------------------
   private screenStream: MediaStream | null = null;
   private screenVideoEl: HTMLVideoElement | null = null;
   private canvas: HTMLCanvasElement | null = null;
@@ -46,14 +34,17 @@ class RecordingService {
   private recorder: MediaRecorder | null = null;
   private chunks: Blob[] = [];
 
-  // --- Shared across both pipelines -----------------------------------------------------
   private cameraStream: MediaStream | null = null;
   private cameraVideoEl: HTMLVideoElement | null = null;
   private micStream: MediaStream | null = null;
+  private systemAudioStream: MediaStream | null = null;
+  private audioMixCtx: AudioContext | null = null;
+  private audioTrack: MediaStreamTrack | null = null;
   private overlay: OverlayConfig | null = null;
+  private captureMode: CaptureMode = "display";
+  private areaRect: AreaRect | null = null;
   private startedAt = 0;
 
-  // --- Native (gdigrab) pipeline state ---------------------------------------------------
   private nativeCapture = false;
   private sideCanvas: HTMLCanvasElement | null = null;
   private sideCtx: CanvasRenderingContext2D | null = null;
@@ -67,26 +58,27 @@ class RecordingService {
     return window.api.capture.listTargets();
   }
 
-  /** True once `start()` has decided this recording is using the native gdigrab pipeline —
-   *  RecordPage uses this to know its own compositing canvas (`getCanvas()`) won't have
-   *  anything in it, and to keep showing the raw desktop preview instead. */
   isNativeCapture(): boolean {
     return this.nativeCapture;
   }
 
-  /** The canvas actually being recorded (already has the camera bubble composited in, see
-   *  `tick`) — RecordPage displays this element directly as the live preview while
-   *  recording, so what you see is exactly the frames going into the file. Null in native
-   *  mode: there's no full-frame canvas, since the screen goes straight to disk via
-   *  gdigrab and only the camera bubble (if any) is composited here. */
   getCanvas(): HTMLCanvasElement | null {
     return this.canvas;
   }
 
-  async start(targetId: string, overlay: OverlayConfig, mic: MicConfig): Promise<void> {
-    this.overlay = overlay;
+  async start(
+    targetId: string,
+    overlay: OverlayConfig,
+    mic: MicConfig,
+    systemAudio: SystemAudioConfig,
+    captureMode: CaptureMode = "display",
+    areaRect: AreaRect | null = null
+  ): Promise<void> {
+    this.captureMode = captureMode;
+    this.areaRect = captureMode === "area" ? areaRect : null;
+    this.overlay = captureMode === "camera" ? { ...overlay, showCamera: false } : overlay;
 
-    if (window.api.system.platform === "darwin") {
+    if (captureMode !== "camera" && window.api.system.platform === "darwin") {
       const permission = await window.api.capture.getPermissionStatus();
       if (permission.screen !== "granted") {
         await window.api.capture.openScreenRecordingSettings();
@@ -96,14 +88,12 @@ class RecordingService {
       }
     }
 
-    // Tried first and unconditionally: only Windows + a whole-display target support it,
-    // and it silently reports unavailable everywhere else so this always falls through to
-    // the ordinary pipeline below.
-    this.nativeCapture = (
-      await window.api.screenCapture.start(targetId, overlay.cursorHighlight === "hidden")
-    ).available;
+    this.nativeCapture =
+      captureMode !== "camera" &&
+      (await window.api.screenCapture.start(targetId, overlay.cursorHighlight === "hidden", this.areaRect ?? undefined))
+        .available;
 
-    if (overlay.showCamera) {
+    if (captureMode === "camera") {
       this.cameraStream = await navigator.mediaDevices.getUserMedia({
         video: overlay.cameraDeviceId ? { deviceId: { exact: overlay.cameraDeviceId } } : true,
       });
@@ -113,6 +103,10 @@ class RecordingService {
         audio: mic.deviceId ? { deviceId: { exact: mic.deviceId } } : true,
       });
     }
+    if (systemAudio.enabled && systemAudio.sourceId) {
+      this.systemAudioStream = await getSystemAudioStream(systemAudio.sourceId);
+    }
+    this.audioTrack = this.resolveAudioTrack();
     if (this.cameraStream) {
       this.cameraVideoEl = document.createElement("video");
       this.cameraVideoEl.srcObject = this.cameraStream;
@@ -121,17 +115,31 @@ class RecordingService {
     }
 
     if (this.nativeCapture) {
-      await this.startSideClip(overlay);
+      await this.startSideClip(this.overlay);
+    } else if (captureMode === "camera") {
+      await this.startCameraOnlyPipeline();
     } else {
       await this.startOrdinaryPipeline(targetId);
     }
 
     this.startedAt = performance.now();
 
-    // Started alongside the encoder(s) above so the track's t=0 lines up with the first
-    // frame. Best-effort: a recording shouldn't fail because its cursor sidecar couldn't
-    // start. Unrelated to which video pipeline is active — always runs.
-    window.api.cursor.startCapture(targetId, overlay.cursorHighlight).catch(() => {});
+    if (captureMode !== "camera") {
+      window.api.cursor.startCapture(targetId, overlay.cursorHighlight).catch(() => {});
+    }
+  }
+
+  private resolveAudioTrack(): MediaStreamTrack | null {
+    const micTrack = this.micStream?.getAudioTracks()[0] ?? null;
+    const systemTrack = this.systemAudioStream?.getAudioTracks()[0] ?? null;
+    if (micTrack && systemTrack) {
+      this.audioMixCtx = new AudioContext();
+      const dest = this.audioMixCtx.createMediaStreamDestination();
+      this.audioMixCtx.createMediaStreamSource(this.micStream!).connect(dest);
+      this.audioMixCtx.createMediaStreamSource(this.systemAudioStream!).connect(dest);
+      return dest.stream.getAudioTracks()[0] ?? null;
+    }
+    return micTrack ?? systemTrack ?? null;
   }
 
   private async startOrdinaryPipeline(targetId: string): Promise<void> {
@@ -147,9 +155,7 @@ class RecordingService {
     this.ctx = this.canvas.getContext("2d");
 
     const canvasStream = this.canvas.captureStream(FPS);
-    if (this.micStream) {
-      for (const track of this.micStream.getAudioTracks()) canvasStream.addTrack(track);
-    }
+    if (this.audioTrack) canvasStream.addTrack(this.audioTrack);
 
     this.recorder = new MediaRecorder(canvasStream, { mimeType: pickMimeType() });
     this.chunks = [];
@@ -160,13 +166,27 @@ class RecordingService {
     this.tick();
   }
 
-  /** Records just the camera bubble (if shown) plus mic (if unmuted) to a small clip that
-   *  the main process later overlays/muxes onto the gdigrab screen video. When neither is
-   *  present, there's nothing to record here — the gdigrab file is already the final
-   *  output as far as this service is concerned. */
+  private async startCameraOnlyPipeline(): Promise<void> {
+    this.canvas = document.createElement("canvas");
+    this.canvas.width = CANVAS_WIDTH;
+    this.canvas.height = CANVAS_HEIGHT;
+    this.ctx = this.canvas.getContext("2d");
+
+    const canvasStream = this.canvas.captureStream(FPS);
+    if (this.audioTrack) canvasStream.addTrack(this.audioTrack);
+
+    this.recorder = new MediaRecorder(canvasStream, { mimeType: pickMimeType() });
+    this.chunks = [];
+    this.recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) this.chunks.push(e.data);
+    };
+    this.recorder.start();
+    this.tick();
+  }
+
   private async startSideClip(overlay: OverlayConfig): Promise<void> {
     this.sideHasVideo = overlay.showCamera && !!this.cameraStream;
-    this.sideHasAudio = !!this.micStream;
+    this.sideHasAudio = !!this.audioTrack;
     if (!this.sideHasVideo && !this.sideHasAudio) return;
 
     let stream: MediaStream;
@@ -177,13 +197,10 @@ class RecordingService {
       this.sideCanvas.height = size;
       this.sideCtx = this.sideCanvas.getContext("2d");
       stream = this.sideCanvas.captureStream(FPS);
-      if (this.micStream) {
-        for (const track of this.micStream.getAudioTracks()) stream.addTrack(track);
-      }
+      if (this.audioTrack) stream.addTrack(this.audioTrack);
       this.sideTick();
     } else {
-      // Mic only, no camera: no canvas needed at all, just record the mic stream directly.
-      stream = this.micStream!;
+      stream = new MediaStream([this.audioTrack!]);
     }
 
     this.sideRecorder = new MediaRecorder(stream, { mimeType: pickMimeType() });
@@ -195,10 +212,16 @@ class RecordingService {
   }
 
   private tick = (): void => {
-    if (!this.ctx || !this.screenVideoEl || !this.overlay) return;
-    drawLetterboxed(this.ctx, this.screenVideoEl, CANVAS_WIDTH, CANVAS_HEIGHT);
-    if (this.overlay.showCamera && this.cameraVideoEl) {
-      drawCameraBubble(this.ctx, this.cameraVideoEl, this.overlay, CANVAS_WIDTH, CANVAS_HEIGHT);
+    if (!this.ctx || !this.overlay) return;
+    if (this.captureMode === "camera") {
+      if (!this.cameraVideoEl) return;
+      drawCameraFullFrame(this.ctx, this.cameraVideoEl, CANVAS_WIDTH, CANVAS_HEIGHT, this.overlay.mirrorCamera);
+    } else {
+      if (!this.screenVideoEl) return;
+      drawLetterboxed(this.ctx, this.screenVideoEl, CANVAS_WIDTH, CANVAS_HEIGHT, this.areaRect ?? undefined);
+      if (this.overlay.showCamera && this.cameraVideoEl) {
+        drawCameraBubble(this.ctx, this.cameraVideoEl, this.overlay, CANVAS_WIDTH, CANVAS_HEIGHT);
+      }
     }
     this.rafId = requestAnimationFrame(this.tick);
   };
@@ -209,10 +232,6 @@ class RecordingService {
     this.sideRafId = requestAnimationFrame(this.sideTick);
   };
 
-  /** Stops capture and hands the recording off to the main process, which writes it to
-   *  disk and resolves quickly — the (slow) MP4 transcode/combine + library insert happens
-   *  in the background afterward (see recording.ts). Callers should subscribe to
-   *  window.api.recording.onSaveCompleted/onSaveFailed for the real Video row. */
   async stop(title: string, source: "record" | "meeting"): Promise<{ id: string }> {
     if (!this.overlay) throw new Error("no active recording");
     const durationSecs = (performance.now() - this.startedAt) / 1000;
@@ -224,7 +243,6 @@ class RecordingService {
     if (this.sideRafId !== null) cancelAnimationFrame(this.sideRafId);
     this.sideRafId = null;
 
-    // Stops sampling immediately; the buffered track is picked up by recording.save below.
     await window.api.cursor.stopCapture().catch(() => {});
 
     const result = wasNative
@@ -234,6 +252,8 @@ class RecordingService {
     this.cleanupStreams();
     this.overlay = null;
     this.nativeCapture = false;
+    this.captureMode = "display";
+    this.areaRect = null;
     return result;
   }
 
@@ -289,12 +309,16 @@ class RecordingService {
   }
 
   private cleanupStreams(): void {
-    for (const stream of [this.screenStream, this.cameraStream, this.micStream]) {
+    for (const stream of [this.screenStream, this.cameraStream, this.micStream, this.systemAudioStream]) {
       stream?.getTracks().forEach((t) => t.stop());
     }
     this.screenStream = null;
     this.cameraStream = null;
     this.micStream = null;
+    this.systemAudioStream = null;
+    this.audioMixCtx?.close();
+    this.audioMixCtx = null;
+    this.audioTrack = null;
     this.screenVideoEl = null;
     this.cameraVideoEl = null;
     this.canvas = null;
