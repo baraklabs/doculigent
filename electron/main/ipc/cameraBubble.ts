@@ -4,13 +4,16 @@ import type { CameraBubbleBounds, CameraBubbleConfig } from "@shared/types/model
 import {
   closeCameraBubbleWindow,
   getCameraBubbleBounds,
+  getCameraBubbleConfig,
   isCameraBubbleWindowOpen,
   openCameraBubbleWindow,
   setCameraBubbleBounds,
+  setCameraBubbleRecordingActive,
   setCameraBubbleShape,
   setCameraBubbleShapeRegion,
   updateCameraBubbleConfig,
 } from "../cameraBubbleWindow";
+import { startCameraTrack, stopCameraTrack } from "../native/cameraTrack";
 
 type RecordPageConfig = Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId" | "blur">;
 type BubbleShapeConfig = Pick<CameraBubbleConfig, "shape" | "roundedCorners" | "freeformResize">;
@@ -40,6 +43,7 @@ export function registerCameraBubbleIpc(): void {
   );
 
   ipcMain.handle(Channels.cameraBubble.isOpen, async (): Promise<boolean> => isCameraBubbleWindowOpen());
+  ipcMain.handle(Channels.cameraBubble.getConfig, async (): Promise<CameraBubbleConfig> => getCameraBubbleConfig());
 
   ipcMain.handle(
     Channels.cameraBubble.getBounds,
@@ -48,5 +52,17 @@ export function registerCameraBubbleIpc(): void {
 
   ipcMain.handle(Channels.cameraBubble.setBounds, async (_event, bounds: CameraBubbleBounds): Promise<void> => {
     setCameraBubbleBounds(bounds);
+  });
+
+  ipcMain.handle(Channels.cameraBubble.startTrack, async (): Promise<void> => {
+    startCameraTrack();
+  });
+
+  ipcMain.handle(Channels.cameraBubble.stopTrack, async (): Promise<void> => {
+    stopCameraTrack();
+  });
+
+  ipcMain.handle(Channels.cameraBubble.setRecordingActive, async (_event, active: boolean): Promise<void> => {
+    setCameraBubbleRecordingActive(active);
   });
 }

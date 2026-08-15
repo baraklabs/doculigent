@@ -1,39 +1,55 @@
 
 export interface CaptureTarget {
-  id: string; 
+  id: string;
   title: string;
   kind: "display" | "window";
+  thumbnailDataUrl?: string;
 }
-
-export type CursorHighlightStyle =
-  | "hidden"
-  | "default"
-  | "hand"
-  | "crosshair"
-  | "bigger"
-  | "huge"
-  | "colorArrow"
-  | "colorHand";
 
 export interface CursorTrackPoint {
   t: number;
   x: number;
   y: number;
+  icon: number;
+}
+
+export interface CursorIconAsset {
+  file: string;
+  width: number;
+  height: number;
+  hotspotX: number;
+  hotspotY: number;
 }
 
 export interface CursorMetadata {
   appVersion: string;
   recordingId: string;
   createdAt: string; // ISO 8601
-  cursorStyle: CursorHighlightStyle;
   capture: {
     targetId: string;
-    kind: "display" | "window";
+    kind: "display" | "window" | "area";
     bounds: { x: number; y: number; width: number; height: number } | null;
     scaleFactor: number;
   };
   sampleRateHz: number;
+  icons: CursorIconAsset[];
   points: CursorTrackPoint[];
+}
+
+export interface CameraTrackPoint {
+  t: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface CameraTrackMetadata {
+  appVersion: string;
+  recordingId: string;
+  createdAt: string;
+  sampleRateHz: number;
+  points: CameraTrackPoint[];
 }
 
 export type CameraBlurLevel = "none" | "soft" | "aggressive";
@@ -44,7 +60,6 @@ export interface OverlayConfig {
   circular: boolean;
   showCamera: boolean;
   cameraDeviceId: string | null;
-  cursorHighlight: CursorHighlightStyle;
   mirrorCamera: boolean;
   cameraBlur: CameraBlurLevel;
 }

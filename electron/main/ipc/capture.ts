@@ -6,18 +6,18 @@ type PermissionStatus = "not-determined" | "granted" | "denied" | "restricted" |
 
 export function registerCaptureIpc(): void {
   ipcMain.handle(Channels.capture.listTargets, async (): Promise<CaptureTarget[]> => {
-    const sources = await desktopCapturer.getSources({ types: ["screen", "window"] });
+    const sources = await desktopCapturer.getSources({
+      types: ["screen", "window"],
+      thumbnailSize: { width: 320, height: 180 },
+    });
     return sources
       .filter((s) => s.name.trim().length > 0)
       .map(
         (s): CaptureTarget => ({
-          // Electron's own source id (e.g. "screen:0:0" / "window:1234:0") is used
-          // directly as the target id: RecordingService passes it straight through as
-          // `chromeMediaSourceId` to getUserMedia, so no separate id-lookup table is
-          // needed between "what the picker shows" and "what capture actually uses".
           id: s.id,
           title: s.name,
           kind: s.id.startsWith("screen:") ? "display" : "window",
+          thumbnailDataUrl: s.thumbnail.isEmpty() ? undefined : s.thumbnail.toDataURL(),
         })
       );
   });
@@ -25,9 +25,6 @@ export function registerCaptureIpc(): void {
   ipcMain.handle(
     Channels.capture.getPermissionStatus,
     async (): Promise<{ screen: PermissionStatus; microphone: PermissionStatus }> => {
-      // Screen Recording access can't be requested programmatically on macOS — only
-      // checked. Microphone access can be prompted for directly, so we do that here
-      // rather than just reporting status, since asking is a no-op once decided.
       if (process.platform !== "darwin") {
         return { screen: "granted", microphone: "granted" };
       }

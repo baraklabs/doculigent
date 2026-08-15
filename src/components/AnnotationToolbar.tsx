@@ -12,7 +12,6 @@ import {
 } from "@shared/types/annotation";
 import "./AnnotationToolbar.css";
 
-/** The universal "none" symbol — this button isn't a tool, it's the absence of one. */
 function NoToolIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
@@ -220,7 +219,7 @@ export function AnnotationToolbar() {
           <button
             type="button"
             className="annotation-toolbar-btn"
-            title="Clear all"
+            title="Clear all (Ctrl+Shift+X)"
             disabled={!overlayOpen}
             onClick={() => window.api.annotation.clear().catch(() => {})}
           >

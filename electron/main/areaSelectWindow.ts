@@ -15,7 +15,6 @@ function loadRoute(win: BrowserWindow, hash: string): void {
   }
 }
 
-
 function broadcastToOtherWindows(channel: string, payload: unknown): void {
   const overlaySet = new Set<BrowserWindow>(overlayWindows.values());
   for (const win of BrowserWindow.getAllWindows()) {
@@ -31,6 +30,7 @@ function createOverlayWindow(display: Display, targetId: string): BrowserWindow 
   const win = new BrowserWindow({
     ...display.bounds,
     transparent: true,
+    backgroundColor: "#00000000",
     frame: false,
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -61,7 +61,6 @@ function createOverlayWindow(display: Display, targetId: string): BrowserWindow 
   return win;
 }
 
-
 export async function openAreaSelectOverlay(): Promise<void> {
   if (overlayWindows.size > 0) return;
   resultSent = false;
@@ -81,7 +80,6 @@ function closeAllOverlayWindows(): void {
   overlayWindows.clear();
 }
 
-
 export function activateAreaSelectWindow(win: BrowserWindow): void {
   for (const [id, w] of overlayWindows) {
     if (w === win) continue;
@@ -89,7 +87,6 @@ export function activateAreaSelectWindow(win: BrowserWindow): void {
     overlayWindows.delete(id);
   }
 }
-
 
 export function completeAreaSelect(targetId: string, rect: AreaRect): void {
   if (overlayWindows.size === 0 || resultSent) return;
@@ -104,7 +101,6 @@ export function cancelAreaSelect(): void {
   broadcastToOtherWindows("areaSelect:cancelled", undefined);
   closeAllOverlayWindows();
 }
-
 
 export function closeAreaSelectOverlay(): void {
   resultSent = true;

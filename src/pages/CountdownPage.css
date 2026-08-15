@@ -1,0 +1,22 @@
+html, body, #root { width: 100%; height: 100%; background: transparent; }
+
+.countdown-root {
+  width: 100%; height: 100%; cursor: pointer; -webkit-app-region: no-drag;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  background: rgba(13, 15, 22, .82); border-radius: 14px;
+  box-shadow: 0 8px 22px rgba(20, 20, 40, .3);
+}
+.countdown-number {
+  font-size: 34px; font-weight: 700; color: #fff; line-height: 1;
+  font-variant-numeric: tabular-nums;
+  animation: countdown-pop 1s ease;
+}
+.countdown-hint { font-size: 9px; color: rgba(255, 255, 255, .7); }
+@keyframes countdown-pop {
+  0% { transform: scale(1.35); opacity: 0; }
+  30% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .countdown-number { animation: none; }
+}

@@ -1,6 +1,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import ffmpegStaticPath from "ffmpeg-static";
+import type { CameraBubbleShape } from "@shared/types/models";
 const ffmpegPath = (ffmpegStaticPath ?? "ffmpeg").replace("app.asar", "app.asar.unpacked");
 const activeProcesses = new Set<ChildProcess>();
 
@@ -80,11 +81,6 @@ export function convertToWav(
   return run(["-y", "-i", inputWebmPath, "-c:a", "pcm_s16le", outputWavPath], onProgress, signal);
 }
 
-/** Reads a media file's duration by asking ffmpeg to open it with no output and scraping
- *  the "Duration: HH:MM:SS.ms" line it prints to stderr while probing the container —
- *  there's no ffprobe binary bundled (only ffmpeg-static), so this avoids adding a second
- *  dependency just for a duration lookup. ffmpeg always exits non-zero for this invocation
- *  (no output specified), so the exit code is ignored and only stderr is parsed. */
 export function probeDuration(filePath: string): Promise<number> {
   return new Promise((resolve) => {
     const proc = spawn(ffmpegPath, ["-i", filePath]);
@@ -105,9 +101,6 @@ export function probeDuration(filePath: string): Promise<number> {
   });
 }
 
-/** Screen-only gdigrab output (see native/screenCapture.ts), no camera/mic side clip to
- *  combine — just a fast container copy into the library's mp4, no re-encode needed since
- *  gdigrab already wrote h264. */
 export function copyToMp4(
   inputPath: string,
   outputMp4Path: string,
@@ -117,8 +110,6 @@ export function copyToMp4(
   return run(["-y", "-i", inputPath, "-c", "copy", outputMp4Path], onProgress, signal);
 }
 
-/** gdigrab screen video + a mic-only audio clip (camera off, mic on). The screen stream is
- *  copied as-is (already h264 from gdigrab); only the audio gets encoded. */
 export function muxScreenWithAudio(
   screenPath: string,
   audioPath: string,
@@ -149,36 +140,50 @@ export function muxScreenWithAudio(
   );
 }
 
-/** gdigrab screen video + a camera-bubble clip (camera on), overlaid at a fixed pixel
- *  position — see shared/lib/cameraBubble.ts for how x/y/size are derived, kept identical
- *  to the canvas-compositor path used when gdigrab isn't available. `bubbleHasAudio`
- *  selects whether the bubble clip's own audio (recorded together with it) is mapped in;
- *  when false the output is silent (mic was muted for this recording).
- *
- * `circular` re-derives the bubble's circular mask from pure pixel geometry at combine
- * time rather than trusting alpha in the bubble clip itself: Chromium's
- * canvas.captureStream() → MediaRecorder pipeline does NOT preserve the canvas's alpha
- * channel (verified empirically — the encoded stream comes back plain yuv420p, no alpha
- * plane), so the circular clip already baked into the bubble canvas collapses to opaque
- * black outside the circle once encoded. Without this mask that black square would show
- * up as a visible corner artifact around every circular bubble; the geq filter punches an
- * alpha hole through it using the same circle math the canvas used, so the screen video
- * shows through underneath exactly where it should. */
+export interface CameraBubbleTrackPoint {
+  atSec: number;
+  x: number;
+  y: number;
+}
+
+export interface CameraBubbleTrack {
+  width: number;
+  height: number;
+  points: CameraBubbleTrackPoint[];
+}
+
+function stepExpr(points: CameraBubbleTrackPoint[], pick: (p: CameraBubbleTrackPoint) => number): string {
+  let expr = String(pick(points[points.length - 1]));
+  for (let i = points.length - 2; i >= 0; i--) {
+    expr = `if(lt(t\\,${points[i + 1].atSec})\\,${pick(points[i])}\\,${expr})`;
+  }
+  return expr;
+}
+
 export function overlayCameraBubble(
   screenPath: string,
   bubblePath: string,
-  bubble: { x: number; y: number },
-  circular: boolean,
+  bubble: CameraBubbleTrack,
+  shape: CameraBubbleShape,
+  mirror: boolean,
   bubbleHasAudio: boolean,
   outputMp4Path: string,
   onProgress?: ProgressHandler,
   signal?: AbortSignal
 ): Promise<void> {
-  const circleMask =
-    "if(lte(pow(X-(W/2)\\,2)+pow(Y-(H/2)\\,2)\\,pow(W/2\\,2))\\,255\\,0)";
-  const bubbleFilter = circular
-    ? `[1:v]format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='${circleMask}'[bubble]`
-    : `[1:v]format=rgba[bubble]`;
+  const aspect = bubble.width / bubble.height;
+  const cropExpr = `crop=w='if(gt(iw/ih\\,${aspect})\\,ih*${aspect}\\,iw)':h='if(gt(iw/ih\\,${aspect})\\,ih\\,iw/${aspect})'`;
+  const mirrorExpr = mirror ? "hflip," : "";
+  const scaleExpr = `scale=${bubble.width}:${bubble.height}`;
+
+  const circleMask = "if(lte(pow(X-(W/2)\\,2)+pow(Y-(H/2)\\,2)\\,pow(W/2\\,2))\\,255\\,0)";
+  const cropScale = `${mirrorExpr}${cropExpr},${scaleExpr}`;
+  const bubbleFilter =
+    shape === "round"
+      ? `[1:v]${cropScale},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='${circleMask}'[bubble]`
+      : `[1:v]${cropScale},format=rgba[bubble]`;
+  const xExpr = stepExpr(bubble.points, (p) => p.x);
+  const yExpr = stepExpr(bubble.points, (p) => p.y);
   const args = [
     "-y",
     "-i",
@@ -186,13 +191,15 @@ export function overlayCameraBubble(
     "-i",
     bubblePath,
     "-filter_complex",
-    `${bubbleFilter};[0:v][bubble]overlay=x=${bubble.x}:y=${bubble.y}:format=auto[v]`,
+    `${bubbleFilter};[0:v][bubble]overlay=x='${xExpr}':y='${yExpr}':eval=frame:format=auto[v]`,
     "-map",
     "[v]",
     "-c:v",
     "libx264",
     "-preset",
     "medium",
+    "-pix_fmt",
+    "yuv420p",
   ];
   if (bubbleHasAudio) {
     args.push("-map", "1:a", "-c:a", "aac", "-shortest");

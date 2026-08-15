@@ -1,17 +1,8 @@
-import type { OverlayConfig } from "../types/models";
+import type { CameraBubbleShape, OverlayConfig } from "../types/models";
 
-/** The fixed output frame every recording is composited/letterboxed into, regardless of
- *  the captured display's native resolution or which capture pipeline produced it — kept
- *  here (rather than in the renderer-only compositor.ts) so main-process code building the
- *  gdigrab pipeline can share it without pulling in DOM types. */
 export const OUTPUT_WIDTH = 1920;
 export const OUTPUT_HEIGHT = 1080;
 
-/** Pure pixel geometry for the camera bubble — square side length and top-left corner
- *  within a `canvasWidth` x `canvasHeight` frame. Shared by the canvas compositor
- *  (src/services/recording/compositor.ts, still used for non-gdigrab recordings) and the
- *  main-process ffmpeg overlay filter (electron/main/native/ffmpeg.ts), so the two capture
- *  paths place the bubble identically instead of two hand-kept copies of the same formula. */
 export function cameraBubbleRect(
   overlay: Pick<OverlayConfig, "corner" | "sizePct">,
   canvasWidth: number,
@@ -21,4 +12,25 @@ export function cameraBubbleRect(
   const x = overlay.corner.endsWith("left") ? 0 : canvasWidth - size;
   const y = overlay.corner.startsWith("top") ? 0 : canvasHeight - size;
   return { x, y, size };
+}
+
+const RECT_ASPECT = 1.6;
+
+export function cameraBubbleDimensions(shape: CameraBubbleShape, size: number): { width: number; height: number } {
+  if (shape === "rectangle") return { width: Math.round(size * RECT_ASPECT), height: size };
+  if (shape === "rectangle-vertical") return { width: size, height: Math.round(size * RECT_ASPECT) };
+  return { width: size, height: size };
+}
+
+export function cameraBubbleRectForShape(
+  overlay: Pick<OverlayConfig, "corner" | "sizePct">,
+  shape: CameraBubbleShape,
+  canvasWidth: number,
+  canvasHeight: number
+): { x: number; y: number; width: number; height: number } {
+  const { size } = cameraBubbleRect(overlay, canvasWidth, canvasHeight);
+  const { width, height } = cameraBubbleDimensions(shape, size);
+  const x = overlay.corner.endsWith("left") ? 0 : canvasWidth - width;
+  const y = overlay.corner.startsWith("top") ? 0 : canvasHeight - height;
+  return { x, y, width, height };
 }

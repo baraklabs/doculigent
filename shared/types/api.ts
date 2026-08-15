@@ -9,7 +9,6 @@ import type {
   CaptureMode,
   CaptureTarget,
   ChatMessage,
-  CursorHighlightStyle,
   LlmModelProfile,
   LlmProviderKind,
   MicConfig,
@@ -41,7 +40,6 @@ export interface DoculigentApi {
   };
   capture: {
     listTargets(): Promise<CaptureTarget[]>;
-    // macOS-only: reflects TCC (Privacy & Security) access. Always "granted" on other platforms.
     getPermissionStatus(): Promise<{
       screen: "not-determined" | "granted" | "denied" | "restricted" | "unknown";
       microphone: "not-determined" | "granted" | "denied" | "restricted" | "unknown";
@@ -49,11 +47,7 @@ export interface DoculigentApi {
     openScreenRecordingSettings(): Promise<void>;
   };
   cursor: {
-
-    apply(style: CursorHighlightStyle): Promise<void>;
-
-    restore(): Promise<void>;
-    startCapture(targetId: string, style: CursorHighlightStyle): Promise<void>;
+    startCapture(targetId: string, area?: AreaRect | null): Promise<void>;
     stopCapture(): Promise<void>;
   };
   screenCapture: {
@@ -70,22 +64,25 @@ export interface DoculigentApi {
     setShape(shape: Pick<CameraBubbleConfig, "shape" | "roundedCorners" | "freeformResize">): Promise<void>;
     setShapeRegion(rects: CameraBubbleBounds[]): Promise<void>;
     isOpen(): Promise<boolean>;
+    getConfig(): Promise<CameraBubbleConfig>;
     getBounds(): Promise<CameraBubbleBounds | null>;
     setBounds(bounds: CameraBubbleBounds): Promise<void>;
+    startTrack(): Promise<void>;
+    stopTrack(): Promise<void>;
+    setRecordingActive(active: boolean): Promise<void>;
     onConfigChanged(callback: (config: CameraBubbleConfig) => void): () => void;
     onClosedByUser(callback: () => void): () => void;
     onHoverChanged(callback: (hovering: boolean) => void): () => void;
+    onRecordingActiveChanged(callback: (active: boolean) => void): () => void;
   };
   recordingDock: {
     open(): Promise<void>;
     close(): Promise<void>;
     setOrientation(orientation: RecordingDockOrientation): Promise<void>;
+    getConfig(): Promise<RecordingDockConfig>;
     getBounds(): Promise<RecordingDockBounds | null>;
     setBounds(bounds: RecordingDockBounds): Promise<void>;
-    /** Dock -> app window: a button was clicked on the dock. */
     sendAction(action: RecordingDockAction): Promise<void>;
-    /** App window -> dock: current elapsed/paused state, sent on start and on every
-     *  pause/resume transition (not once a second — the dock ticks its own local timer). */
     syncTimer(sync: RecordingDockTimerSync): Promise<void>;
     showMainWindow(): Promise<void>;
     hideMainWindow(): Promise<void>;
@@ -94,6 +91,13 @@ export interface DoculigentApi {
     onAction(callback: (action: RecordingDockAction) => void): () => void;
     onTimerSync(callback: (sync: RecordingDockTimerSync) => void): () => void;
     onMainWindowVisibilityChanged(callback: (visible: boolean) => void): () => void;
+  };
+  countdown: {
+    open(secondsRemaining: number): Promise<void>;
+    close(): Promise<void>;
+    cancel(): Promise<void>;
+    onTick(callback: (secondsRemaining: number) => void): () => void;
+    onCancelled(callback: () => void): () => void;
   };
   areaSelect: {
     open(): Promise<void>;
@@ -176,6 +180,7 @@ export interface DoculigentApi {
       systemAudio: SystemAudioConfig | null;
       captureMode: CaptureMode | null;
       areaRect: AreaRect | null;
+      countdownSecs: number | null;
     }>;
     setRecordSettings(
       overlay: OverlayConfig,
@@ -183,7 +188,8 @@ export interface DoculigentApi {
       mic: MicConfig | null,
       systemAudio: SystemAudioConfig | null,
       captureMode: CaptureMode | null,
-      areaRect: AreaRect | null
+      areaRect: AreaRect | null,
+      countdownSecs: number | null
     ): Promise<void>;
     getMeetingSettings(): Promise<{
       language: string | null;

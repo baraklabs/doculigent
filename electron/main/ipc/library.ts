@@ -19,7 +19,6 @@ const NO_OVERLAY: OverlayConfig = {
   circular: false,
   showCamera: false,
   cameraDeviceId: null,
-  cursorHighlight: "default",
   mirrorCamera: false,
   cameraBlur: "none",
 };
@@ -93,14 +92,18 @@ export function registerLibraryIpc(): void {
     if (!video) throw new NotFoundError(`video ${id}`);
     store.deleteVideo(id);
     if (!keepFile) {
-      await fs.rm(path.dirname(video.filePath), { recursive: true, force: true });
+      await fs.rm(path.dirname(video.filePath), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
     }
   });
 
   ipcMain.handle(Channels.library.deleteMany, async (_event, ids: string[], keepFile?: boolean): Promise<void> => {
     const removed = store.deleteVideos(ids);
     if (!keepFile) {
-      await Promise.all(removed.map((video) => fs.rm(path.dirname(video.filePath), { recursive: true, force: true })));
+      await Promise.all(
+        removed.map((video) =>
+          fs.rm(path.dirname(video.filePath), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+        )
+      );
     }
   });
 

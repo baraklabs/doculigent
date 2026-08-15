@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Pencil,
@@ -9,10 +9,9 @@ import {
   Video,
   Mic,
   Volume2,
-  MousePointer2,
   FolderOpen,
-  Info,
   ChevronDown,
+  Loader2,
 } from "lucide-react";
 import type {
   AreaRect,
@@ -24,9 +23,7 @@ import type {
   SystemAudioConfig,
 } from "@shared/types/models";
 import { useRecordingStore, useSavingRecording } from "../store/recordingStore";
-import { desktopConstraints } from "../services/recording/constraints";
 import { recordingService } from "../services/recording/RecordingService";
-import { drawLetterboxed, CANVAS_WIDTH, CANVAS_HEIGHT } from "../services/recording/compositor";
 import { applyCameraBlur, preloadCameraBlurModel, type CameraBlurHandle } from "../services/camera/cameraBlur";
 import { getSystemAudioStream } from "../services/recording/AudioRecordingService";
 import { SettingsService } from "../services/settings/SettingsService";
@@ -39,7 +36,6 @@ const DEFAULT_OVERLAY: OverlayConfig = {
   circular: true,
   showCamera: false,
   cameraDeviceId: null,
-  cursorHighlight: "hidden",
   mirrorCamera: true,
   cameraBlur: "none",
 };
@@ -73,47 +69,78 @@ function BlurIcon({ level }: { level: CameraBlurLevel }) {
   );
 }
 
-const ARROW_PATH = "M3 2l0 15 4-4 2.5 5.5 2.5-1.2-2.4-5.3 5.4 0z";
+function TargetDropdown({
+  targets,
+  value,
+  disabled,
+  placeholderLabel,
+  onOpen,
+  onSelect,
+}: {
+  targets: CaptureTarget[];
+  value: string;
+  disabled: boolean;
+  placeholderLabel: string;
+  onOpen: () => void;
+  onSelect: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
 
-function ArrowCursorIcon() {
+  useEffect(() => {
+    if (!open) return;
+    function onOutside(e: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onOutside);
+    return () => document.removeEventListener("mousedown", onOutside);
+  }, [open]);
+
+  const selected = targets.find((t) => t.id === value);
+
   return (
-    <svg viewBox="0 0 22 22" width="16" height="16" aria-hidden="true">
-      <path d={ARROW_PATH} fill="#fff" stroke="#1c1e2a" strokeWidth="1.4" strokeLinejoin="round" />
-    </svg>
+    <div className="target-dropdown" ref={rootRef} onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        className="target-dropdown-trigger"
+        disabled={disabled || targets.length === 0}
+        onClick={() => {
+          setOpen((o) => {
+            const next = !o;
+            if (next) onOpen();
+            return next;
+          });
+        }}
+      >
+        <span>{targets.length === 0 ? placeholderLabel : (selected?.title ?? placeholderLabel)}</span>
+      </button>
+      {open && (
+        <div className="target-dropdown-list">
+          {targets.map((t) => (
+            <button
+              type="button"
+              key={t.id}
+              className={`target-dropdown-item${t.id === value ? " active" : ""}`}
+              onClick={() => {
+                onSelect(t.id);
+                setOpen(false);
+              }}
+            >
+              <span className="target-dropdown-thumb">
+                {t.thumbnailDataUrl ? (
+                  <img src={t.thumbnailDataUrl} alt="" />
+                ) : (
+                  <span className="target-dropdown-thumb-empty" />
+                )}
+              </span>
+              <span className="target-dropdown-item-title">{t.title}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
-
-function NoCursorIcon() {
-  return (
-    <svg viewBox="0 0 22 22" width="16" height="16" aria-hidden="true">
-      <path d={ARROW_PATH} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-      <path d="M2 20L20 2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-const CURSOR_STYLES: {
-  value: OverlayConfig["cursorHighlight"];
-  label: string;
-  icon: ReactNode;
-  big?: boolean;
-  color?: string;
-}[] = [
-  { value: "default", label: "System cursor", icon: <ArrowCursorIcon /> },
-  { value: "hand", label: "Hand", icon: "👆" },
-  { value: "crosshair", label: "Crosshair", icon: "✛" },
-  { value: "bigger", label: "Big pointer", icon: "3X", big: true },
-  { value: "huge", label: "Huge pointer", icon: "5X", big: true },
-  { value: "colorArrow", label: "Orange arrow", icon: "↖", color: "#ff7a00" },
-  { value: "colorHand", label: "Purple dot", icon: "●", color: "#5b4bf5" },
-];
-
-const CURSOR_HINT =
-  "";
-
-
-const FALLBACK_VISIBLE_STYLE: OverlayConfig["cursorHighlight"] = "default";
-
 
 function defaultRecordingTitle(): string {
   const now = new Date();
@@ -127,10 +154,13 @@ function defaultRecordingTitle(): string {
 }
 
 export function RecordPage() {
-  const { recording, paused, busy, error, start, stop, pause, resume, restart, discard } = useRecordingStore();
+  const { recording, paused, busy, error, warning, start, stop, pause, resume, restart, discard, saveStatus, cancelSave } =
+    useRecordingStore();
   const saving = useSavingRecording();
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
 
-  const { data: targets = [] } = useQuery<CaptureTarget[]>({
+  const { data: targets = [], refetch: refetchTargets } = useQuery<CaptureTarget[]>({
     queryKey: ["captureTargets"],
     queryFn: () => window.api.capture.listTargets(),
     refetchOnWindowFocus: true,
@@ -152,6 +182,7 @@ export function RecordPage() {
   const [preferredTargetId, setPreferredTargetId] = useState<string | null>(null);
   const [mic, setMic] = useState<MicConfig>({ deviceId: null, muted: false });
   const [systemAudio, setSystemAudio] = useState<SystemAudioConfig>({ enabled: false, sourceId: null });
+  const [countdownSecs, setCountdownSecs] = useState(3);
 
   useEffect(() => {
     SettingsService.getRecordSettings()
@@ -163,6 +194,7 @@ export function RecordPage() {
           systemAudio: savedSystemAudio,
           captureMode: savedCaptureMode,
           areaRect: savedAreaRect,
+          countdownSecs: savedCountdownSecs,
         }) => {
           if (savedOverlay) setOverlay({ ...DEFAULT_OVERLAY, ...savedOverlay });
           setPreferredTargetId(savedTargetId);
@@ -170,6 +202,7 @@ export function RecordPage() {
           if (savedSystemAudio) setSystemAudio(savedSystemAudio);
           if (savedCaptureMode) setCaptureMode(savedCaptureMode);
           if (savedAreaRect) setAreaRect(savedAreaRect);
+          if (savedCountdownSecs !== null) setCountdownSecs(savedCountdownSecs);
         }
       )
       .finally(() => setSettingsLoaded(true));
@@ -206,7 +239,7 @@ export function RecordPage() {
 
   useEffect(() => {
     if (recording) {
-      window.api.recordingDock.open().catch(() => {});
+      window.api.recordingDock.open().catch((e) => console.error("Failed to open recording dock:", e));
       window.api.recordingDock.hideMainWindow().catch(() => {});
       syncDockTimer();
     } else {
@@ -237,6 +270,7 @@ export function RecordPage() {
   useEffect(() => {
     return () => {
       window.api.recordingDock.close().catch(() => {});
+      window.api.countdown.close().catch(() => {});
     };
   }, []);
 
@@ -261,39 +295,21 @@ export function RecordPage() {
 
   useEffect(() => {
     if (!settingsLoaded) return;
-    SettingsService.setRecordSettings(overlay, targetId || null, mic, systemAudio, captureMode, areaRect).catch(() => {});
-  }, [overlay, targetId, mic, systemAudio, captureMode, areaRect, settingsLoaded]);
+    SettingsService.setRecordSettings(
+      overlay,
+      targetId || null,
+      mic,
+      systemAudio,
+      captureMode,
+      areaRect,
+      countdownSecs
+    ).catch(() => {});
+  }, [overlay, targetId, mic, systemAudio, captureMode, areaRect, countdownSecs, settingsLoaded]);
 
   const recordingRef = useRef(recording);
   useEffect(() => {
     recordingRef.current = recording;
   }, [recording]);
-
-  function applyCursorForStyle(style: OverlayConfig["cursorHighlight"]) {
-    if (style === "default" || style === "hidden") window.api.cursor.restore().catch(() => {});
-    else window.api.cursor.apply(style).catch(() => {});
-  }
-  useEffect(() => {
-    if (recordingRef.current) return;
-    applyCursorForStyle(overlay.cursorHighlight);
-  }, [overlay.cursorHighlight]);
-
-  const cursorHidden = overlay.cursorHighlight === "hidden";
-  const [lastVisibleStyle, setLastVisibleStyle] =
-    useState<OverlayConfig["cursorHighlight"]>(FALLBACK_VISIBLE_STYLE);
-  function toggleCursorHidden() {
-    if (cursorHidden) {
-      setOverlay({ ...overlay, cursorHighlight: lastVisibleStyle });
-    } else {
-      setLastVisibleStyle(overlay.cursorHighlight);
-      setOverlay({ ...overlay, cursorHighlight: "hidden" });
-    }
-  }
-  useEffect(() => {
-    return () => {
-      if (!recordingRef.current) window.api.cursor.restore().catch(() => {});
-    };
-  }, []);
 
   const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
   const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([]);
@@ -318,72 +334,19 @@ export function RecordPage() {
     window.api.settings.getSaveDir().then(setSaveDir).catch(() => {});
   }, []);
 
-  const camVideoRef = useRef<HTMLVideoElement>(null);
   const [micLevel, setMicLevel] = useState(0);
-  const [camError, setCamError] = useState<string | null>(null);
   const [blurLoading, setBlurLoading] = useState(false);
-  const [countdownSecs, setCountdownSecs] = useState(3);
-  const [countdownRemaining, setCountdownRemaining] = useState<number | null>(null);
 
+  const camPreviewVideoRef = useRef<HTMLVideoElement>(null);
+  const [camPreviewError, setCamPreviewError] = useState<string | null>(null);
+  const [camPreviewStream, setCamPreviewStream] = useState<MediaStream | null>(null);
   useEffect(() => {
-    if (countdownRemaining === null) return;
-    if (countdownRemaining === 0) {
-      setCountdownRemaining(null);
-      void beginRecording();
-      return;
-    }
-    const timer = setTimeout(() => setCountdownRemaining((c) => (c === null ? null : c - 1)), 1000);
-    return () => clearTimeout(timer);
-  }, [countdownRemaining]);
-  const [micError, setMicError] = useState<string | null>(null);
-  const screenVideoRef = useRef<HTMLVideoElement>(null);
-  const [screenError, setScreenError] = useState<string | null>(null);
-  const [screenVideoSize, setScreenVideoSize] = useState({ width: 0, height: 0 });
-  useEffect(() => {
-    if (!targetId || captureMode === "camera") return;
-    if (recording && !recordingService.isNativeCapture()) return;
-    let stream: MediaStream | null = null;
-    let cancelled = false;
-    navigator.mediaDevices
-      .getUserMedia(desktopConstraints(targetId))
-      .then((s) => {
-        if (cancelled) {
-          s.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        stream = s;
-        if (screenVideoRef.current) screenVideoRef.current.srcObject = s;
-        setScreenError(null);
-      })
-      .catch((e) => setScreenError(String(e)));
-    return () => {
-      cancelled = true;
-      stream?.getTracks().forEach((t) => t.stop());
-    };
-  }, [targetId, recording, captureMode]);
-
-  const recordingPreviewRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!recording) return;
-    const canvas = recordingService.getCanvas();
-    const container = recordingPreviewRef.current;
-    if (!canvas || !container) return;
-    canvas.style.width = "100%";
-    canvas.style.height = "100%";
-    canvas.style.display = "block";
-    container.appendChild(canvas);
-    return () => {
-      if (canvas.parentElement === container) container.removeChild(canvas);
-    };
-  }, [recording]);
-
-  useEffect(() => {
-    if (captureMode !== "camera" || (recording && !recordingService.isNativeCapture())) {
-      setCamError(null);
+    if (captureMode !== "camera" || recording) {
+      setCamPreviewError(null);
+      setCamPreviewStream(null);
       return;
     }
     let stream: MediaStream | null = null;
-    let blurHandle: CameraBlurHandle | null = null;
     let cancelled = false;
     navigator.mediaDevices
       .getUserMedia({ video: overlay.cameraDeviceId ? { deviceId: { exact: overlay.cameraDeviceId } } : true })
@@ -393,24 +356,52 @@ export function RecordPage() {
           return;
         }
         stream = s;
-        if (camVideoRef.current) {
-          if (overlay.cameraBlur === "none") {
-            camVideoRef.current.srcObject = s;
-          } else {
-            blurHandle = applyCameraBlur(s, overlay.cameraBlur);
-            camVideoRef.current.srcObject = blurHandle.stream;
-          }
-        }
-        setCamError(null);
+        setCamPreviewStream(s);
+        setCamPreviewError(null);
         refreshDevices();
       })
-      .catch((e) => setCamError(String(e)));
+      .catch((e) => setCamPreviewError(String(e)));
     return () => {
       cancelled = true;
-      blurHandle?.stop();
       stream?.getTracks().forEach((t) => t.stop());
+      setCamPreviewStream(null);
     };
-  }, [overlay.cameraDeviceId, overlay.cameraBlur, recording, captureMode]);
+  }, [captureMode, overlay.cameraDeviceId, recording]);
+
+  useEffect(() => {
+    if (!camPreviewStream || !camPreviewVideoRef.current) return;
+    let blurHandle: CameraBlurHandle | null = null;
+    if (overlay.cameraBlur === "none") {
+      camPreviewVideoRef.current.srcObject = camPreviewStream;
+    } else {
+      blurHandle = applyCameraBlur(camPreviewStream, overlay.cameraBlur);
+      camPreviewVideoRef.current.srcObject = blurHandle.stream;
+    }
+    return () => {
+      blurHandle?.stop();
+    };
+  }, [camPreviewStream, overlay.cameraBlur]);
+
+  const [countdownRemaining, setCountdownRemaining] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (countdownRemaining === null) {
+      window.api.countdown.close().catch(() => {});
+      return;
+    }
+    window.api.countdown.open(countdownRemaining).catch(() => {});
+    if (countdownRemaining === 0) {
+      setCountdownRemaining(null);
+      void beginRecording();
+      return;
+    }
+    const timer = setTimeout(() => setCountdownRemaining((c) => (c === null ? null : c - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [countdownRemaining]);
+
+  useEffect(() => window.api.countdown.onCancelled(cancelPendingStart), []);
+
+  const [micError, setMicError] = useState<string | null>(null);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -493,8 +484,6 @@ export function RecordPage() {
     };
   }, [systemAudio.enabled, systemAudio.sourceId, recording]);
 
-  const stagePreviewRef = useRef<HTMLDivElement>(null);
-
   const [selectingArea, setSelectingArea] = useState(false);
   async function openAreaSelector() {
     setSelectingArea(true);
@@ -517,25 +506,6 @@ export function RecordPage() {
       unsubCancelled();
     };
   }, []);
-
-  const areaCropCanvasRef = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    if (captureMode !== "area" || !areaRect || recording) return;
-    const canvas = areaCropCanvasRef.current;
-    const video = screenVideoRef.current;
-    if (!canvas || !video) return;
-    canvas.width = CANVAS_WIDTH;
-    canvas.height = CANVAS_HEIGHT;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    let raf = 0;
-    const draw = () => {
-      drawLetterboxed(ctx, video, CANVAS_WIDTH, CANVAS_HEIGHT, areaRect);
-      raf = requestAnimationFrame(draw);
-    };
-    draw();
-    return () => cancelAnimationFrame(raf);
-  }, [captureMode, areaRect, recording]);
 
   async function browseSaveDir() {
 
@@ -562,14 +532,18 @@ export function RecordPage() {
 
   function handleStart() {
     if (countdownSecs > 0) {
+      window.api.recordingDock.open().catch((e) => console.error("Failed to open recording dock:", e));
+      window.api.recordingDock.hideMainWindow().catch(() => {});
       setCountdownRemaining(countdownSecs);
     } else {
       void beginRecording();
     }
   }
 
-  function cancelCountdown() {
+  function cancelPendingStart() {
     setCountdownRemaining(null);
+    window.api.recordingDock.close().catch(() => {});
+    window.api.recordingDock.showMainWindow().catch(() => {});
   }
 
   async function handleStop() {
@@ -587,120 +561,6 @@ export function RecordPage() {
     <section className="panel record-page">
          <div className="record-layout">
         <div className="record-preview-col">
-          <div className={`stage-preview${recording ? " is-recording" : ""}`} ref={stagePreviewRef}>
-            {recording && (
-              <span className="record-live-pill">
-                <span className="record-live-dot" />
-                REC
-              </span>
-            )}
-            {countdownRemaining !== null && (
-              <div className="record-countdown-overlay" onClick={cancelCountdown}>
-                <span key={countdownRemaining} className="record-countdown-number">
-                  {countdownRemaining}
-                </span>
-                <span className="record-countdown-hint">Click to cancel</span>
-              </div>
-            )}
-            {recording && !recordingService.isNativeCapture() ? (
-              <div ref={recordingPreviewRef} className="recording-canvas-host" />
-            ) : captureMode === "camera" ? (
-              camError ? (
-                <div className="stage-empty">Camera unavailable: {camError}</div>
-              ) : (
-                <video
-                  ref={camVideoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  style={overlay.mirrorCamera ? undefined : { transform: "scaleX(-1)" }}
-                />
-              )
-            ) : screenError ? (
-              <div className="stage-empty">Screen preview unavailable: {screenError}</div>
-            ) : (
-              <>
-                <video
-                  ref={screenVideoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  style={captureMode === "area" && areaRect && !recording ? { display: "none" } : undefined}
-                  onLoadedMetadata={(e) => {
-                    const v = e.currentTarget;
-                    setScreenVideoSize({ width: v.videoWidth, height: v.videoHeight });
-                  }}
-                />
-                {/* Once an area is picked, show only that cropped region — the rest of the
-                    frame black — instead of the full display with a selection rectangle drawn
-                    over it. */}
-                {captureMode === "area" && areaRect && !recording && (
-                  <canvas ref={areaCropCanvasRef} className="area-crop-preview" />
-                )}
-              </>
-            )}
-            {/* No in-app bubble preview here anymore — "Show camera" opens a real floating
-                desktop window (see cameraBubbleWindow.ts) which shows up in this preview on
-                its own, exactly like it would in the actual recording, once it's positioned
-                somewhere within whatever's being captured. */}
-          </div>
-
-          <div className="record-cta">
-            {!recording ? (
-              <>
-                <button
-                  className="record-cta-btn"
-                  onClick={handleStart}
-                  disabled={startDisabled || countdownRemaining !== null}
-                  title={saving ? "Finishing the previous recording…" : undefined}
-                >
-                  <span className="record-cta-dot" />
-                  {countdownRemaining !== null ? "Starting…" : busy ? "Starting…" : "Start recording"}
-                </button>
-                <div className="record-countdown-stepper" title="Countdown before recording starts">
-                  <button
-                    type="button"
-                    className="record-countdown-step-btn"
-                    disabled={countdownSecs <= 0 || countdownRemaining !== null}
-                    onClick={() => setCountdownSecs((s) => Math.max(0, s - 1))}
-                  >
-                    −
-                  </button>
-                  <span className="record-countdown-step-value">{countdownSecs}s</span>
-                  <button
-                    type="button"
-                    className="record-countdown-step-btn"
-                    disabled={countdownSecs >= 10 || countdownRemaining !== null}
-                    onClick={() => setCountdownSecs((s) => Math.min(10, s + 1))}
-                  >
-                    +
-                  </button>
-                </div>
-              </>
-            ) : (
-              <button className="record-cta-btn stop" onClick={handleStop} disabled={busy}>
-                <span className="record-cta-square" />
-                {busy ? "Stopping…" : "Stop recording"}
-              </button>
-            )}
-          </div>
-
-          {camError && <p className="error">Camera unavailable: {camError}</p>}
-          {micError && <p className="error">Mic unavailable: {micError}</p>}
-
-          <div className="record-block record-block-draw">
-            <div className="record-block-head">
-              <span className="record-block-icon"><Pencil size={16} /></span>
-              <div>
-                <div className="record-block-title">Draw on screen</div>
-                <p className="record-block-sub">Annotate live while you record</p>
-              </div>
-            </div>
-            <AnnotationToolbar />
-          </div>
-        </div>
-
-        <div className="record-controls-col">
           <div className="record-block record-block-source">
             <div className="record-block-head">
               <span className="record-block-icon"><Monitor size={16} /></span>
@@ -709,63 +569,73 @@ export function RecordPage() {
               </div>
             </div>
             <div className="capture-mode-grid">
-              <button
-                type="button"
+              {/* A <div>, not a <button> — it hosts a real nested dropdown trigger button
+                  (see TargetDropdown), and a button can't nest a button. */}
+              <div
+                role="button"
+                tabIndex={0}
+                aria-pressed={captureMode === "display"}
                 className={`capture-tile${captureMode === "display" ? " active" : ""}`}
-                disabled={recording || busy}
-                onClick={() => setCaptureMode("display")}
+                aria-disabled={recording || busy}
+                onClick={() => {
+                  if (!recording && !busy) setCaptureMode("display");
+                }}
+                onKeyDown={(e) => {
+                  if ((e.key === "Enter" || e.key === " ") && !recording && !busy) {
+                    e.preventDefault();
+                    setCaptureMode("display");
+                  }
+                }}
               >
                 <div className="capture-tile-head">
                   <Monitor size={36} />
                   <span>Display</span>
                 </div>
-                <select
-                  className="capture-tile-select"
+                <TargetDropdown
+                  targets={displayTargets}
                   value={captureMode === "display" ? targetId : ""}
-                  disabled={recording || busy || displayTargets.length === 0}
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => {
+                  disabled={recording || busy}
+                  placeholderLabel="Select"
+                  onOpen={() => refetchTargets()}
+                  onSelect={(id) => {
                     setCaptureMode("display");
-                    setTargetId(e.target.value);
+                    setTargetId(id);
                   }}
-                >
-                  {displayTargets.length === 0 && <option value="">(no displays found)</option>}
-                  {displayTargets.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.title}
-                    </option>
-                  ))}
-                </select>
-              </button>
+                />
+              </div>
 
-              <button
-                type="button"
+              <div
+                role="button"
+                tabIndex={0}
+                aria-pressed={captureMode === "window"}
                 className={`capture-tile${captureMode === "window" ? " active" : ""}`}
-                disabled={recording || busy}
-                onClick={() => setCaptureMode("window")}
+                aria-disabled={recording || busy}
+                onClick={() => {
+                  if (!recording && !busy) setCaptureMode("window");
+                }}
+                onKeyDown={(e) => {
+                  if ((e.key === "Enter" || e.key === " ") && !recording && !busy) {
+                    e.preventDefault();
+                    setCaptureMode("window");
+                  }
+                }}
               >
                 <div className="capture-tile-head">
                   <AppWindow size={36} />
                   <span>Window</span>
                 </div>
-                <select
-                  className="capture-tile-select"
+                <TargetDropdown
+                  targets={windowTargets}
                   value={captureMode === "window" ? targetId : ""}
-                  disabled={recording || busy || windowTargets.length === 0}
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => {
+                  disabled={recording || busy}
+                  placeholderLabel="Select"
+                  onOpen={() => refetchTargets()}
+                  onSelect={(id) => {
                     setCaptureMode("window");
-                    setTargetId(e.target.value);
+                    setTargetId(id);
                   }}
-                >
-                  {windowTargets.length === 0 && <option value="">(no windows found)</option>}
-                  {windowTargets.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.title}
-                    </option>
-                  ))}
-                </select>
-              </button>
+                />
+              </div>
 
               {/* A <div>, not a <button> like the other tiles — it hosts a real nested
                   "Select area…" button (see below), and a button can't nest a button. */}
@@ -800,12 +670,6 @@ export function RecordPage() {
                 >
                   {selectingArea ? "Selecting…" : "Select area…"}
                 </button>
-                {areaRect && (
-                  <p className="capture-tile-note">
-                    {Math.round((screenVideoSize.width || 0) * areaRect.width)} ×{" "}
-                    {Math.round((screenVideoSize.height || 0) * areaRect.height)}
-                  </p>
-                )}
               </div>
 
               <button
@@ -814,13 +678,29 @@ export function RecordPage() {
                 disabled={recording || busy}
                 onClick={() => setCaptureMode("camera")}
               >
-                <div className="capture-tile-head">
-                  <Camera size={36} />
-                  <span>Camera only</span>
-                </div>
-                {/* Read-only — the actual picker lives in the Camera block below, same as
-                    every other capture mode. */}
-                <p className="capture-tile-note">{selectedCameraLabel}</p>
+                {captureMode === "camera" && !camPreviewError ? (
+                  <div className="capture-tile-camera-preview">
+                    <video
+                      ref={camPreviewVideoRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      style={overlay.mirrorCamera ? undefined : { transform: "scaleX(-1)" }}
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <div className="capture-tile-head">
+                      <Camera size={36} />
+                      <span>Camera only</span>
+                    </div>
+                    {/* Read-only — the actual picker lives in the Camera block below, same
+                        as every other capture mode. */}
+                    <p className="capture-tile-note">
+                      {captureMode === "camera" ? "Camera unavailable" : selectedCameraLabel}
+                    </p>
+                  </>
+                )}
               </button>
             </div>
             {screenPermissionDenied && (
@@ -995,58 +875,61 @@ export function RecordPage() {
             </div>
           </div>
 
-          <div className="record-block record-block-cursor">
-            <div className="record-block-head">
-              <span className="record-block-icon"><MousePointer2 size={16} /></span>
-              <div>
-                <div className="record-block-title">
-                  Cursor{" "}
-                  <span className="info-dot" title={CURSOR_HINT} aria-label={CURSOR_HINT} role="img">
-                    <Info size={13} />
-                  </span>
-                </div>
-                <p className="record-block-sub">How the pointer appears in the recording</p>
-              </div>
-            </div>
-            <div className="cursor-style-picker">
-              <button
-                type="button"
-                className={`cursor-hide-toggle${cursorHidden ? " on" : ""}`}
-                aria-pressed={cursorHidden}
-                disabled={busy || recording}
-                onClick={toggleCursorHidden}
-                title={CURSOR_HINT}
-              >
-                <span className="cursor-hide-icon">
-                  <NoCursorIcon />
-                </span>
-                <span className="cursor-hide-label">Hide cursor while recording</span>
-                <span className="cursor-hide-switch" aria-hidden="true">
-                  <span className="cursor-hide-knob" />
-                </span>
-              </button>
-              <div className={`cursor-style-options${cursorHidden ? " dimmed" : ""}`}>
-                {CURSOR_STYLES.map((s) => (
+          <div className="record-cta">
+            {!recording ? (
+              <>
+                <button
+                  className="record-cta-btn"
+                  onClick={handleStart}
+                  disabled={startDisabled || countdownRemaining !== null}
+                  title={saving ? "Finishing the previous recording…" : undefined}
+                >
+                  <span className="record-cta-dot" />
+                  {countdownRemaining !== null ? "Starting…" : busy ? "Starting…" : "Start recording"}
+                </button>
+                <div className="record-countdown-stepper" title="Countdown before recording starts">
                   <button
-                    key={s.value}
                     type="button"
-                    className={`cursor-style-btn${overlay.cursorHighlight === s.value ? " active" : ""}`}
-                    disabled={busy || cursorHidden}
-                    onClick={() => setOverlay({ ...overlay, cursorHighlight: s.value })}
-                    onMouseEnter={() => applyCursorForStyle(s.value)}
-                    onMouseLeave={() => applyCursorForStyle(overlay.cursorHighlight)}
-                    title={s.label}
+                    className="record-countdown-step-btn"
+                    disabled={countdownSecs <= 0 || countdownRemaining !== null}
+                    onClick={() => setCountdownSecs((s) => Math.max(0, s - 1))}
                   >
-                    <span
-                      className={`cursor-style-icon${s.big ? " big" : ""}`}
-                      style={s.color ? { color: s.color } : undefined}
-                    >
-                      {s.icon}
-                    </span>
+                    −
                   </button>
-                ))}
+                  <span className="record-countdown-step-value">{countdownSecs}s</span>
+                  <button
+                    type="button"
+                    className="record-countdown-step-btn"
+                    disabled={countdownSecs >= 10 || countdownRemaining !== null}
+                    onClick={() => setCountdownSecs((s) => Math.min(10, s + 1))}
+                  >
+                    +
+                  </button>
+                </div>
+              </>
+            ) : (
+              <button className="record-cta-btn stop" onClick={handleStop} disabled={busy}>
+                <span className="record-cta-square" />
+                {busy ? "Stopping…" : "Stop recording"}
+              </button>
+            )}
+          </div>
+
+          {micError && <p className="error">Mic unavailable: {micError}</p>}
+        </div>
+
+        <div className="record-controls-col">
+          <div className="record-block record-block-draw">
+            <div className="record-block-head">
+              <span className="record-block-icon"><Pencil size={16} /></span>
+              <div>
+                <div className="record-block-title">Draw on screen</div>
+                <p className="record-block-sub" title="Works anywhere — not just while this app has focus">
+                  Annotate live while you record · Show/hide: Ctrl+Shift+A · Clear: Ctrl+Shift+X
+                </p>
               </div>
             </div>
+            <AnnotationToolbar />
           </div>
 
           <div className="record-block record-block-output">
@@ -1054,7 +937,6 @@ export function RecordPage() {
               <span className="record-block-icon"><FolderOpen size={16} /></span>
               <div>
                 <div className="record-block-title">Save to</div>
-                <p className="record-block-sub">Where the finished MP4 lands</p>
               </div>
             </div>
             <label className="field">
@@ -1077,7 +959,45 @@ export function RecordPage() {
         </div>
       </div>
 
+      {/* Covers the whole tab, not just a card in one column — recording save is a
+          nav-locking, background-processed operation (see Layout/RecordingSaveToast), so
+          nothing on this page is actionable while it's in flight anyway. Disappears back to
+          the ordinary blocks the instant `saving` clears (saveStatus flips to ready/failed/
+          cancelled) — the completion popup itself is RecordingSaveToast, rendered globally
+          by Layout so it's visible even if the user already navigated away from Record. */}
+      {saving && (
+        <div className="record-processing-overlay">
+          <Loader2 className="record-processing-spin" size={32} />
+          <span className="record-processing-label">Processing recording…</span>
+          <div className="record-processing-bar">
+            <div className="record-processing-bar-fill" style={{ width: `${saveStatus?.percent ?? 0}%` }} />
+          </div>
+          {saveStatus?.status === "processing" && (
+            <button
+              type="button"
+              className="record-processing-cancel"
+              disabled={cancelling}
+              onClick={async () => {
+                setCancelling(true);
+                setCancelError(null);
+                try {
+                  await cancelSave();
+                } catch (e) {
+                  setCancelError(String(e));
+                } finally {
+                  setCancelling(false);
+                }
+              }}
+            >
+              {cancelling ? "Cancelling…" : "Cancel"}
+            </button>
+          )}
+          {cancelError && <p className="record-processing-cancel-error">Couldn't cancel: {cancelError}</p>}
+        </div>
+      )}
+
       {error && <p className="error">{error}</p>}
+      {!error && warning && <p className="error">{warning}</p>}
     </section>
   );
 }

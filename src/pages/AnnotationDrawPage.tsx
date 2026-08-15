@@ -8,8 +8,6 @@ function drawStroke(ctx: CanvasRenderingContext2D, stroke: AnnotationStroke, now
   if (stroke.fadeMs > 0) {
     const age = now - stroke.createdAt;
     if (age >= stroke.fadeMs) return; // fully expired — nothing to draw
-    // Linear trail across the whole lifetime, not just a tail-end fade: full opacity the
-    // instant it's drawn, gone by the time age reaches fadeMs.
     alpha *= 1 - age / stroke.fadeMs;
   }
 
@@ -163,11 +161,27 @@ export function AnnotationDrawPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [tool]);
 
+  const pendingPointsRef = useRef<{ x: number; y: number }[]>([]);
+  const rafIdRef = useRef<number | null>(null);
+
+  function applyPendingPoints(prev: AnnotationStroke, pts: { x: number; y: number }[]): AnnotationStroke {
+    if (pts.length === 0) return prev;
+    return prev.tool === "pen"
+      ? { ...prev, points: [...prev.points, ...pts] }
+      : { ...prev, points: [prev.points[0], pts[pts.length - 1]] };
+  }
+
   useEffect(() => {
     function finalizeCurrentStroke(): void {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+      const pts = pendingPointsRef.current;
+      pendingPointsRef.current = [];
       setCurrent((prev) => {
         if (!prev) return prev;
-        setStrokes((s) => [...s, prev]);
+        setStrokes((s) => [...s, applyPendingPoints(prev, pts)]);
         setRedoStack([]); // a fresh stroke invalidates whatever could have been redone
         window.api.annotation.setStrokeActive(false).catch(() => {});
         return null;
@@ -183,14 +197,10 @@ export function AnnotationDrawPage() {
     };
   }, []);
 
-  // Lets the toolbar's undo/redo buttons reflect whether there's anything to undo/redo.
   useEffect(() => {
     window.api.annotation.reportHistoryState(strokes.length > 0, redoStack.length > 0).catch(() => { });
   }, [strokes, redoStack]);
 
-  // Fading strokes need to keep repainting on their own timer, not just when a stroke is
-  // added/removed — this keeps the canvas ticking at ~10fps for as long as any stroke on
-  // it can still fade, and stops itself once none can.
   useEffect(() => {
     const hasFading = strokes.some((s) => s.fadeMs > 0);
     if (!hasFading) return;
@@ -227,10 +237,13 @@ export function AnnotationDrawPage() {
 
   function handleMouseMove(e: ReactMouseEvent<HTMLCanvasElement>): void {
     if (!current) return;
-    const point = { x: e.clientX, y: e.clientY };
-    setCurrent((prev) => {
-      if (!prev) return prev;
-      return prev.tool === "pen" ? { ...prev, points: [...prev.points, point] } : { ...prev, points: [prev.points[0], point] };
+    pendingPointsRef.current.push({ x: e.clientX, y: e.clientY });
+    if (rafIdRef.current !== null) return;
+    rafIdRef.current = requestAnimationFrame(() => {
+      rafIdRef.current = null;
+      const pts = pendingPointsRef.current;
+      pendingPointsRef.current = [];
+      setCurrent((prev) => (prev ? applyPendingPoints(prev, pts) : prev));
     });
   }
 

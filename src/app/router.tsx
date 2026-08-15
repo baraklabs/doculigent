@@ -13,6 +13,7 @@ import { AnnotationDrawPage } from "../pages/AnnotationDrawPage";
 import { CameraBubblePage } from "../pages/CameraBubblePage";
 import { AreaSelectPage } from "../pages/AreaSelectPage";
 import { RecordingDockPage } from "../pages/RecordingDockPage";
+import { CountdownPage } from "../pages/CountdownPage";
 
 export const router = createHashRouter([
   {
@@ -34,4 +35,5 @@ export const router = createHashRouter([
   { path: "camera-bubble", element: <CameraBubblePage /> },
   { path: "area-select", element: <AreaSelectPage /> },
   { path: "recording-dock", element: <RecordingDockPage /> },
+  { path: "countdown", element: <CountdownPage /> },
 ]);

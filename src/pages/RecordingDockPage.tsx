@@ -87,6 +87,7 @@ export function RecordingDockPage() {
   const [config, setConfig] = useState<RecordingDockConfig | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [paused, setPaused] = useState(false);
+  const [started, setStarted] = useState(false);
   const [mainVisible, setMainVisible] = useState(true);
   const [popover, setPopover] = useState<Popover>(null);
   const collapsedBoundsRef = useRef<RecordingDockBounds | null>(null);
@@ -100,22 +101,26 @@ export function RecordingDockPage() {
     document.body.style.background = "transparent";
   }, []);
 
-  useEffect(() => window.api.recordingDock.onConfigChanged(setConfig), []);
+  useEffect(() => {
+    window.api.recordingDock.getConfig().then(setConfig);
+    return window.api.recordingDock.onConfigChanged(setConfig);
+  }, []);
 
   useEffect(
     () =>
       window.api.recordingDock.onTimerSync((sync) => {
         setElapsedMs(sync.elapsedMs);
         setPaused(sync.paused);
+        setStarted(true);
       }),
     []
   );
 
   useEffect(() => {
-    if (paused) return;
+    if (!started || paused) return;
     const id = setInterval(() => setElapsedMs((ms) => ms + 1000), 1000);
     return () => clearInterval(id);
-  }, [paused]);
+  }, [started, paused]);
 
   useEffect(() => {
     window.api.recordingDock.isMainWindowVisible().then(setMainVisible);

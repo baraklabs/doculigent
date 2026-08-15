@@ -3,6 +3,7 @@ import { registerCursorIpc } from "./cursor";
 import { registerScreenCaptureIpc } from "./screenCapture";
 import { registerCameraBubbleIpc } from "./cameraBubble";
 import { registerRecordingDockIpc } from "./recordingDock";
+import { registerCountdownIpc } from "./countdown";
 import { registerAreaSelectIpc } from "./areaSelect";
 import { registerAnnotationIpc } from "./annotation";
 import { registerRecordingIpc } from "./recording";
@@ -24,6 +25,7 @@ export function registerIpcHandlers(): void {
   registerScreenCaptureIpc();
   registerCameraBubbleIpc();
   registerRecordingDockIpc();
+  registerCountdownIpc();
   registerAreaSelectIpc();
   registerAnnotationIpc();
   registerRecordingIpc();

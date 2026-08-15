@@ -48,15 +48,21 @@ function sizeFor(orientation: RecordingDockOrientation): { width: number; height
 }
 
 function displayForMainWindow(): Electron.Display {
-  if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+  if (mainWindowRef && !mainWindowRef.isDestroyed() && !mainWindowRef.isMinimized()) {
     return screen.getDisplayMatching(mainWindowRef.getBounds());
   }
-  return screen.getPrimaryDisplay();
+  return screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
 }
 
 function isWithinDisplay(bounds: RecordingDockBounds, display: Electron.Display): boolean {
   const d = display.bounds;
   return bounds.x >= d.x && bounds.x < d.x + d.width && bounds.y >= d.y && bounds.y < d.y + d.height;
+}
+
+function ensureOnScreenBounds(bounds: RecordingDockBounds, orientation: RecordingDockOrientation): RecordingDockBounds {
+  if (screen.getAllDisplays().some((d) => isWithinDisplay(bounds, d))) return bounds;
+  console.error(`Recording dock: computed bounds ${JSON.stringify(bounds)} are off every display, re-deriving`);
+  return defaultBoundsFor(orientation, screen.getDisplayNearestPoint(screen.getCursorScreenPoint()));
 }
 
 function defaultBoundsFor(orientation: RecordingDockOrientation, display: Electron.Display): RecordingDockBounds {
@@ -77,6 +83,19 @@ export function getRecordingDockConfig(): RecordingDockConfig {
   return lastConfig;
 }
 
+function resolveDockBounds(): RecordingDockBounds {
+  const targetDisplay = displayForMainWindow();
+  return ensureOnScreenBounds(
+    lastBounds && isWithinDisplay(lastBounds, targetDisplay) ? lastBounds : defaultBoundsFor(lastConfig.orientation, targetDisplay),
+    lastConfig.orientation
+  );
+}
+
+export function getRecordingDockAnchorBounds(): RecordingDockBounds {
+  if (win && !win.isDestroyed()) return win.getBounds();
+  return resolveDockBounds();
+}
+
 export function openRecordingDockWindow(): void {
   if (win && !win.isDestroyed()) {
     win.webContents.send(Channels.recordingDock.configChanged, lastConfig);
@@ -85,14 +104,11 @@ export function openRecordingDockWindow(): void {
     return;
   }
 
-  const targetDisplay = displayForMainWindow();
-  const bounds =
-    lastBounds && isWithinDisplay(lastBounds, targetDisplay)
-      ? lastBounds
-      : defaultBoundsFor(lastConfig.orientation, targetDisplay);
+  const bounds = resolveDockBounds();
   win = new BrowserWindow({
     ...bounds,
     transparent: true,
+    backgroundColor: "#00000000",
     frame: false,
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -113,14 +129,27 @@ export function openRecordingDockWindow(): void {
   loadRoute(win, "/recording-dock");
 
   const openedWin = win;
-  openedWin.once("ready-to-show", () => {
-    if (openedWin.isDestroyed()) return;
+  let shown = false;
+  const revealDock = (): void => {
+    if (shown || openedWin.isDestroyed()) return;
+    shown = true;
+    clearTimeout(showFallbackTimer);
     openedWin.setBounds(bounds);
     openedWin.webContents.send(Channels.recordingDock.configChanged, lastConfig);
     openedWin.showInactive();
     openedWin.setContentProtection(true);
+  };
+  const showFallbackTimer = setTimeout(() => {
+    if (shown || openedWin.isDestroyed()) return;
+    console.error("Recording dock: ready-to-show didn't fire in time, forcing it visible");
+    revealDock();
+  }, 3000);
+  openedWin.once("ready-to-show", revealDock);
+  openedWin.webContents.once("did-fail-load", (_e, code, description) => {
+    console.error(`Recording dock failed to load (${code}): ${description}`);
   });
   openedWin.on("closed", () => {
+    clearTimeout(showFallbackTimer);
     if (win === openedWin) win = null;
     unregisterAnnotationControlWindow(openedWin);
   });

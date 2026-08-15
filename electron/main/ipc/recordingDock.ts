@@ -3,6 +3,7 @@ import { Channels } from "@shared/constants/channels";
 import type {
   RecordingDockAction,
   RecordingDockBounds,
+  RecordingDockConfig,
   RecordingDockOrientation,
   RecordingDockTimerSync,
 } from "@shared/types/models";
@@ -11,6 +12,7 @@ import {
   forwardRecordingDockAction,
   forwardRecordingDockTimerSync,
   getRecordingDockBounds,
+  getRecordingDockConfig,
   hideMainWindowForDock,
   isMainWindowVisibleForDock,
   openRecordingDockWindow,
@@ -34,6 +36,8 @@ export function registerRecordingDockIpc(): void {
       setRecordingDockOrientation(orientation);
     }
   );
+
+  ipcMain.handle(Channels.recordingDock.getConfig, async (): Promise<RecordingDockConfig> => getRecordingDockConfig());
 
   ipcMain.handle(Channels.recordingDock.getBounds, async (): Promise<RecordingDockBounds | null> =>
     getRecordingDockBounds()

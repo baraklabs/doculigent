@@ -1,6 +1,21 @@
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { Circle, RectangleHorizontal, RectangleVertical, Square, Squircle, X, ZoomIn, ZoomOut } from "lucide-react";
+import {
+  ArrowDownLeft,
+  ArrowDownRight,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUpLeft,
+  ArrowUpRight,
+  Circle,
+  RectangleHorizontal,
+  RectangleVertical,
+  Square,
+  Squircle,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 import type { CameraBubbleConfig, CameraBubbleShape } from "@shared/types/models";
 import { applyCameraBlur, type CameraBlurHandle } from "../services/camera/cameraBlur";
 import "./CameraBubblePage.css";
@@ -18,6 +33,17 @@ const SHAPES: { value: CameraBubbleShape; label: string; Icon: typeof Circle }[]
   { value: "rectangle", label: "Rectangle", Icon: RectangleHorizontal },
   { value: "rectangle-vertical", label: "Vertical rectangle", Icon: RectangleVertical },
 ];
+
+type QuickPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right" | "left-center" | "right-center";
+const QUICK_POSITIONS: { value: QuickPosition; label: string; Icon: typeof ArrowUpLeft }[] = [
+  { value: "top-left", label: "Snap to top-left", Icon: ArrowUpLeft },
+  { value: "top-right", label: "Snap to top-right", Icon: ArrowUpRight },
+  { value: "left-center", label: "Snap to left, centered", Icon: ArrowLeft },
+  { value: "right-center", label: "Snap to right, centered", Icon: ArrowRight },
+  { value: "bottom-left", label: "Snap to bottom-left", Icon: ArrowDownLeft },
+  { value: "bottom-right", label: "Snap to bottom-right", Icon: ArrowDownRight },
+];
+const QUICK_POSITION_MARGIN = 16;
 
 function roundedRectShapeRects(
   width: number,
@@ -105,6 +131,7 @@ export function CameraBubblePage() {
   const [camError, setCamError] = useState<string | null>(null);
   const boundsRef = useRef({ x: 0, y: 0, width: 220, height: 220 });
   const [hovering, setHovering] = useState(false);
+  const [recordingActive, setRecordingActive] = useState(false);
 
   useEffect(() => {
     document.documentElement.style.background = "transparent";
@@ -113,6 +140,10 @@ export function CameraBubblePage() {
 
   useEffect(() => {
     return window.api.cameraBubble.onConfigChanged(setConfig);
+  }, []);
+
+  useEffect(() => {
+    return window.api.cameraBubble.onRecordingActiveChanged(setRecordingActive);
   }, []);
 
   useEffect(() => {
@@ -187,7 +218,7 @@ export function CameraBubblePage() {
 
   function handleResizePointerDown(e: ReactPointerEvent<HTMLDivElement>, corner: Corner) {
     e.stopPropagation();
-    if (e.button !== 0 || !config) return;
+    if (e.button !== 0 || !config || recordingActive) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     const startX = e.screenX;
     const startY = e.screenY;
@@ -226,14 +257,14 @@ export function CameraBubblePage() {
   }
 
   function setShape(partial: Pick<CameraBubbleConfig, "shape" | "roundedCorners">) {
-    if (!config) return;
+    if (!config || recordingActive) return;
     const full = { ...partial, freeformResize: config.freeformResize };
     setConfig((prev) => (prev ? { ...prev, ...full } : prev));
     window.api.cameraBubble.setShape(full).catch(() => {});
   }
 
   function selectShape(shape: CameraBubbleShape) {
-    if (!config) return;
+    if (!config || recordingActive) return;
     if (shape !== config.shape) {
       const current = boundsRef.current;
       const { width, height } = sizeForShape(shape, current.width, current.height);
@@ -250,7 +281,7 @@ export function CameraBubblePage() {
   }
 
   function resizeBy(factor: number) {
-    if (!config) return;
+    if (!config || recordingActive) return;
     const current = boundsRef.current;
     const width = Math.min(MAX_SIZE, Math.max(MIN_SIZE, Math.round(current.width * factor)));
     const height = Math.min(MAX_SIZE, Math.max(MIN_SIZE, Math.round(current.height * factor)));
@@ -265,6 +296,34 @@ export function CameraBubblePage() {
     window.api.cameraBubble
       .setShapeRegion(shapeRegionFor(width, height, config.shape, config.roundedCorners, hovering))
       .catch(() => {});
+  }
+
+  function moveToQuickPosition(position: QuickPosition) {
+    const { width, height } = boundsRef.current;
+    const screenWithAvailOrigin = window.screen as Screen & { availLeft?: number; availTop?: number };
+    const screenX = screenWithAvailOrigin.availLeft ?? 0;
+    const screenY = screenWithAvailOrigin.availTop ?? 0;
+    const screenW = window.screen.availWidth || window.screen.width;
+    const screenH = window.screen.availHeight || window.screen.height;
+
+    const left = screenX + QUICK_POSITION_MARGIN;
+    const right = screenX + screenW - width - QUICK_POSITION_MARGIN;
+    const top = screenY + QUICK_POSITION_MARGIN;
+    const bottom = screenY + screenH - height - QUICK_POSITION_MARGIN;
+    const middleY = screenY + Math.round((screenH - height) / 2);
+
+    const { x, y } = {
+      "top-left": { x: left, y: top },
+      "top-right": { x: right, y: top },
+      "bottom-left": { x: left, y: bottom },
+      "bottom-right": { x: right, y: bottom },
+      "left-center": { x: left, y: middleY },
+      "right-center": { x: right, y: middleY },
+    }[position];
+
+    const next = { x: Math.round(x), y: Math.round(y), width, height };
+    boundsRef.current = next;
+    window.api.cameraBubble.setBounds(next).catch(() => {});
   }
 
   if (!config) return null;
@@ -297,8 +356,9 @@ export function CameraBubblePage() {
             key={value}
             type="button"
             className={`camera-bubble-toolbar-btn${config.shape === value ? " active" : ""}`}
-            title={label}
-            data-tooltip={label}
+            title={recordingActive ? "Locked while recording" : label}
+            data-tooltip={recordingActive ? "Locked while recording" : label}
+            disabled={recordingActive}
             onClick={() => selectShape(value)}
           >
             <Icon size={13} />
@@ -307,9 +367,9 @@ export function CameraBubblePage() {
         <button
           type="button"
           className={`camera-bubble-toolbar-btn${config.roundedCorners ? " active" : ""}`}
-          title="Rounded corners"
-          data-tooltip="Rounded corners"
-          disabled={config.shape === "round"}
+          title={recordingActive ? "Locked while recording" : "Rounded corners"}
+          data-tooltip={recordingActive ? "Locked while recording" : "Rounded corners"}
+          disabled={config.shape === "round" || recordingActive}
           onClick={() => setShape({ shape: config.shape, roundedCorners: !config.roundedCorners })}
         >
           <Squircle size={13} />
@@ -319,8 +379,9 @@ export function CameraBubblePage() {
         <button
           type="button"
           className="camera-bubble-toolbar-btn"
-          title="Smaller"
-          data-tooltip="Smaller"
+          title={recordingActive ? "Locked while recording" : "Smaller"}
+          data-tooltip={recordingActive ? "Locked while recording" : "Smaller"}
+          disabled={recordingActive}
           onClick={() => resizeBy(0.9)}
         >
           <ZoomOut size={13} />
@@ -328,34 +389,56 @@ export function CameraBubblePage() {
         <button
           type="button"
           className="camera-bubble-toolbar-btn"
-          title="Bigger"
-          data-tooltip="Bigger"
+          title={recordingActive ? "Locked while recording" : "Bigger"}
+          data-tooltip={recordingActive ? "Locked while recording" : "Bigger"}
+          disabled={recordingActive}
           onClick={() => resizeBy(1.1)}
         >
           <ZoomIn size={13} />
         </button>
         <span className="camera-bubble-toolbar-divider" aria-hidden="true" />
+        {QUICK_POSITIONS.map(({ value, label, Icon }) => (
+          <button
+            key={value}
+            type="button"
+            className="camera-bubble-toolbar-btn"
+            title={label}
+            data-tooltip={label}
+            onClick={() => moveToQuickPosition(value)}
+          >
+            <Icon size={13} />
+          </button>
+        ))}
+        <span className="camera-bubble-toolbar-divider" aria-hidden="true" />
         <button
           type="button"
           className="camera-bubble-toolbar-btn camera-bubble-toolbar-close"
-          title="Close"
-          data-tooltip="Close"
+          title={recordingActive ? "Locked while recording" : "Close"}
+          data-tooltip={recordingActive ? "Locked while recording" : "Close"}
           aria-label="Close camera bubble"
-          onClick={() => window.api.cameraBubble.close()}
+          disabled={recordingActive}
+          onClick={() => {
+            if (recordingActive) return;
+            window.api.cameraBubble.close();
+          }}
         >
           <X size={13} />
         </button>
       </div>
       {/* Always available on hover now — resizing isn't gated behind a separate "free-form"
           toggle anymore, since the round/square-locks-1:1 vs. rectangles-resize-freely rule
-          (see handleResizePointerDown's lockAspect) was already doing the real work. */}
-      {CORNERS.map((corner) => (
-        <div
-          key={corner}
-          className={`camera-bubble-handle camera-bubble-handle-${corner}`}
-          onPointerDown={(e) => handleResizePointerDown(e, corner)}
-        />
-      ))}
+          (see handleResizePointerDown's lockAspect) was already doing the real work. Hidden
+          (not just inert) while recordingActive — handleResizePointerDown already no-ops,
+          this just makes the lock visible instead of a handle that looks draggable but
+          silently does nothing. */}
+      {!recordingActive &&
+        CORNERS.map((corner) => (
+          <div
+            key={corner}
+            className={`camera-bubble-handle camera-bubble-handle-${corner}`}
+            onPointerDown={(e) => handleResizePointerDown(e, corner)}
+          />
+        ))}
     </div>
   );
 }

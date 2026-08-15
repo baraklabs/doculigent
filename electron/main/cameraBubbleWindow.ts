@@ -1,6 +1,7 @@
 
 import { BrowserWindow, screen } from "electron";
 import path from "node:path";
+import { Channels } from "@shared/constants/channels";
 import type { CameraBubbleBounds, CameraBubbleConfig, CameraBubbleShape } from "@shared/types/models";
 import { getCameraBubbleState, setCameraBubbleState } from "./native/settingsStore";
 
@@ -55,7 +56,6 @@ function resolveBounds(shape: CameraBubbleShape): CameraBubbleBounds {
   };
 }
 
-
 let hoverPollTimer: ReturnType<typeof setInterval> | null = null;
 let isHovering = false;
 
@@ -89,6 +89,13 @@ export function getCameraBubbleBounds(): CameraBubbleBounds | null {
   return lastBounds;
 }
 
+export function getCameraBubbleConfig(): CameraBubbleConfig {
+  return lastConfig;
+}
+
+export function setCameraBubbleRecordingActive(active: boolean): void {
+  if (win && !win.isDestroyed()) win.webContents.send(Channels.cameraBubble.recordingActiveChanged, active);
+}
 
 export function openCameraBubbleWindow(partial: Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId" | "blur">): void {
   lastConfig = { ...lastConfig, ...partial };
@@ -97,6 +104,7 @@ export function openCameraBubbleWindow(partial: Pick<CameraBubbleConfig, "mirror
   if (win && !win.isDestroyed()) {
     win.webContents.send("cameraBubble:configChanged", lastConfig);
     win.showInactive();
+    win.setContentProtection(true);
     startHoverPoll();
     return;
   }
@@ -105,6 +113,7 @@ export function openCameraBubbleWindow(partial: Pick<CameraBubbleConfig, "mirror
   win = new BrowserWindow({
     ...bounds,
     transparent: true,
+    backgroundColor: "#00000000",
     frame: false,
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -131,6 +140,7 @@ export function openCameraBubbleWindow(partial: Pick<CameraBubbleConfig, "mirror
     openedWin.setBounds(bounds);
     openedWin.webContents.send("cameraBubble:configChanged", lastConfig);
     openedWin.showInactive();
+    openedWin.setContentProtection(true);
     startHoverPoll();
   });
   
@@ -147,14 +157,12 @@ export function closeCameraBubbleWindow(): void {
   win = null;
 }
 
-
 export function updateCameraBubbleConfig(partial: Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId" | "blur">): void {
   lastConfig = { ...lastConfig, ...partial };
   persist();
   if (!win || win.isDestroyed()) return;
   win.webContents.send("cameraBubble:configChanged", lastConfig);
 }
-
 
 export function setCameraBubbleShape(
   partial: Pick<CameraBubbleConfig, "shape" | "roundedCorners" | "freeformResize">
@@ -165,14 +173,12 @@ export function setCameraBubbleShape(
   win.webContents.send("cameraBubble:configChanged", lastConfig);
 }
 
-
 export function setCameraBubbleBounds(bounds: CameraBubbleBounds): void {
   lastBounds = bounds;
   persist();
   if (!win || win.isDestroyed()) return;
   win.setBounds(bounds);
 }
-
 
 export function setCameraBubbleShapeRegion(rects: { x: number; y: number; width: number; height: number }[]): void {
   if (process.platform === "darwin") return;

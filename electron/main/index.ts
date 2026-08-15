@@ -1,18 +1,23 @@
-import { app, BrowserWindow, Menu } from "electron";
+import { app, BrowserWindow, globalShortcut, Menu } from "electron";
 import path from "node:path";
 import { createMainWindow } from "./window";
 import { closeAnnotationOverlay, setMainWindowForAnnotation } from "./annotationWindow";
 import { closeCameraBubbleWindow } from "./cameraBubbleWindow";
 import { closeRecordingDockWindow, setMainWindowForRecordingDock } from "./recordingDockWindow";
 import { closeAreaSelectOverlay } from "./areaSelectWindow";
+import { closeCountdownWindow } from "./countdownWindow";
 import { registerIpcHandlers } from "./ipc";
+import { clearAnnotationsGlobal, toggleAnnotationOverlay } from "./ipc/annotation";
 import { registerMediaScheme, registerMediaHandler } from "./mediaProtocol";
-import { restorePendingCursorOverride, restoreCursor } from "./native/systemCursor";
 import { killPendingFfmpegJobs } from "./native/ffmpeg";
 import { killPendingScreenCapture } from "./native/screenCapture";
 import { initTranscriptionWorkerClient, terminateTranscriptionWorker } from "./transcription/whisperWorkerClient";
 import { registerProtocolClient, handleOpenUrl, handleSecondInstanceArgv, handleInitialArgv } from "./auth/deepLink";
 import { startProjectManagerScheduler } from "./projectManagers/scheduler";
+
+if (process.platform === "win32") {
+  app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
+}
 
 function buildDarwinMenu(): Menu {
   return Menu.buildFromTemplate([
@@ -67,6 +72,7 @@ if (!gotSingleInstanceLock) {
       closeCameraBubbleWindow();
       closeRecordingDockWindow();
       closeAreaSelectOverlay();
+      closeCountdownWindow();
     });
   };
 
@@ -79,12 +85,17 @@ if (!gotSingleInstanceLock) {
 
     registerProtocolClient();
 
-    restorePendingCursorOverride();
-
     registerMediaHandler();
     registerIpcHandlers();
     startProjectManagerScheduler();
     openMainWindow();
+
+    if (!globalShortcut.register("CommandOrControl+Shift+A", toggleAnnotationOverlay)) {
+      console.error("Couldn't register Ctrl+Shift+A (hide/show annotation overlay) — already in use");
+    }
+    if (!globalShortcut.register("CommandOrControl+Shift+X", clearAnnotationsGlobal)) {
+      console.error("Couldn't register Ctrl+Shift+X (clear annotations) — already in use");
+    }
 
     handleInitialArgv(process.argv);
 
@@ -98,11 +109,12 @@ if (!gotSingleInstanceLock) {
   });
 
   app.on("before-quit", () => {
-    restoreCursor();
+    globalShortcut.unregisterAll();
     closeAnnotationOverlay();
     closeCameraBubbleWindow();
     closeRecordingDockWindow();
     closeAreaSelectOverlay();
+    closeCountdownWindow();
     killPendingFfmpegJobs();
     killPendingScreenCapture();
     terminateTranscriptionWorker();

@@ -4,6 +4,7 @@ import { ANNOTATION_COLORS, type AnnotationState, type AnnotationTool } from "@s
 import {
   broadcastAnnotationState,
   getDrawWindowIds,
+  hideAnnotationOverlay,
   isAnnotationOverlayOpen,
   openAnnotationOverlay,
   sendAnnotationCommand,
@@ -12,10 +13,6 @@ import {
   updateClickThroughForTool,
 } from "../annotationWindow";
 
-// Main process is the source of truth for the *current* tool/color/width/opacity/fade
-// (cheap, small state) — strokes/history live in each draw window's own renderer, reported
-// back only as a boolean pair for the toolbar's undo/redo buttons (see reportHistoryState
-// below).
 let currentTool: AnnotationTool = "pointer";
 let currentColor: string = ANNOTATION_COLORS[0];
 let currentWidth = 4;
@@ -44,12 +41,31 @@ function reportAggregateHistory(): void {
   sendAnnotationHistoryState(canUndo, canRedo);
 }
 
+function openOverlay(): void {
+  currentTool = "pointer";
+  openAnnotationOverlay();
+  updateClickThroughForTool(currentTool);
+  broadcastAnnotationState(currentState());
+}
+
+export function toggleAnnotationOverlay(): void {
+  if (isAnnotationOverlayOpen()) {
+    hideAnnotationOverlay();
+    return;
+  }
+  if (getDrawWindowIds().length === 0) currentTool = "pen";
+  openAnnotationOverlay();
+  updateClickThroughForTool(currentTool);
+  broadcastAnnotationState(currentState());
+}
+
+export function clearAnnotationsGlobal(): void {
+  if (isAnnotationOverlayOpen()) sendAnnotationCommand("clear");
+}
+
 export function registerAnnotationIpc(): void {
   ipcMain.handle(Channels.annotation.open, async (): Promise<void> => {
-    currentTool = "pointer";
-    openAnnotationOverlay();
-    updateClickThroughForTool(currentTool);
-    broadcastAnnotationState(currentState());
+    openOverlay();
   });
 
   ipcMain.handle(Channels.annotation.isOpen, async (): Promise<boolean> => isAnnotationOverlayOpen());

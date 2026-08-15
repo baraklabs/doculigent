@@ -35,13 +35,13 @@ interface StoredSettings {
   recordSystemAudio?: SystemAudioConfig;
   recordCaptureMode?: CaptureMode;
   recordAreaRect?: AreaRect;
+  recordCountdownSecs?: number;
   meetingLanguage?: string;
   meetingMicEnabled?: boolean;
   meetingMicDeviceId?: string | null;
   meetingSystemAudioEnabled?: boolean;
   meetingSystemAudioSourceId?: string | null;
   whisperModel?: WhisperModelSize | null;
-  cursorOverride?: boolean;
   useDoculigentModel?: boolean;
   transcriptionByokProfileId?: string | null;
   autoTranscribe?: AutoTranscribeSettings;
@@ -186,6 +186,7 @@ export function getRecordSettings(): {
   systemAudio: SystemAudioConfig | null;
   captureMode: CaptureMode | null;
   areaRect: AreaRect | null;
+  countdownSecs: number | null;
 } {
   const stored = readStored();
   return {
@@ -195,6 +196,7 @@ export function getRecordSettings(): {
     systemAudio: stored.recordSystemAudio ?? null,
     captureMode: stored.recordCaptureMode ?? null,
     areaRect: stored.recordAreaRect ?? null,
+    countdownSecs: stored.recordCountdownSecs ?? null,
   };
 }
 
@@ -204,7 +206,8 @@ export function setRecordSettings(
   mic: MicConfig | null,
   systemAudio: SystemAudioConfig | null,
   captureMode: CaptureMode | null,
-  areaRect: AreaRect | null
+  areaRect: AreaRect | null,
+  countdownSecs: number | null
 ): void {
   writeStored({
     ...readStored(),
@@ -214,6 +217,7 @@ export function setRecordSettings(
     recordSystemAudio: systemAudio ?? undefined,
     recordCaptureMode: captureMode ?? undefined,
     recordAreaRect: areaRect ?? undefined,
+    recordCountdownSecs: countdownSecs ?? undefined,
   });
 }
 
@@ -315,14 +319,3 @@ export function setStoragePreference(preference: StoragePreference): void {
   writeStored({ ...readStored(), storagePreference: preference });
 }
 
-export function getCursorOverride(): boolean {
-  return !!readStored().cursorOverride;
-}
-
-export function setCursorOverride(active: boolean): void {
-  writeStored({ ...readStored(), cursorOverride: active });
-}
-
-export function clearCursorOverride(): void {
-  writeStored({ ...readStored(), cursorOverride: false });
-}

@@ -42,6 +42,7 @@ export const SettingsService = {
     systemAudio: SystemAudioConfig | null;
     captureMode: CaptureMode | null;
     areaRect: AreaRect | null;
+    countdownSecs: number | null;
   }> {
     return window.api.settings.getRecordSettings();
   },
@@ -51,9 +52,18 @@ export const SettingsService = {
     mic: MicConfig | null,
     systemAudio: SystemAudioConfig | null,
     captureMode: CaptureMode | null,
-    areaRect: AreaRect | null
+    areaRect: AreaRect | null,
+    countdownSecs: number | null
   ): Promise<void> {
-    return window.api.settings.setRecordSettings(overlay, targetId, mic, systemAudio, captureMode, areaRect);
+    return window.api.settings.setRecordSettings(
+      overlay,
+      targetId,
+      mic,
+      systemAudio,
+      captureMode,
+      areaRect,
+      countdownSecs
+    );
   },
   getMeetingSettings(): Promise<{
     language: string | null;

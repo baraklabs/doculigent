@@ -26,9 +26,7 @@ const api: DoculigentApi = {
     openScreenRecordingSettings: () => ipcRenderer.invoke(Channels.capture.openScreenRecordingSettings),
   },
   cursor: {
-    apply: (style) => ipcRenderer.invoke(Channels.cursor.apply, style),
-    restore: () => ipcRenderer.invoke(Channels.cursor.restore),
-    startCapture: (targetId, style) => ipcRenderer.invoke(Channels.cursor.startCapture, targetId, style),
+    startCapture: (targetId, area) => ipcRenderer.invoke(Channels.cursor.startCapture, targetId, area),
     stopCapture: () => ipcRenderer.invoke(Channels.cursor.stopCapture),
   },
   screenCapture: {
@@ -45,8 +43,12 @@ const api: DoculigentApi = {
     setShape: (shape) => ipcRenderer.invoke(Channels.cameraBubble.setShape, shape),
     setShapeRegion: (rects) => ipcRenderer.invoke(Channels.cameraBubble.setShapeRegion, rects),
     isOpen: () => ipcRenderer.invoke(Channels.cameraBubble.isOpen),
+    getConfig: () => ipcRenderer.invoke(Channels.cameraBubble.getConfig),
     getBounds: () => ipcRenderer.invoke(Channels.cameraBubble.getBounds),
     setBounds: (bounds) => ipcRenderer.invoke(Channels.cameraBubble.setBounds, bounds),
+    startTrack: () => ipcRenderer.invoke(Channels.cameraBubble.startTrack),
+    stopTrack: () => ipcRenderer.invoke(Channels.cameraBubble.stopTrack),
+    setRecordingActive: (active) => ipcRenderer.invoke(Channels.cameraBubble.setRecordingActive, active),
     onConfigChanged: (callback) => {
       const listener = (_event: unknown, config: CameraBubbleConfig) => callback(config);
       ipcRenderer.on(Channels.cameraBubble.configChanged, listener);
@@ -62,11 +64,17 @@ const api: DoculigentApi = {
       ipcRenderer.on(Channels.cameraBubble.hoverChanged, listener);
       return () => ipcRenderer.removeListener(Channels.cameraBubble.hoverChanged, listener);
     },
+    onRecordingActiveChanged: (callback) => {
+      const listener = (_event: unknown, active: boolean) => callback(active);
+      ipcRenderer.on(Channels.cameraBubble.recordingActiveChanged, listener);
+      return () => ipcRenderer.removeListener(Channels.cameraBubble.recordingActiveChanged, listener);
+    },
   },
   recordingDock: {
     open: () => ipcRenderer.invoke(Channels.recordingDock.open),
     close: () => ipcRenderer.invoke(Channels.recordingDock.close),
     setOrientation: (orientation) => ipcRenderer.invoke(Channels.recordingDock.setOrientation, orientation),
+    getConfig: () => ipcRenderer.invoke(Channels.recordingDock.getConfig),
     getBounds: () => ipcRenderer.invoke(Channels.recordingDock.getBounds),
     setBounds: (bounds) => ipcRenderer.invoke(Channels.recordingDock.setBounds, bounds),
     sendAction: (action) => ipcRenderer.invoke(Channels.recordingDock.sendAction, action),
@@ -93,6 +101,21 @@ const api: DoculigentApi = {
       const listener = (_event: unknown, visible: boolean) => callback(visible);
       ipcRenderer.on(Channels.recordingDock.mainWindowVisibilityChanged, listener);
       return () => ipcRenderer.removeListener(Channels.recordingDock.mainWindowVisibilityChanged, listener);
+    },
+  },
+  countdown: {
+    open: (secondsRemaining) => ipcRenderer.invoke(Channels.countdown.open, secondsRemaining),
+    close: () => ipcRenderer.invoke(Channels.countdown.close),
+    cancel: () => ipcRenderer.invoke(Channels.countdown.cancel),
+    onTick: (callback) => {
+      const listener = (_event: unknown, secondsRemaining: number) => callback(secondsRemaining);
+      ipcRenderer.on(Channels.countdown.tick, listener);
+      return () => ipcRenderer.removeListener(Channels.countdown.tick, listener);
+    },
+    onCancelled: (callback) => {
+      const listener = () => callback();
+      ipcRenderer.on(Channels.countdown.cancelled, listener);
+      return () => ipcRenderer.removeListener(Channels.countdown.cancelled, listener);
     },
   },
   areaSelect: {
@@ -194,8 +217,17 @@ const api: DoculigentApi = {
     deleteLlmProfile: (id) => ipcRenderer.invoke(Channels.settings.deleteLlmProfile, id),
     defaultProfileTemplate: (kind) => ipcRenderer.invoke(Channels.settings.defaultProfileTemplate, kind),
     getRecordSettings: () => ipcRenderer.invoke(Channels.settings.getRecordSettings),
-    setRecordSettings: (overlay, targetId, mic, systemAudio, captureMode, areaRect) =>
-      ipcRenderer.invoke(Channels.settings.setRecordSettings, overlay, targetId, mic, systemAudio, captureMode, areaRect),
+    setRecordSettings: (overlay, targetId, mic, systemAudio, captureMode, areaRect, countdownSecs) =>
+      ipcRenderer.invoke(
+        Channels.settings.setRecordSettings,
+        overlay,
+        targetId,
+        mic,
+        systemAudio,
+        captureMode,
+        areaRect,
+        countdownSecs
+      ),
     getMeetingSettings: () => ipcRenderer.invoke(Channels.settings.getMeetingSettings),
     setMeetingSettings: (language, micEnabled, micDeviceId, systemAudioEnabled, systemAudioSourceId) =>
       ipcRenderer.invoke(

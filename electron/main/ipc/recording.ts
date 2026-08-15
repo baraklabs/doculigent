@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Channels } from "@shared/constants/channels";
-import type { OverlayConfig, Transcript, Video } from "@shared/types/models";
-import { cameraBubbleRect, OUTPUT_HEIGHT, OUTPUT_WIDTH } from "@shared/lib/cameraBubble";
+import type { CameraTrackMetadata, CursorMetadata, OverlayConfig, Transcript, Video } from "@shared/types/models";
+import { cameraBubbleRectForShape, OUTPUT_HEIGHT, OUTPUT_WIDTH } from "@shared/lib/cameraBubble";
 import { ensureSaveDir } from "../native/paths";
 import {
   convertToWav,
@@ -14,16 +14,15 @@ import {
   muxScreenWithAudio,
   overlayCameraBubble,
   remuxToMp4,
+  type CameraBubbleTrack,
 } from "../native/ffmpeg";
 import { insertVideo } from "../native/libraryStore";
 import { writeCursorMetadata } from "../native/cursorTrack";
+import { writeCameraMetadata } from "../native/cameraTrack";
 import { writeTranscriptFile } from "../native/transcriptFile";
+import { frameDimensions, loadCursorIcons, overlayCursorTrack, toFrameCoords } from "../native/cursorOverlay";
+import { getCameraBubbleConfig } from "../cameraBubbleWindow";
 
-/** A side clip recorded alongside a native (gdigrab) screen capture — see
- *  native/screenCapture.ts and RecordingService's gdigrab branch. `hasVideo` distinguishes
- *  a camera-bubble clip (overlaid onto the screen video) from a mic-only clip (just muxed
- *  in as audio); `hasAudio` is only meaningful when `hasVideo` is true, since a bubble clip
- *  can be silent (mic muted, camera still on). */
 interface SideClip {
   bytes: ArrayBuffer;
   hasVideo: boolean;
@@ -31,12 +30,7 @@ interface SideClip {
 }
 
 interface SaveRecordingInput {
-  /** Full composited webm from the ordinary getUserMedia/MediaRecorder pipeline. Mutually
-   *  exclusive with `screenFilePath` — exactly one is set, depending on which pipeline
-   *  RecordingService used for this recording. */
   webmBytes?: ArrayBuffer;
-  /** A screen video already written to disk by native/screenCapture.ts (gdigrab), with the
-   *  real cursor excluded at capture time rather than drawn over afterward. */
   screenFilePath?: string;
   sideClip?: SideClip;
   overlay: OverlayConfig;
@@ -58,7 +52,6 @@ const AUDIO_OVERLAY: OverlayConfig = {
   circular: false,
   showCamera: false,
   cameraDeviceId: null,
-  cursorHighlight: "default",
   mirrorCamera: false,
   cameraBlur: "none",
 };
@@ -69,40 +62,107 @@ function recordingDir(saveDir: string, id: string): string {
 
 const pendingSaves = new Map<string, AbortController>();
 
+async function moveFile(src: string, dest: string): Promise<void> {
+  try {
+    await fs.rename(src, dest);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EXDEV") throw e;
+    await fs.copyFile(src, dest);
+    await fs.rm(src, { force: true });
+  }
+}
+
+async function readJsonIfExists<T>(filePath: string): Promise<T | null> {
+  try {
+    return JSON.parse(await fs.readFile(filePath, "utf-8")) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveCameraBubbleTrack(recDir: string, overlay: OverlayConfig): Promise<CameraBubbleTrack> {
+  const shape = getCameraBubbleConfig().shape;
+  const fallback = cameraBubbleRectForShape(overlay, shape, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+  const fallbackTrack: CameraBubbleTrack = {
+    width: fallback.width,
+    height: fallback.height,
+    points: [{ atSec: 0, x: fallback.x, y: fallback.y }],
+  };
+  try {
+    const cursorMeta = await readJsonIfExists<CursorMetadata>(path.join(recDir, "metadata", "cursor.json"));
+    const cameraMeta = await readJsonIfExists<CameraTrackMetadata>(path.join(recDir, "metadata", "camera.json"));
+    if (!cursorMeta || !cameraMeta || cameraMeta.points.length === 0) return fallbackTrack;
+
+    const { width: frameW, height: frameH } = frameDimensions(cursorMeta);
+
+    const lastRaw = cameraMeta.points[cameraMeta.points.length - 1];
+    const lastTopLeft = toFrameCoords(cursorMeta, lastRaw.x, lastRaw.y);
+    const lastBottomRight = toFrameCoords(cursorMeta, lastRaw.x + lastRaw.width, lastRaw.y + lastRaw.height);
+    const trackedWidth = lastTopLeft && lastBottomRight ? Math.round(lastBottomRight.x - lastTopLeft.x) : 0;
+    const trackedHeight = lastTopLeft && lastBottomRight ? Math.round(lastBottomRight.y - lastTopLeft.y) : 0;
+    const width = trackedWidth > 0 ? trackedWidth : fallback.width;
+    const height = trackedHeight > 0 ? trackedHeight : fallback.height;
+
+    const points = cameraMeta.points.flatMap((p) => {
+      const pos = toFrameCoords(cursorMeta, p.x, p.y);
+      if (!pos) return [];
+      return [
+        {
+          atSec: Math.max(0, p.t / 1000),
+          x: Math.round(Math.min(Math.max(pos.x, 0), frameW - width)),
+          y: Math.round(Math.min(Math.max(pos.y, 0), frameH - height)),
+        },
+      ];
+    });
+    if (points.length === 0) return fallbackTrack;
+    return { width, height, points };
+  } catch {
+    return fallbackTrack;
+  }
+}
 
 async function buildFinalMp4(
   id: string,
   input: SaveRecordingInput,
   finalMp4: string,
+  recDir: string,
   onProgress: (secondsDone: number) => void,
   signal: AbortSignal,
   cleanupPaths: string[]
 ): Promise<void> {
   if (input.screenFilePath) {
-    cleanupPaths.push(input.screenFilePath);
+    const metaDir = path.join(recDir, "metadata");
+    await fs.mkdir(metaDir, { recursive: true });
+    const screenKeepPath = path.join(metaDir, "screen.mp4");
+    await moveFile(input.screenFilePath, screenKeepPath);
+
     if (!input.sideClip) {
-      await copyToMp4(input.screenFilePath, finalMp4, onProgress, signal);
+      await copyToMp4(screenKeepPath, finalMp4, onProgress, signal);
       return;
     }
 
-    const sideClipPath = path.join(os.tmpdir(), `${id}-side.webm`);
+    const sideClipPath = input.sideClip.hasVideo
+      ? path.join(metaDir, "camera.webm")
+      : path.join(os.tmpdir(), `${id}-side.webm`);
     await fs.writeFile(sideClipPath, Buffer.from(input.sideClip.bytes));
-    cleanupPaths.push(sideClipPath);
+    if (!input.sideClip.hasVideo) cleanupPaths.push(sideClipPath);
 
     if (input.sideClip.hasVideo) {
-      const { x, y } = cameraBubbleRect(input.overlay, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+      const track = await resolveCameraBubbleTrack(recDir, input.overlay);
+      const { shape, mirror } = getCameraBubbleConfig();
       await overlayCameraBubble(
-        input.screenFilePath,
+        screenKeepPath,
         sideClipPath,
-        { x, y },
-        input.overlay.circular,
+        track,
+        shape,
+        mirror,
         input.sideClip.hasAudio,
         finalMp4,
         onProgress,
         signal
       );
     } else {
-      await muxScreenWithAudio(input.screenFilePath, sideClipPath, finalMp4, onProgress, signal);
+      await muxScreenWithAudio(screenKeepPath, sideClipPath, finalMp4, onProgress, signal);
     }
     return;
   }
@@ -111,6 +171,29 @@ async function buildFinalMp4(
   await fs.writeFile(tempWebm, Buffer.from(input.webmBytes!));
   cleanupPaths.push(tempWebm);
   await remuxToMp4(tempWebm, finalMp4, onProgress, signal);
+}
+
+async function tryOverlayCursor(
+  recDir: string,
+  finalMp4: string,
+  durationSecs: number,
+  onProgress: (secondsDone: number) => void,
+  signal: AbortSignal
+): Promise<void> {
+  const metaPath = path.join(recDir, "metadata", "cursor.json");
+  const metadata = await readJsonIfExists<CursorMetadata>(metaPath);
+  if (!metadata || metadata.points.length === 0 || durationSecs <= 0) return;
+
+  const composedPath = path.join(recDir, "recording-with-cursor.mp4.tmp");
+  try {
+    const icons = await loadCursorIcons(metadata, path.join(recDir, "metadata", "cursor-icons"));
+    await overlayCursorTrack(finalMp4, metadata, icons, durationSecs, composedPath, onProgress, signal);
+    await moveFile(composedPath, finalMp4);
+  } catch (e) {
+    await fs.rm(composedPath, { force: true });
+    if (signal.aborted) throw new FfmpegCancelledError();
+    console.error("Cursor overlay pass failed, keeping the plain composite:", e);
+  }
 }
 
 async function finishRecordingSave(
@@ -127,6 +210,7 @@ async function finishRecordingSave(
       id,
       input,
       finalMp4,
+      path.dirname(finalMp4),
       (secondsDone) => {
         if (sender.isDestroyed() || input.durationSecs <= 0) return;
         const percent = Math.max(0, Math.min(99, Math.round((secondsDone / input.durationSecs) * 100)));
@@ -135,6 +219,19 @@ async function finishRecordingSave(
       abort.signal,
       cleanupPaths
     );
+    if (input.screenFilePath) {
+      await tryOverlayCursor(
+        path.dirname(finalMp4),
+        finalMp4,
+        input.durationSecs,
+        (secondsDone) => {
+          if (sender.isDestroyed() || input.durationSecs <= 0) return;
+          const percent = Math.max(0, Math.min(99, Math.round((secondsDone / input.durationSecs) * 100)));
+          sender.send(Channels.recording.saveProgress, { id, percent });
+        },
+        abort.signal
+      );
+    }
     const video: Video = {
       id,
       title: input.title,
@@ -168,6 +265,7 @@ export function registerRecordingIpc(): void {
     await fs.mkdir(recDir, { recursive: true });
     const finalMp4 = path.join(recDir, "recording.mp4");
     await writeCursorMetadata(id, recDir);
+    await writeCameraMetadata(id, recDir);
     void finishRecordingSave(id, finalMp4, input, event.sender);
 
     return { id };

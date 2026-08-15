@@ -8,7 +8,6 @@ import { queryClient } from "../lib/queryClient";
 export interface RecordingSaveStatus {
   id: string;
   status: "processing" | "ready" | "failed" | "cancelled";
-  /** MP4 transcode progress, 0-100. */
   percent: number;
   message?: string;
 }
@@ -24,8 +23,6 @@ interface StartArgs {
   areaRect: AreaRect | null;
 }
 
-/** Remembered outside the store's reactive state — restart() replays these, and nothing
- *  needs to re-render when they're set. */
 let lastStartArgs: StartArgs | null = null;
 
 interface RecordingState {
@@ -34,6 +31,7 @@ interface RecordingState {
   busy: boolean;
   stopping: boolean;
   error: string | null;
+  warning: string | null;
   title: string;
   source: "record" | "meeting";
   saveStatus: RecordingSaveStatus | null;
@@ -62,6 +60,7 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
   busy: false,
   stopping: false,
   error: null,
+  warning: null,
   title: "Untitled recording",
   source: "record",
   saveStatus: null,
@@ -81,11 +80,17 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
 
   async start(targetId, overlay, mic, systemAudio, title, source = "record", captureMode = "display", areaRect = null) {
     if (get().busy || get().recording) return;
-    set({ busy: true, error: null, title, source });
+    set({ busy: true, error: null, warning: null, title, source });
     try {
       await recordingService.start(targetId, overlay, mic, systemAudio, captureMode, areaRect);
       lastStartArgs = { targetId, overlay, mic, systemAudio, title, source, captureMode, areaRect };
-      set({ recording: true, paused: false });
+      set({
+        recording: true,
+        paused: false,
+        warning: recordingService.wasCameraDegraded()
+          ? "Camera couldn't be added to this recording (it may already be in use elsewhere) — recording screen-only."
+          : null,
+      });
     } catch (e) {
       set({ error: String(e) });
     } finally {
@@ -133,7 +138,13 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
       await recordingService.discard();
       set({ recording: false, paused: false });
       await recordingService.start(args.targetId, args.overlay, args.mic, args.systemAudio, args.captureMode, args.areaRect);
-      set({ recording: true, paused: false });
+      set({
+        recording: true,
+        paused: false,
+        warning: recordingService.wasCameraDegraded()
+          ? "Camera couldn't be added to this recording (it may already be in use elsewhere) — recording screen-only."
+          : null,
+      });
     } catch (e) {
       set({ error: String(e) });
     } finally {

@@ -32,6 +32,7 @@ function createDrawWindow(display: Display): BrowserWindow {
   const win = new BrowserWindow({
     ...display.bounds,
     transparent: true,
+    backgroundColor: "#00000000",
     frame: false,
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -69,8 +70,10 @@ function broadcastToOtherWindows(channel: string, payload: unknown): void {
   }
 }
 
+let overlayVisible = false;
+
 export function isAnnotationOverlayOpen(): boolean {
-  return drawWindows.size > 0;
+  return overlayVisible;
 }
 
 export function getDrawWindowIds(): number[] {
@@ -78,8 +81,9 @@ export function getDrawWindowIds(): number[] {
 }
 
 export function openAnnotationOverlay(): void {
+  overlayVisible = true;
   if (drawWindows.size > 0) {
-    for (const win of drawWindows.values()) win.showInactive();
+    for (const win of drawWindows.values()) win.setOpacity(1);
     broadcastToOtherWindows("annotation:overlayOpenChanged", true);
     return;
   }
@@ -91,10 +95,23 @@ export function openAnnotationOverlay(): void {
   broadcastToOtherWindows("annotation:overlayOpenChanged", true);
 }
 
+export function hideAnnotationOverlay(): void {
+  if (drawWindows.size === 0) return;
+  overlayVisible = false;
+  for (const win of drawWindows.values()) {
+    win.setOpacity(0);
+    win.setIgnoreMouseEvents(true, { forward: true });
+  }
+  stopCursorPoll();
+  lastAppliedClickThrough = null;
+  broadcastToOtherWindows("annotation:overlayOpenChanged", false);
+}
+
 export function closeAnnotationOverlay(): void {
   const wasOpen = drawWindows.size > 0;
   for (const win of drawWindows.values()) win.close();
   drawWindows.clear();
+  overlayVisible = false;
   stopCursorPoll();
   lastAppliedClickThrough = null;
   strokeActive = false;

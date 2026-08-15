@@ -1,12 +1,19 @@
 
-import type { AreaRect, CaptureMode, CaptureTarget, MicConfig, OverlayConfig, SystemAudioConfig } from "@shared/types/models";
-import { cameraBubbleRect, OUTPUT_HEIGHT, OUTPUT_WIDTH } from "@shared/lib/cameraBubble";
+import type {
+  AreaRect,
+  CameraBubbleShape,
+  CaptureMode,
+  CaptureTarget,
+  MicConfig,
+  OverlayConfig,
+  SystemAudioConfig,
+} from "@shared/types/models";
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
   drawCameraBubble,
-  drawCameraFrame,
   drawCameraFullFrame,
+  drawCameraRaw,
   drawLetterboxed,
 } from "./compositor";
 import { desktopConstraints } from "./constraints";
@@ -50,6 +57,13 @@ class RecordingService {
   private pausedAccumMs = 0;
   private pauseStartedAt = 0;
 
+  private cameraDegraded = false;
+
+  private cameraBubbleSize = { width: 1, height: 1 };
+  private cameraBubbleShape: CameraBubbleShape = "round";
+  private cameraBubbleRoundedCorners = false;
+  private cameraBubblePollTimer: ReturnType<typeof setInterval> | null = null;
+
   private nativeCapture = false;
   private sideCanvas: HTMLCanvasElement | null = null;
   private sideCtx: CanvasRenderingContext2D | null = null;
@@ -65,6 +79,10 @@ class RecordingService {
 
   isNativeCapture(): boolean {
     return this.nativeCapture;
+  }
+
+  wasCameraDegraded(): boolean {
+    return this.cameraDegraded;
   }
 
   getCanvas(): HTMLCanvasElement | null {
@@ -92,6 +110,7 @@ class RecordingService {
     this.captureMode = captureMode;
     this.areaRect = captureMode === "area" ? areaRect : null;
     this.overlay = captureMode === "camera" ? { ...overlay, showCamera: false } : overlay;
+    this.cameraDegraded = false;
 
     if (captureMode !== "camera" && window.api.system.platform === "darwin") {
       const permission = await window.api.capture.getPermissionStatus();
@@ -105,13 +124,19 @@ class RecordingService {
 
     this.nativeCapture =
       captureMode !== "camera" &&
-      (await window.api.screenCapture.start(targetId, overlay.cursorHighlight === "hidden", this.areaRect ?? undefined))
-        .available;
+      (await window.api.screenCapture.start(targetId, true, this.areaRect ?? undefined)).available;
 
-    if (captureMode === "camera") {
-      this.cameraStream = await navigator.mediaDevices.getUserMedia({
-        video: overlay.cameraDeviceId ? { deviceId: { exact: overlay.cameraDeviceId } } : true,
-      });
+    if (!this.nativeCapture && this.overlay.showCamera) await this.startCameraBubblePoll();
+
+    if (captureMode === "camera" || this.overlay.showCamera) {
+      try {
+        this.cameraStream = await this.acquireCameraStream(overlay.cameraDeviceId);
+      } catch (e) {
+        if (captureMode === "camera") throw e;
+        console.error("Camera stream unavailable for compositing into the recording — continuing without it:", e);
+        this.cameraStream = null;
+        this.cameraDegraded = true;
+      }
     }
     if (!mic.muted) {
       this.micStream = await navigator.mediaDevices.getUserMedia({
@@ -145,8 +170,40 @@ class RecordingService {
     this.startedAt = performance.now();
 
     if (captureMode !== "camera") {
-      window.api.cursor.startCapture(targetId, overlay.cursorHighlight).catch(() => {});
+      window.api.cursor.startCapture(targetId, this.areaRect).catch(() => {});
     }
+    if (this.nativeCapture && this.overlay.showCamera) {
+      window.api.cameraBubble.startTrack().catch(() => {});
+    }
+    window.api.cameraBubble.setRecordingActive(true).catch(() => {});
+  }
+
+  private async acquireCameraStream(deviceId: string | null): Promise<MediaStream> {
+    const deviceConstraint = deviceId ? { deviceId: { exact: deviceId } } : {};
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        video: { ...deviceConstraint, width: { ideal: 3840 }, height: { ideal: 2160 } },
+      });
+    } catch {
+      return navigator.mediaDevices.getUserMedia({ video: deviceConstraint });
+    }
+  }
+
+  private async startCameraBubblePoll(): Promise<void> {
+    this.stopCameraBubblePoll();
+    const poll = async () => {
+      const [bounds, config] = await Promise.all([window.api.cameraBubble.getBounds(), window.api.cameraBubble.getConfig()]);
+      if (bounds) this.cameraBubbleSize = { width: bounds.width, height: bounds.height };
+      this.cameraBubbleShape = config.shape;
+      this.cameraBubbleRoundedCorners = config.roundedCorners;
+    };
+    await poll();
+    this.cameraBubblePollTimer = setInterval(poll, 200);
+  }
+
+  private stopCameraBubblePoll(): void {
+    if (this.cameraBubblePollTimer !== null) clearInterval(this.cameraBubblePollTimer);
+    this.cameraBubblePollTimer = null;
   }
 
   private resolveAudioTrack(): MediaStreamTrack | null {
@@ -218,10 +275,9 @@ class RecordingService {
 
     let stream: MediaStream;
     if (this.sideHasVideo) {
-      const { size } = cameraBubbleRect(overlay, OUTPUT_WIDTH, OUTPUT_HEIGHT);
       this.sideCanvas = document.createElement("canvas");
-      this.sideCanvas.width = size;
-      this.sideCanvas.height = size;
+      this.sideCanvas.width = this.cameraVideoEl!.videoWidth || 1280;
+      this.sideCanvas.height = this.cameraVideoEl!.videoHeight || 720;
       this.sideCtx = this.sideCanvas.getContext("2d");
       stream = this.sideCanvas.captureStream(FPS);
       if (this.audioTrack) stream.addTrack(this.audioTrack);
@@ -249,7 +305,16 @@ class RecordingService {
       if (!this.screenVideoEl) return;
       drawLetterboxed(this.ctx, this.screenVideoEl, outW, outH, this.areaRect ?? undefined);
       if (this.overlay.showCamera && this.cameraVideoEl) {
-        drawCameraBubble(this.ctx, this.cameraVideoEl, this.overlay, outW, outH);
+        drawCameraBubble(
+          this.ctx,
+          this.cameraVideoEl,
+          this.overlay,
+          this.cameraBubbleSize,
+          this.cameraBubbleShape,
+          this.cameraBubbleRoundedCorners,
+          outW,
+          outH
+        );
       }
     }
     this.rafId = requestAnimationFrame(this.tick);
@@ -257,7 +322,7 @@ class RecordingService {
 
   private sideTick = (): void => {
     if (!this.sideCtx || !this.sideCanvas || !this.cameraVideoEl || !this.overlay) return;
-    drawCameraFrame(this.sideCtx, this.cameraVideoEl, this.sideCanvas.width, this.overlay.circular);
+    drawCameraRaw(this.sideCtx, this.cameraVideoEl, this.sideCanvas.width, this.sideCanvas.height);
     this.sideRafId = requestAnimationFrame(this.sideTick);
   };
 
@@ -299,6 +364,8 @@ class RecordingService {
     this.sideRafId = null;
 
     await window.api.cursor.stopCapture().catch(() => {});
+    await window.api.cameraBubble.stopTrack().catch(() => {});
+    window.api.cameraBubble.setRecordingActive(false).catch(() => {});
     if (this.recorder && this.recorder.state !== "inactive") this.recorder.stop();
     if (this.sideRecorder && this.sideRecorder.state !== "inactive") this.sideRecorder.stop();
     if (wasNative) await window.api.screenCapture.discard().catch(() => {});
@@ -325,6 +392,8 @@ class RecordingService {
     this.sideRafId = null;
 
     await window.api.cursor.stopCapture().catch(() => {});
+    await window.api.cameraBubble.stopTrack().catch(() => {});
+    window.api.cameraBubble.setRecordingActive(false).catch(() => {});
 
     const result = wasNative
       ? await this.stopNative(title, source, durationSecs, overlay)
@@ -392,6 +461,7 @@ class RecordingService {
   }
 
   private cleanupStreams(): void {
+    this.stopCameraBubblePoll();
     this.cameraBlurHandle?.stop();
     this.cameraBlurHandle = null;
     for (const stream of [this.screenStream, this.cameraStream, this.micStream, this.systemAudioStream]) {
