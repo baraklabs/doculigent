@@ -190,6 +190,16 @@ function macArgs(capture: ActiveCapture, outputPath: string): string[] {
     "libx264",
     "-preset",
     "ultrafast",
+    // A plain mp4 muxer only writes its moov atom (the index/trailer that makes the file
+    // readable at all) once ffmpeg exits cleanly. finishSegment's stdin "q" isn't landing
+    // reliably enough here (confirmed — segments were coming out as truncated files with
+    // no moov atom, "Invalid data found when processing input" downstream), so this
+    // process sometimes only stops via finishSegment's 5s hard-kill fallback instead.
+    // frag_keyframe+empty_moov writes an upfront empty moov plus periodic fragments as
+    // capture proceeds, so the file stays a valid, playable mp4 even if the process is
+    // killed mid-recording rather than exiting gracefully.
+    "-movflags",
+    "frag_keyframe+empty_moov+default_base_moof",
     outputPath,
   ];
 }
