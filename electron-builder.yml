@@ -42,16 +42,24 @@ mac:
     # built via `npm run build:mac-native`, which must run before packaging — see
     # .github/workflows/release.yml) — macOS's primary native screen-capture backend, see
     # native/screenCapture.ts. A single lipo-merged universal binary (see the build
-    # script's comments — shipping separate x64/arm64 files here breaks electron-builder's
-    # universal-build merge step). Scoped under mac: (not top-level) since
-    # electron/native/mac/bin only ever exists on macOS; a top-level entry would break
-    # Windows/Linux packaging, where that directory is never created at all.
+    # script's comments). Scoped under mac: (not top-level) since electron/native/mac/bin
+    # only ever exists on macOS; a top-level entry would break Windows/Linux packaging,
+    # where that directory is never created at all.
     - from: electron/native/mac/bin
       to: native-bin
       filter:
         - "**/*"
         - "!.arch-tmp"
         - "!.arch-tmp/**"
+  universal:
+    # Without this, @electron/universal's merge step errors on the helper above — it
+    # sanity-checks every executable file it finds at the same path in both the
+    # separately-packaged x64 and arm64 app bundles, and by default assumes identical
+    # content there is a mistake (confirmed in CI: "Detected file ... that's the same in
+    # both x64 and arm64 builds and not covered by the x64ArchFiles rule"). This is
+    # exactly the documented opt-out for a file that's already a lipo-merged universal
+    # binary rather than something needing arch-specific merging.
+    x64ArchFiles: "Contents/Resources/native-bin/doculigent-screencapturekit-helper"
 linux:
   target:
     - deb
