@@ -54,6 +54,13 @@ export interface DoculigentApi {
       microphone: "not-determined" | "granted" | "denied" | "restricted" | "unknown";
     }>;
     openScreenRecordingSettings(): Promise<void>;
+    /** Opens System Settings' Input Monitoring pane (macOS only, no-op elsewhere) — needed
+     *  for click polling (Timeline's "auto zoom on clicks"). No matching
+     *  getPermissionStatus-style check exists for this one; Electron doesn't expose it. */
+    openInputMonitoringSettings(): Promise<void>;
+    /** Registers which capture target the next getDisplayMedia() call (the non-native
+     *  screen-recording fallback) should resolve to — see main/displayMedia.ts. */
+    setDisplayMediaTarget(targetId: string | null): Promise<void>;
   };
   cursor: {
     startCapture(targetId: string, area?: AreaRect | null): Promise<void>;

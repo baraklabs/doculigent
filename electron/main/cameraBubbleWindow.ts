@@ -94,7 +94,21 @@ export function getCameraBubbleConfig(): CameraBubbleConfig {
 }
 
 export function setCameraBubbleRecordingActive(active: boolean, native: boolean): void {
-  if (win && !win.isDestroyed()) win.webContents.send(Channels.cameraBubble.recordingActiveChanged, active, native);
+  if (!win || win.isDestroyed()) return;
+  // The camera is always burned in from its own separately-recorded clip, never from
+  // whatever this window happens to be showing — but the window itself stays visible on
+  // screen throughout, so it must not be *in* the screen capture. On the native (gdigrab)
+  // path that's win.setContentProtection's job. On the fallback path the screen comes from
+  // this app's own getUserMedia(desktop) call, where content protection isn't reliably
+  // honored for a same-process capture (confirmed — without this, the window's own content
+  // was showing up baked directly into the recorded screen). Actually hiding the window,
+  // rather than just swapping out what it renders, works regardless of that: a hidden
+  // window can't appear in any capture no matter how it's composited. The tradeoff is that
+  // the bubble can't be dragged *during* a fallback recording — wherever it was positioned
+  // before hitting record is where it stays for that recording.
+  if (active && !native) win.hide();
+  else if (!active && !win.isVisible()) win.showInactive();
+  win.webContents.send(Channels.cameraBubble.recordingActiveChanged, active, native);
 }
 
 export function openCameraBubbleWindow(partial: Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId" | "blur">): void {

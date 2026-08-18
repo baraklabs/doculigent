@@ -907,13 +907,19 @@ export function Timeline({
           <button
             type="button"
             className="tl-zoom-magic-btn"
-            onClick={autoZoomFromClicks}
-            disabled={!clicksSourceMs || clicksSourceMs.length === 0}
+            onClick={
+              clicksSourceMs?.length === 0 && window.api.system.platform === "darwin"
+                ? () => window.api.capture.openInputMonitoringSettings()
+                : autoZoomFromClicks
+            }
+            disabled={!clicksSourceMs || (clicksSourceMs.length === 0 && window.api.system.platform !== "darwin")}
             title={
               !clicksSourceMs
                 ? "Auto zoom on clicks — loading click data…"
                 : clicksSourceMs.length === 0
-                  ? "Auto zoom on clicks — no clicks recorded for this project"
+                  ? window.api.system.platform === "darwin"
+                    ? "Auto zoom on clicks — no clicks recorded. Doculigent needs the Input Monitoring permission to detect clicks on macOS — click to open System Settings, then re-record."
+                    : "Auto zoom on clicks — no clicks recorded for this project"
                   : "Auto zoom on clicks — replaces the Zoom track with blocks placed at every recorded click"
             }
           >

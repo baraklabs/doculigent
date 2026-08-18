@@ -4,6 +4,8 @@ export const Channels = {
     listTargets: "capture:listTargets",
     getPermissionStatus: "capture:getPermissionStatus",
     openScreenRecordingSettings: "capture:openScreenRecordingSettings",
+    openInputMonitoringSettings: "capture:openInputMonitoringSettings",
+    setDisplayMediaTarget: "capture:setDisplayMediaTarget",
   },
   cursor: {
     startCapture: "cursor:startCapture",

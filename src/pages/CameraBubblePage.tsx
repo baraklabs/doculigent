@@ -132,8 +132,6 @@ export function CameraBubblePage() {
   const boundsRef = useRef({ x: 0, y: 0, width: 220, height: 220 });
   const [hovering, setHovering] = useState(false);
   const [recordingActive, setRecordingActive] = useState(false);
-  const [recordingNative, setRecordingNative] = useState(false);
-  const outputStreamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     document.documentElement.style.background = "transparent";
@@ -145,10 +143,10 @@ export function CameraBubblePage() {
   }, []);
 
   useEffect(() => {
-    return window.api.cameraBubble.onRecordingActiveChanged((active, native) => {
-      setRecordingActive(active);
-      setRecordingNative(native);
-    });
+    // `native` (second arg) governs whether the main process hides this window outright
+    // for the duration — see cameraBubbleWindow.ts's setCameraBubbleRecordingActive — so
+    // there's nothing left for the renderer itself to do about it either way.
+    return window.api.cameraBubble.onRecordingActiveChanged(setRecordingActive);
   }, []);
 
   useEffect(() => {
@@ -176,38 +174,23 @@ export function CameraBubblePage() {
           return;
         }
         stream = s;
-        const output = config.blur === "none" ? s : (blurHandle = applyCameraBlur(s, config.blur)).stream;
-        outputStreamRef.current = output;
-        if (videoRef.current) videoRef.current.srcObject = output;
+        if (videoRef.current) {
+          if (config.blur === "none") {
+            videoRef.current.srcObject = s;
+          } else {
+            blurHandle = applyCameraBlur(s, config.blur);
+            videoRef.current.srcObject = blurHandle.stream;
+          }
+        }
         setCamError(null);
       })
       .catch((e) => setCamError(String(e)));
     return () => {
-      outputStreamRef.current = null;
       cancelled = true;
       blurHandle?.stop();
       stream?.getTracks().forEach((t) => t.stop());
     };
   }, [config?.cameraDeviceId, config?.blur]);
-
-  // Every recording (native gdigrab or the getUserMedia-based fallback) burns the camera
-  // in as a server-side ffmpeg pass over its own separately-recorded clip — this window's
-  // live feed is never itself the recording source. It's still visible on screen while
-  // recording though, so it has to stay out of the *screen* capture: on the native path
-  // that's win.setContentProtection's job, already relied on; on the fallback path the
-  // screen is grabbed via this app's own getUserMedia(desktop) call, where a same-process
-  // content-protected window isn't reliably guaranteed to be excluded — so there the feed
-  // is hidden outright for the duration rather than trusting that exclusion to hold.
-  //
-  // Re-attaching the already-acquired stream when the <video> remounts (rather than just
-  // pausing it) is needed because it's unmounted below, not just paused, and the
-  // getUserMedia effect above only re-runs on device/blur changes, not on this.
-  const hideLiveFeed = recordingActive && !recordingNative;
-  useEffect(() => {
-    if (!hideLiveFeed && videoRef.current && outputStreamRef.current) {
-      videoRef.current.srcObject = outputStreamRef.current;
-    }
-  }, [hideLiveFeed]);
 
   useEffect(() => {
     if (!config || !boundsLoaded) return;
@@ -355,7 +338,7 @@ export function CameraBubblePage() {
       <div className={`camera-bubble-shape camera-bubble-${shapeClass}`} onPointerDown={handleDragPointerDown}>
         {camError ? (
           <div className="camera-bubble-error">Camera unavailable</div>
-        ) : hideLiveFeed ? null : (
+        ) : (
           <video
             ref={videoRef}
             autoPlay

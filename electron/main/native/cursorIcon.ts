@@ -21,6 +21,54 @@ let deleteObjectFn: Fn | null = null;
 let bitmapInfoHeaderSize = 0;
 let bitmapStructSize = 0;
 
+// macOS left-button polling — separate from `bind()` above (Windows-only, user32/gdi32)
+// since this needs a different library, symbol, and calling convention. Requires the
+// "Input Monitoring" permission (System Settings > Privacy & Security > Input Monitoring);
+// Electron has no API to check or prompt for that one specifically (unlike Screen
+// Recording), so this just silently reports no clicks until the user grants it manually —
+// same degrade-quietly behavior as everything else in this file when its OS API isn't
+// available.
+let macBindAttempted = false;
+let macCoreGraphics: LibraryHandle | null = null;
+let macButtonStateFn: Fn | null = null;
+let macLeftButtonWasDown = false;
+
+const CG_EVENT_SOURCE_STATE_HID_SYSTEM_STATE = 1;
+const CG_MOUSE_BUTTON_LEFT = 0;
+
+function bindMac(): boolean {
+  if (macBindAttempted) return !!macButtonStateFn;
+  macBindAttempted = true;
+  if (process.platform !== "darwin") return false;
+  try {
+    const koffi = require("koffi") as KoffiModule;
+    macCoreGraphics = koffi.load("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices");
+    macButtonStateFn = macCoreGraphics.func("CGEventSourceButtonState", "bool", ["int32", "int32"]) as Fn;
+    return true;
+  } catch {
+    macCoreGraphics = null;
+    macButtonStateFn = null;
+    return false;
+  }
+}
+
+function pollLeftButtonMac(): LeftButtonState {
+  if (!bindMac() || !macButtonStateFn) return { isDown: false, wasPressed: false };
+  try {
+    const isDown = macButtonStateFn(CG_EVENT_SOURCE_STATE_HID_SYSTEM_STATE, CG_MOUSE_BUTTON_LEFT) as boolean;
+    // CGEventSourceButtonState is a plain state query, not an edge-triggered "since last
+    // call" flag like GetAsyncKeyState's low bit — approximate one from the down/up
+    // transition between polls instead. A click briefer than one poll interval could in
+    // theory land fully between two samples and be missed, same caveat GetAsyncKeyState's
+    // own bit has at high enough click rates.
+    const wasPressed = isDown && !macLeftButtonWasDown;
+    macLeftButtonWasDown = isDown;
+    return { isDown, wasPressed };
+  } catch {
+    return { isDown: false, wasPressed: false };
+  }
+}
+
 function bind(): boolean {
   if (bindAttempted) return !!user32;
   bindAttempted = true;
@@ -121,17 +169,21 @@ export function sampleCursorShape(): CursorShape | null {
 const VK_LBUTTON = 0x01;
 
 export interface LeftButtonState {
-  /** Physically held down right now (high bit of GetAsyncKeyState). */
+  /** Physically held down right now. */
   isDown: boolean;
-  /** Pressed at any point since the previous call (low bit) — catches clicks that
-   *  fully press-and-release between two polls, which a currently-down check alone
-   *  would miss at typical sampling rates. */
+  /** Pressed at some point since the previous call — catches clicks that fully
+   *  press-and-release between two polls, which a currently-down check alone would miss
+   *  at typical sampling rates. On Windows this is GetAsyncKeyState's own "since last
+   *  call" bit; on macOS (no such bit available) it's approximated from the down/up
+   *  transition across polls instead — see pollLeftButtonMac above. */
   wasPressed: boolean;
 }
 
-/** System-wide left mouse button state (not just within the app). Each call consumes
- *  the "since last call" bit, so this must be the only poller of VK_LBUTTON. */
+/** System-wide left mouse button state (not just within the app). On Windows, each call
+ *  consumes GetAsyncKeyState's "since last call" bit, so this must be the only poller of
+ *  VK_LBUTTON; macOS has no such shared, consumable bit to worry about. */
 export function pollLeftButton(): LeftButtonState {
+  if (process.platform === "darwin") return pollLeftButtonMac();
   if (!bind() || !getAsyncKeyStateFn) return { isDown: false, wasPressed: false };
   try {
     const state = getAsyncKeyStateFn(VK_LBUTTON) as number;

@@ -8,7 +8,6 @@ import type {
   SystemAudioConfig,
 } from "@shared/types/models";
 import { CANVAS_HEIGHT, CANVAS_WIDTH, drawCameraFullFrame, drawCameraRaw } from "./compositor";
-import { desktopConstraints } from "./constraints";
 import { getSystemAudioStream } from "./AudioRecordingService";
 import { applyCameraBlur, type CameraBlurHandle } from "../camera/cameraBlur";
 
@@ -120,6 +119,13 @@ class RecordingService {
       captureMode !== "camera" &&
       (await window.api.screenCapture.start(targetId, true, this.areaRect ?? undefined)).available;
 
+    // Awaited, and before any screen capture actually starts below — on the fallback path
+    // this hides the camera bubble window outright (see setCameraBubbleRecordingActive),
+    // and that has to have already happened by the time startRawScreenRecording's
+    // getUserMedia(desktop) call grabs its first frame, or that frame (and however many
+    // follow until the hide takes effect) would still show the window.
+    await window.api.cameraBubble.setRecordingActive(true, this.nativeCapture).catch(() => {});
+
     if (captureMode === "camera" || this.overlay.showCamera) {
       try {
         this.cameraStream = await this.acquireCameraStream(overlay.cameraDeviceId);
@@ -170,7 +176,6 @@ class RecordingService {
     if (this.overlay.showCamera) {
       window.api.cameraBubble.startTrack().catch(() => {});
     }
-    window.api.cameraBubble.setRecordingActive(true, this.nativeCapture).catch(() => {});
   }
 
   private async acquireCameraStream(deviceId: string | null): Promise<MediaStream> {
@@ -198,7 +203,19 @@ class RecordingService {
   }
 
   private async startRawScreenRecording(targetId: string): Promise<void> {
-    this.screenStream = await navigator.mediaDevices.getUserMedia(desktopConstraints(targetId));
+    // getDisplayMedia, not the legacy getUserMedia({chromeMediaSource: "desktop"})
+    // constraints used elsewhere (e.g. the live setup preview) — only getDisplayMedia
+    // supports a `cursor` constraint, and only suppressing the OS cursor here (`"never"`)
+    // keeps the real one from getting baked into screen.mp4 underneath the app's own
+    // synthetic cursor overlay, applied on top of it afterward from cursor.json. The
+    // target itself is supplied via displayMedia.ts's request handler (registerDisplayMediaHandler)
+    // rather than Chromium's native picker, so this still records exactly the target the
+    // user chose in RecordPage's own list, not whatever the OS dialog would offer.
+    await window.api.capture.setDisplayMediaTarget(targetId);
+    this.screenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { cursor: "never" } as MediaTrackConstraints,
+      audio: false,
+    });
     this.rawScreenRecorder = new MediaRecorder(this.screenStream, { mimeType: pickMimeType() });
     this.rawScreenChunks = [];
     this.rawScreenRecorder.ondataavailable = (e) => {

@@ -9,6 +9,7 @@ import { closeCountdownWindow } from "./countdownWindow";
 import { registerIpcHandlers } from "./ipc";
 import { clearAnnotationsGlobal, toggleAnnotationOverlay } from "./ipc/annotation";
 import { registerMediaScheme, registerMediaHandler } from "./mediaProtocol";
+import { registerDisplayMediaHandler } from "./displayMedia";
 import { killPendingFfmpegJobs } from "./native/ffmpeg";
 import { killPendingScreenCapture } from "./native/screenCapture";
 import { initTranscriptionWorkerClient, terminateTranscriptionWorker } from "./transcription/whisperWorkerClient";
@@ -86,6 +87,7 @@ if (!gotSingleInstanceLock) {
     registerProtocolClient();
 
     registerMediaHandler();
+    registerDisplayMediaHandler();
     registerIpcHandlers();
     startProjectManagerScheduler();
     openMainWindow();
