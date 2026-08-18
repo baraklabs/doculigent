@@ -93,8 +93,8 @@ export function getCameraBubbleConfig(): CameraBubbleConfig {
   return lastConfig;
 }
 
-export function setCameraBubbleRecordingActive(active: boolean): void {
-  if (win && !win.isDestroyed()) win.webContents.send(Channels.cameraBubble.recordingActiveChanged, active);
+export function setCameraBubbleRecordingActive(active: boolean, native: boolean): void {
+  if (win && !win.isDestroyed()) win.webContents.send(Channels.cameraBubble.recordingActiveChanged, active, native);
 }
 
 export function openCameraBubbleWindow(partial: Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId" | "blur">): void {

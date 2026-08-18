@@ -62,7 +62,10 @@ export function registerCameraBubbleIpc(): void {
     stopCameraTrack();
   });
 
-  ipcMain.handle(Channels.cameraBubble.setRecordingActive, async (_event, active: boolean): Promise<void> => {
-    setCameraBubbleRecordingActive(active);
-  });
+  ipcMain.handle(
+    Channels.cameraBubble.setRecordingActive,
+    async (_event, active: boolean, native: boolean): Promise<void> => {
+      setCameraBubbleRecordingActive(active, native);
+    }
+  );
 }

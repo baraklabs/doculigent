@@ -32,7 +32,7 @@ interface ActiveTrack {
 let timer: ReturnType<typeof setInterval> | null = null;
 let track: ActiveTrack | null = null;
 
-async function describeCapture(targetId: string, area: AreaRect | null): Promise<CursorMetadata["capture"]> {
+export async function describeCapture(targetId: string, area: AreaRect | null): Promise<CursorMetadata["capture"]> {
   const kind: "display" | "window" | "area" = !targetId.startsWith("screen:")
     ? "window"
     : area

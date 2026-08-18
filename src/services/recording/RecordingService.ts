@@ -1,21 +1,13 @@
 
 import type {
   AreaRect,
-  CameraBubbleShape,
   CaptureMode,
   CaptureTarget,
   MicConfig,
   OverlayConfig,
   SystemAudioConfig,
 } from "@shared/types/models";
-import {
-  CANVAS_HEIGHT,
-  CANVAS_WIDTH,
-  drawCameraBubble,
-  drawCameraFullFrame,
-  drawCameraRaw,
-  drawLetterboxed,
-} from "./compositor";
+import { CANVAS_HEIGHT, CANVAS_WIDTH, drawCameraFullFrame, drawCameraRaw } from "./compositor";
 import { desktopConstraints } from "./constraints";
 import { getSystemAudioStream } from "./AudioRecordingService";
 import { applyCameraBlur, type CameraBlurHandle } from "../camera/cameraBlur";
@@ -35,12 +27,19 @@ interface SideClipResult {
 
 class RecordingService {
   private screenStream: MediaStream | null = null;
-  private screenVideoEl: HTMLVideoElement | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
   private rafId: number | null = null;
   private recorder: MediaRecorder | null = null;
   private chunks: Blob[] = [];
+
+  // The non-native (no gdigrab) equivalent of screenCapture.ts's native pipeline — a raw,
+  // uncropped/unscaled recording of the whole display/window, muxed with the camera and
+  // cursor server-side afterward exactly like a native capture is (see
+  // ipc/recording.ts's buildFinalMp4). No canvas involved — nothing here needs compositing
+  // live, so this just records `screenStream` directly.
+  private rawScreenRecorder: MediaRecorder | null = null;
+  private rawScreenChunks: Blob[] = [];
 
   private cameraStream: MediaStream | null = null;
   private cameraBlurHandle: CameraBlurHandle | null = null;
@@ -58,11 +57,6 @@ class RecordingService {
   private pauseStartedAt = 0;
 
   private cameraDegraded = false;
-
-  private cameraBubbleSize = { width: 1, height: 1 };
-  private cameraBubbleShape: CameraBubbleShape = "round";
-  private cameraBubbleRoundedCorners = false;
-  private cameraBubblePollTimer: ReturnType<typeof setInterval> | null = null;
 
   private nativeCapture = false;
   private sideCanvas: HTMLCanvasElement | null = null;
@@ -126,8 +120,6 @@ class RecordingService {
       captureMode !== "camera" &&
       (await window.api.screenCapture.start(targetId, true, this.areaRect ?? undefined)).available;
 
-    if (!this.nativeCapture && this.overlay.showCamera) await this.startCameraBubblePoll();
-
     if (captureMode === "camera" || this.overlay.showCamera) {
       try {
         this.cameraStream = await this.acquireCameraStream(overlay.cameraDeviceId);
@@ -159,12 +151,15 @@ class RecordingService {
       await this.cameraVideoEl.play();
     }
 
-    if (this.nativeCapture) {
-      await this.startSideClip(this.overlay);
-    } else if (captureMode === "camera") {
+    if (captureMode === "camera") {
       await this.startCameraOnlyPipeline();
+    } else if (this.nativeCapture) {
+      await this.startSideClip(this.overlay);
     } else {
-      await this.startOrdinaryPipeline(targetId);
+      // Fallback path — no gdigrab, so the screen itself is recorded raw (see
+      // startRawScreenRecording) and the camera, same as native, gets its own clip.
+      await this.startRawScreenRecording(targetId);
+      await this.startSideClip(this.overlay);
     }
 
     this.startedAt = performance.now();
@@ -172,10 +167,10 @@ class RecordingService {
     if (captureMode !== "camera") {
       window.api.cursor.startCapture(targetId, this.areaRect).catch(() => {});
     }
-    if (this.nativeCapture && this.overlay.showCamera) {
+    if (this.overlay.showCamera) {
       window.api.cameraBubble.startTrack().catch(() => {});
     }
-    window.api.cameraBubble.setRecordingActive(true).catch(() => {});
+    window.api.cameraBubble.setRecordingActive(true, this.nativeCapture).catch(() => {});
   }
 
   private async acquireCameraStream(deviceId: string | null): Promise<MediaStream> {
@@ -187,23 +182,6 @@ class RecordingService {
     } catch {
       return navigator.mediaDevices.getUserMedia({ video: deviceConstraint });
     }
-  }
-
-  private async startCameraBubblePoll(): Promise<void> {
-    this.stopCameraBubblePoll();
-    const poll = async () => {
-      const [bounds, config] = await Promise.all([window.api.cameraBubble.getBounds(), window.api.cameraBubble.getConfig()]);
-      if (bounds) this.cameraBubbleSize = { width: bounds.width, height: bounds.height };
-      this.cameraBubbleShape = config.shape;
-      this.cameraBubbleRoundedCorners = config.roundedCorners;
-    };
-    await poll();
-    this.cameraBubblePollTimer = setInterval(poll, 200);
-  }
-
-  private stopCameraBubblePoll(): void {
-    if (this.cameraBubblePollTimer !== null) clearInterval(this.cameraBubblePollTimer);
-    this.cameraBubblePollTimer = null;
   }
 
   private resolveAudioTrack(): MediaStreamTrack | null {
@@ -219,35 +197,14 @@ class RecordingService {
     return micTrack ?? systemTrack ?? null;
   }
 
-  private async startOrdinaryPipeline(targetId: string): Promise<void> {
+  private async startRawScreenRecording(targetId: string): Promise<void> {
     this.screenStream = await navigator.mediaDevices.getUserMedia(desktopConstraints(targetId));
-    this.screenVideoEl = document.createElement("video");
-    this.screenVideoEl.srcObject = this.screenStream;
-    this.screenVideoEl.muted = true;
-    await this.screenVideoEl.play();
-
-    this.canvas = document.createElement("canvas");
-    if (this.captureMode === "area" && this.areaRect) {
-      const fullW = this.screenVideoEl.videoWidth || 1;
-      const fullH = this.screenVideoEl.videoHeight || 1;
-      this.canvas.width = Math.max(2, Math.round(this.areaRect.width * fullW));
-      this.canvas.height = Math.max(2, Math.round(this.areaRect.height * fullH));
-    } else {
-      this.canvas.width = CANVAS_WIDTH;
-      this.canvas.height = CANVAS_HEIGHT;
-    }
-    this.ctx = this.canvas.getContext("2d");
-
-    const canvasStream = this.canvas.captureStream(FPS);
-    if (this.audioTrack) canvasStream.addTrack(this.audioTrack);
-
-    this.recorder = new MediaRecorder(canvasStream, { mimeType: pickMimeType() });
-    this.chunks = [];
-    this.recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) this.chunks.push(e.data);
+    this.rawScreenRecorder = new MediaRecorder(this.screenStream, { mimeType: pickMimeType() });
+    this.rawScreenChunks = [];
+    this.rawScreenRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) this.rawScreenChunks.push(e.data);
     };
-    this.recorder.start();
-    this.tick();
+    this.rawScreenRecorder.start();
   }
 
   private async startCameraOnlyPipeline(): Promise<void> {
@@ -294,29 +251,12 @@ class RecordingService {
     this.sideRecorder.start();
   }
 
+  // Camera-only mode's own recorder — the only remaining caller, now that the screen
+  // pipelines (native gdigrab and the raw-recording fallback) both burn the camera in via
+  // ipc/recording.ts's ffmpeg post-process instead of a live canvas draw.
   private tick = (): void => {
-    if (!this.ctx || !this.canvas || !this.overlay) return;
-    const outW = this.canvas.width;
-    const outH = this.canvas.height;
-    if (this.captureMode === "camera") {
-      if (!this.cameraVideoEl) return;
-      drawCameraFullFrame(this.ctx, this.cameraVideoEl, outW, outH, this.overlay.mirrorCamera);
-    } else {
-      if (!this.screenVideoEl) return;
-      drawLetterboxed(this.ctx, this.screenVideoEl, outW, outH, this.areaRect ?? undefined);
-      if (this.overlay.showCamera && this.cameraVideoEl) {
-        drawCameraBubble(
-          this.ctx,
-          this.cameraVideoEl,
-          this.overlay,
-          this.cameraBubbleSize,
-          this.cameraBubbleShape,
-          this.cameraBubbleRoundedCorners,
-          outW,
-          outH
-        );
-      }
-    }
+    if (!this.ctx || !this.canvas || !this.overlay || !this.cameraVideoEl) return;
+    drawCameraFullFrame(this.ctx, this.cameraVideoEl, this.canvas.width, this.canvas.height, this.overlay.mirrorCamera);
     this.rafId = requestAnimationFrame(this.tick);
   };
 
@@ -337,6 +277,7 @@ class RecordingService {
     this.sideRafId = null;
 
     if (this.recorder && this.recorder.state === "recording") this.recorder.pause();
+    if (this.rawScreenRecorder && this.rawScreenRecorder.state === "recording") this.rawScreenRecorder.pause();
     if (this.sideRecorder && this.sideRecorder.state === "recording") this.sideRecorder.pause();
     if (this.nativeCapture) await window.api.screenCapture.pause().catch(() => {});
   }
@@ -347,6 +288,7 @@ class RecordingService {
     this.pausedAccumMs += performance.now() - this.pauseStartedAt;
 
     if (this.recorder && this.recorder.state === "paused") this.recorder.resume();
+    if (this.rawScreenRecorder && this.rawScreenRecorder.state === "paused") this.rawScreenRecorder.resume();
     if (this.sideRecorder && this.sideRecorder.state === "paused") this.sideRecorder.resume();
     if (this.nativeCapture) await window.api.screenCapture.resume().catch(() => {});
 
@@ -367,6 +309,7 @@ class RecordingService {
     await window.api.cameraBubble.stopTrack().catch(() => {});
     window.api.cameraBubble.setRecordingActive(false).catch(() => {});
     if (this.recorder && this.recorder.state !== "inactive") this.recorder.stop();
+    if (this.rawScreenRecorder && this.rawScreenRecorder.state !== "inactive") this.rawScreenRecorder.stop();
     if (this.sideRecorder && this.sideRecorder.state !== "inactive") this.sideRecorder.stop();
     if (wasNative) await window.api.screenCapture.discard().catch(() => {});
 
@@ -384,7 +327,7 @@ class RecordingService {
     const pausedMs = this.paused ? this.pausedAccumMs + (performance.now() - this.pauseStartedAt) : this.pausedAccumMs;
     const durationSecs = (performance.now() - this.startedAt - pausedMs) / 1000;
     const overlay = this.overlay;
-    const wasNative = this.nativeCapture;
+    const captureMode = this.captureMode;
 
     if (this.rafId !== null) cancelAnimationFrame(this.rafId);
     this.rafId = null;
@@ -395,9 +338,10 @@ class RecordingService {
     await window.api.cameraBubble.stopTrack().catch(() => {});
     window.api.cameraBubble.setRecordingActive(false).catch(() => {});
 
-    const result = wasNative
-      ? await this.stopNative(title, source, durationSecs, overlay)
-      : await this.stopOrdinary(title, source, durationSecs, overlay);
+    const result =
+      captureMode === "camera"
+        ? await this.stopCameraOnly(title, source, durationSecs, overlay)
+        : await this.stopSeparateFiles(title, source, durationSecs, overlay);
 
     this.cleanupStreams();
     this.overlay = null;
@@ -409,7 +353,7 @@ class RecordingService {
     return result;
   }
 
-  private async stopOrdinary(
+  private async stopCameraOnly(
     title: string,
     source: "record" | "meeting",
     durationSecs: number,
@@ -427,18 +371,32 @@ class RecordingService {
     return window.api.recording.save({ webmBytes, overlay, durationSecs, title, source });
   }
 
-  private async stopNative(
+  private async stopSeparateFiles(
     title: string,
     source: "record" | "meeting",
     durationSecs: number,
     overlay: OverlayConfig
   ): Promise<{ id: string }> {
     const sideClip = await this.stopSideClip();
-    const { available, filePath } = await window.api.screenCapture.stop();
-    if (!available || !filePath) throw new Error("native screen capture stopped with no output file");
 
+    if (this.nativeCapture) {
+      const { available, filePath } = await window.api.screenCapture.stop();
+      if (!available || !filePath) throw new Error("native screen capture stopped with no output file");
+      return window.api.recording.save({ screenFilePath: filePath, sideClip, overlay, durationSecs, title, source });
+    }
+
+    const finalBlob = await new Promise<Blob>((resolve) => {
+      if (!this.rawScreenRecorder || this.rawScreenRecorder.state === "inactive") {
+        resolve(new Blob(this.rawScreenChunks, { type: "video/webm" }));
+        return;
+      }
+      this.rawScreenRecorder.onstop = () => resolve(new Blob(this.rawScreenChunks, { type: "video/webm" }));
+      this.rawScreenRecorder.stop();
+    });
+    const screenBytes = await finalBlob.arrayBuffer();
     return window.api.recording.save({
-      screenFilePath: filePath,
+      screenBytes,
+      areaRect: this.areaRect,
       sideClip,
       overlay,
       durationSecs,
@@ -461,7 +419,6 @@ class RecordingService {
   }
 
   private cleanupStreams(): void {
-    this.stopCameraBubblePoll();
     this.cameraBlurHandle?.stop();
     this.cameraBlurHandle = null;
     for (const stream of [this.screenStream, this.cameraStream, this.micStream, this.systemAudioStream]) {
@@ -474,10 +431,11 @@ class RecordingService {
     this.audioMixCtx?.close();
     this.audioMixCtx = null;
     this.audioTrack = null;
-    this.screenVideoEl = null;
     this.cameraVideoEl = null;
     this.canvas = null;
     this.ctx = null;
+    this.rawScreenRecorder = null;
+    this.rawScreenChunks = [];
     this.sideCanvas = null;
     this.sideCtx = null;
     this.sideRecorder = null;

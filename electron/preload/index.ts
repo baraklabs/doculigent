@@ -48,7 +48,7 @@ const api: DoculigentApi = {
     setBounds: (bounds) => ipcRenderer.invoke(Channels.cameraBubble.setBounds, bounds),
     startTrack: () => ipcRenderer.invoke(Channels.cameraBubble.startTrack),
     stopTrack: () => ipcRenderer.invoke(Channels.cameraBubble.stopTrack),
-    setRecordingActive: (active) => ipcRenderer.invoke(Channels.cameraBubble.setRecordingActive, active),
+    setRecordingActive: (active, native) => ipcRenderer.invoke(Channels.cameraBubble.setRecordingActive, active, native ?? false),
     onConfigChanged: (callback) => {
       const listener = (_event: unknown, config: CameraBubbleConfig) => callback(config);
       ipcRenderer.on(Channels.cameraBubble.configChanged, listener);
@@ -65,7 +65,7 @@ const api: DoculigentApi = {
       return () => ipcRenderer.removeListener(Channels.cameraBubble.hoverChanged, listener);
     },
     onRecordingActiveChanged: (callback) => {
-      const listener = (_event: unknown, active: boolean) => callback(active);
+      const listener = (_event: unknown, active: boolean, native: boolean) => callback(active, native);
       ipcRenderer.on(Channels.cameraBubble.recordingActiveChanged, listener);
       return () => ipcRenderer.removeListener(Channels.cameraBubble.recordingActiveChanged, listener);
     },

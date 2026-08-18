@@ -72,6 +72,26 @@ export function remuxToMp4(
   );
 }
 
+/** Turns a raw, uncropped/unscaled screen recording (the non-native fallback's own
+ *  MediaRecorder output — see native/screenCapture.ts's `vfFor` for what a native gdigrab
+ *  capture already bakes in at capture time) into the same shape `metadata/screen.mp4`
+ *  has for a native recording, so everything downstream (camera-bubble overlay, cursor
+ *  overlay, Edit-page playback) can treat the two identically. No audio — this stream was
+ *  always requested video-only (see desktopConstraints), same as gdigrab. */
+export function transcodeScreenRecording(
+  inputWebmPath: string,
+  outputMp4Path: string,
+  vf: string,
+  onProgress?: ProgressHandler,
+  signal?: AbortSignal
+): Promise<void> {
+  return run(
+    ["-y", "-i", inputWebmPath, "-vf", vf, "-c:v", "libx264", "-preset", "ultrafast", "-an", outputMp4Path],
+    onProgress,
+    signal
+  );
+}
+
 export function transcodeExport(
   inputWebmPath: string,
   outputMp4Path: string,

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Channels } from "@shared/constants/channels";
-import type { CameraTrackMetadata, CursorMetadata, OverlayConfig, Transcript, Video } from "@shared/types/models";
+import type { AreaRect, CameraTrackMetadata, CursorMetadata, OverlayConfig, Transcript, Video } from "@shared/types/models";
 import { cameraBubbleRectForShape, OUTPUT_HEIGHT, OUTPUT_WIDTH } from "@shared/lib/cameraBubble";
 import { meetingsRoot, recordingsRoot } from "../native/paths";
 import {
@@ -14,6 +14,7 @@ import {
   muxScreenWithAudio,
   overlayCameraBubble,
   remuxToMp4,
+  transcodeScreenRecording,
   type CameraBubbleTrack,
 } from "../native/ffmpeg";
 import { insertVideo } from "../native/libraryStore";
@@ -21,6 +22,7 @@ import { writeCursorMetadata } from "../native/cursorTrack";
 import { writeCameraMetadata } from "../native/cameraTrack";
 import { writeTranscriptFile } from "../native/transcriptFile";
 import { frameDimensions, loadCursorIcons, overlayCursorTrack, toFrameCoords } from "../native/cursorOverlay";
+import { vfFor } from "../native/screenCapture";
 import { getCameraBubbleConfig } from "../cameraBubbleWindow";
 
 interface SideClip {
@@ -32,6 +34,8 @@ interface SideClip {
 interface SaveRecordingInput {
   webmBytes?: ArrayBuffer;
   screenFilePath?: string;
+  screenBytes?: ArrayBuffer;
+  areaRect?: AreaRect | null;
   sideClip?: SideClip;
   overlay: OverlayConfig;
   durationSecs: number;
@@ -130,11 +134,30 @@ async function buildFinalMp4(
   signal: AbortSignal,
   cleanupPaths: string[]
 ): Promise<void> {
-  if (input.screenFilePath) {
+  if (input.screenFilePath || input.screenBytes) {
     const metaDir = path.join(recDir, "metadata");
     await fs.mkdir(metaDir, { recursive: true });
     const screenKeepPath = path.join(metaDir, "screen.mp4");
-    await moveFile(input.screenFilePath, screenKeepPath);
+
+    if (input.screenFilePath) {
+      // Native (gdigrab) — already an mp4, already cropped/scaled at capture time.
+      await moveFile(input.screenFilePath, screenKeepPath);
+    } else {
+      // Non-native fallback — a raw, uncropped/unscaled getUserMedia recording of the
+      // *whole* display (there's no way to crop at the capture source itself), transcoded
+      // into the same shape a native capture already has: cropped to `areaRect` when given,
+      // otherwise scaled/padded like a display capture — see native/screenCapture.ts's
+      // `vfFor`, which the display/window branch here reuses so the two pipelines stay in
+      // sync with each other.
+      const tempScreenWebm = path.join(os.tmpdir(), `${id}-screen.webm`);
+      await fs.writeFile(tempScreenWebm, Buffer.from(input.screenBytes!));
+      cleanupPaths.push(tempScreenWebm);
+      const area = input.areaRect;
+      const vf = area
+        ? `crop=iw*${area.width}:ih*${area.height}:iw*${area.x}:ih*${area.y},${vfFor(true)}`
+        : vfFor(false);
+      await transcodeScreenRecording(tempScreenWebm, screenKeepPath, vf, onProgress, signal);
+    }
 
     if (!input.sideClip) {
       await copyToMp4(screenKeepPath, finalMp4, onProgress, signal);
@@ -219,7 +242,7 @@ async function finishRecordingSave(
       abort.signal,
       cleanupPaths
     );
-    if (input.screenFilePath) {
+    if (input.screenFilePath || input.screenBytes) {
       await tryOverlayCursor(
         path.dirname(finalMp4),
         finalMp4,

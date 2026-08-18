@@ -21,16 +21,18 @@ export interface CursorIconAsset {
   hotspotY: number;
 }
 
+export interface CaptureRegion {
+  targetId: string;
+  kind: "display" | "window" | "area";
+  bounds: { x: number; y: number; width: number; height: number } | null;
+  scaleFactor: number;
+}
+
 export interface CursorMetadata {
   appVersion: string;
   recordingId: string;
   createdAt: string; // ISO 8601
-  capture: {
-    targetId: string;
-    kind: "display" | "window" | "area";
-    bounds: { x: number; y: number; width: number; height: number } | null;
-    scaleFactor: number;
-  };
+  capture: CaptureRegion;
   sampleRateHz: number;
   icons: CursorIconAsset[];
   points: CursorTrackPoint[];

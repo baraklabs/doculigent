@@ -59,7 +59,7 @@ export function canCaptureTarget(targetId: string): boolean {
   return process.platform === "win32" && targetId.startsWith("screen:");
 }
 
-function vfFor(isArea: boolean): string {
+export function vfFor(isArea: boolean): string {
   return isArea
     ? "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p"
     : `scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease,` +

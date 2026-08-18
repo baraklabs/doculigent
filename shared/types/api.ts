@@ -78,11 +78,15 @@ export interface DoculigentApi {
     setBounds(bounds: CameraBubbleBounds): Promise<void>;
     startTrack(): Promise<void>;
     stopTrack(): Promise<void>;
-    setRecordingActive(active: boolean): Promise<void>;
+    /** `native` says whether the active recording burns the camera in via a separate
+     *  post-process pass (Windows) — when it doesn't (mac/Linux canvas pipeline), the
+     *  bubble window's own live feed is hidden while recording so it can't also be
+     *  picked up by the screen capture itself alongside the canvas-drawn copy. */
+    setRecordingActive(active: boolean, native?: boolean): Promise<void>;
     onConfigChanged(callback: (config: CameraBubbleConfig) => void): () => void;
     onClosedByUser(callback: () => void): () => void;
     onHoverChanged(callback: (hovering: boolean) => void): () => void;
-    onRecordingActiveChanged(callback: (active: boolean) => void): () => void;
+    onRecordingActiveChanged(callback: (active: boolean, native: boolean) => void): () => void;
   };
   recordingDock: {
     open(): Promise<void>;
@@ -144,6 +148,14 @@ export interface DoculigentApi {
     save(input: {
       webmBytes?: ArrayBuffer;
       screenFilePath?: string;
+      /** Raw, uncropped/unscaled screen recording bytes — the non-native (no gdigrab)
+       *  equivalent of `screenFilePath`, transcoded+cropped server-side into the same
+       *  `metadata/screen.mp4` shape a native recording produces. Cropped with `areaRect`
+       *  when given (area mode always captures the *whole* display — there's no way to
+       *  crop at the getUserMedia source itself), otherwise scaled/padded like a display
+       *  capture. */
+      screenBytes?: ArrayBuffer;
+      areaRect?: AreaRect | null;
       sideClip?: { bytes: ArrayBuffer; hasVideo: boolean; hasAudio: boolean };
       overlay: OverlayConfig;
       durationSecs: number;

@@ -356,13 +356,20 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
 
   // Audio-only sources (meeting recordings, imported audio files) have no video at all.
   const isVideoFile = /\.(mp4|mov|mkv|avi|webm|m4v|wmv|flv)$/i.test(recordingFilePath);
+  // Position tracking (cursor.json) runs regardless of platform, independent of whether
+  // screen/camera were split into their own files — only icon *capture* is Windows-only,
+  // and that already degrades to a synthetic fallback arrow (see native/cursorIcon.ts).
+  // Surfacing it here too (not just in the split-file branch above) is what lets the Edit
+  // page's cursor-replacement styles (arrow/circle/hand) render on a single-file recording.
+  const cursorMetaPath = path.join(recDir, "metadata", "cursor.json");
+  const hasCursor = isVideoFile && fs.existsSync(cursorMetaPath);
   return {
     editable: false,
     screenFilePath: null,
     cameraFilePath: null,
     singleFilePath: isVideoFile ? recordingFilePath : null,
-    cursorMetadataPath: null,
-    cursorIconsDir: null,
+    cursorMetadataPath: hasCursor ? cursorMetaPath : null,
+    cursorIconsDir: hasCursor ? path.join(recDir, "metadata", "cursor-icons") : null,
     recordedCamera: null,
   };
 }
