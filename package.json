@@ -13,6 +13,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build && electron-builder",
     "build:unpack": "electron-vite build && electron-builder --dir",
+    "build:mac-native": "node scripts/build-mac-screencapturekit-helper.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "postinstall": "electron-builder install-app-deps"
   },

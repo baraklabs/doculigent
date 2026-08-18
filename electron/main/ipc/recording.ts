@@ -14,6 +14,7 @@ import {
   muxScreenWithAudio,
   normalizeToCfr,
   overlayCameraBubble,
+  probeDuration,
   remuxToMp4,
   transcodeScreenRecording,
   type CameraBubbleTrack,
@@ -257,10 +258,22 @@ async function tryOverlayCursor(
   });
   if (!metadata || metadata.points.length === 0 || durationSecs <= 0) return;
 
+  // durationSecs is the renderer's wall-clock estimate (elapsed time between
+  // RecordingService.start()/stop() calls) — close, but not guaranteed to match finalMp4's
+  // actual frame count exactly (e.g. avfoundation's screen device has a startup lag before
+  // its first real frame arrives, systematically undershooting wall-clock time on macOS).
+  // overlayCursorTrack precomputes exactly durationSecs*30 raw frames to pipe into ffmpeg
+  // assuming that many exist in [0:v] — if there are fewer, ffmpeg finishes reading [0:v]
+  // and closes its stdin first, and every write after that faults with EPIPE (confirmed).
+  // Probing the file's real duration instead removes the guesswork entirely; a small
+  // safety margin keeps a rounding-error frame from re-triggering the same race.
+  const probedDurationSecs = await probeDuration(finalMp4);
+  const overlayDurationSecs = probedDurationSecs > 0 ? Math.max(0, probedDurationSecs - 0.1) : durationSecs;
+
   const composedPath = path.join(recDir, "recording-with-cursor.mp4.tmp");
   try {
     const icons = await loadCursorIcons(metadata, path.join(recDir, "metadata", "cursor-icons"));
-    await overlayCursorTrack(finalMp4, metadata, icons, durationSecs, composedPath, onProgress, signal);
+    await overlayCursorTrack(finalMp4, metadata, icons, overlayDurationSecs, composedPath, onProgress, signal);
     await moveFile(composedPath, finalMp4);
   } catch (e) {
     await fs.rm(composedPath, { force: true });

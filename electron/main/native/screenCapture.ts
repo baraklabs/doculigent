@@ -1,4 +1,4 @@
-import { desktopCapturer, screen } from "electron";
+import { app, desktopCapturer, screen } from "electron";
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import os from "node:os";
@@ -18,7 +18,10 @@ interface Segment {
   outputPath: string;
 }
 
-interface ActiveCapture {
+// The ffmpeg-driven backend (gdigrab on Windows, avfoundation on macOS as a fallback —
+// see ScreenCaptureKitCapture below for macOS's primary path).
+interface FfmpegCapture {
+  kind: "ffmpeg";
   hideCursor: boolean;
   isArea: boolean;
   current: Segment | null;
@@ -32,6 +35,23 @@ interface ActiveCapture {
   macDeviceIndex?: number;
   macArea?: AreaRect | null;
 }
+
+// macOS's primary native backend — a compiled Swift helper (electron/native/mac/
+// ScreenCaptureKitRecorder.swift) using ScreenCaptureKit instead of ffmpeg's avfoundation
+// input. See that file's header comment for why: avfoundation's legacy CGDisplayStream
+// capture doesn't reliably respect win.setContentProtection(true) (confirmed — the camera
+// bubble window still showed up baked into the recording), while ScreenCaptureKit
+// excludes sharingType=.none windows automatically. Falls back to the avfoundation path
+// (FfmpegCapture above) if the helper hasn't been built for this machine (see
+// scripts/build-mac-screencapturekit-helper.mjs — requires Xcode Command Line Tools, so
+// isn't run automatically).
+interface SckCapture {
+  kind: "sck";
+  proc: ChildProcess;
+  outputPath: string;
+}
+
+type ActiveCapture = FfmpegCapture | SckCapture;
 
 let active: ActiveCapture | null = null;
 
@@ -135,7 +155,80 @@ export function vfFor(isArea: boolean): string {
         `pad=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`;
 }
 
-function winArgs(capture: ActiveCapture, outputPath: string): string[] {
+const SCK_HELPER_NAME = "doculigent-screencapturekit-helper";
+
+/** Resolves the compiled ScreenCaptureKit helper for this machine's arch, or null if it
+ *  hasn't been built (see scripts/build-mac-screencapturekit-helper.mjs) — callers treat
+ *  null as "fall back to the avfoundation-based FfmpegCapture path", never as an error. */
+async function resolveScreenCaptureKitHelperPath(): Promise<string | null> {
+  if (process.platform !== "darwin") return null;
+  const archTag = `darwin-${process.arch}`;
+  const candidate = app.isPackaged
+    ? path.join(process.resourcesPath, "native-bin", archTag, SCK_HELPER_NAME)
+    : path.join(app.getAppPath(), "electron", "native", "mac", "bin", archTag, SCK_HELPER_NAME);
+  try {
+    await fs.access(candidate);
+    return candidate;
+  } catch {
+    return null;
+  }
+}
+
+interface SckCaptureConfig {
+  fps: number;
+  displayId: number;
+  outputPath: string;
+  areaX?: number;
+  areaY?: number;
+  areaWidth?: number;
+  areaHeight?: number;
+}
+
+/** Spawns the helper and waits for its "Recording started" stdout line (mirrors the
+ *  handshake the reference ScreenCaptureKit-based recorder this was adapted from uses) —
+ *  a null return means the helper failed to start (bad permissions, display not found,
+ *  etc.), in which case the caller falls back to the avfoundation path. */
+function startScreenCaptureKitCapture(helperPath: string, config: SckCaptureConfig): Promise<SckCapture | null> {
+  const proc = spawn(helperPath, [JSON.stringify(config)], { stdio: ["pipe", "pipe", "pipe"] });
+  let stdoutBuf = "";
+  let stderrBuf = "";
+  proc.stdout?.on("data", (d: Buffer) => {
+    stdoutBuf += d.toString();
+  });
+  proc.stderr?.on("data", (d: Buffer) => {
+    stderrBuf += d.toString();
+    if (stderrBuf.length > 4000) stderrBuf = stderrBuf.slice(-4000);
+  });
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      proc.stdout?.off("data", onStdout);
+      if (!ok) {
+        console.error("[screenCapture] ScreenCaptureKit helper failed to start:", stderrBuf.slice(-1000) || stdoutBuf.slice(-1000));
+        if (!proc.killed) proc.kill();
+        resolve(null);
+      } else {
+        proc.once("exit", (code) => {
+          if (code !== 0 && code !== null) console.error(`[screenCapture] ScreenCaptureKit helper exited ${code}:`, stderrBuf.slice(-1000));
+        });
+        resolve({ kind: "sck", proc, outputPath: config.outputPath });
+      }
+    };
+    const onStdout = () => {
+      if (stdoutBuf.includes("Recording started")) finish(true);
+    };
+    const timer = setTimeout(() => finish(false), 12000);
+    proc.stdout?.on("data", onStdout);
+    proc.once("error", () => finish(false));
+    proc.once("exit", () => finish(false));
+  });
+}
+
+function winArgs(capture: FfmpegCapture, outputPath: string): string[] {
   const rect = capture.winRect!;
   return [
     "-y",
@@ -163,7 +256,7 @@ function winArgs(capture: ActiveCapture, outputPath: string): string[] {
   ];
 }
 
-function macArgs(capture: ActiveCapture, outputPath: string): string[] {
+function macArgs(capture: FfmpegCapture, outputPath: string): string[] {
   // avfoundation captures a whole display only, so an area recording is cropped via -vf
   // using the same fractional (0..1) formula as the getDisplayMedia fallback path in
   // ipc/recording.ts's buildFinalMp4 — no physical-pixel rect resolution needed here at
@@ -215,7 +308,7 @@ function macArgs(capture: ActiveCapture, outputPath: string): string[] {
   ];
 }
 
-function spawnSegment(capture: ActiveCapture): Promise<Segment | null> {
+function spawnSegment(capture: FfmpegCapture): Promise<Segment | null> {
   const outputPath = path.join(os.tmpdir(), `doculigent-screen-${randomUUID()}.mp4`);
   const args = process.platform === "darwin" ? macArgs(capture, outputPath) : winArgs(capture, outputPath);
 
@@ -275,13 +368,47 @@ async function concatSegments(segmentPaths: string[]): Promise<string> {
   return outputPath;
 }
 
+/** Electron's Display.id is documented as the platform display identifier, which on
+ *  macOS is the CGDirectDisplayID ScreenCaptureKit's APIs expect directly. */
+async function resolveMacDisplayId(targetId: string): Promise<number | null> {
+  const sources = await desktopCapturer.getSources({ types: ["screen"] });
+  const source = sources.find((s) => s.id === targetId);
+  if (!source) return null;
+  const display =
+    screen.getAllDisplays().find((d) => String(d.id) === source.display_id) ?? screen.getPrimaryDisplay();
+  return display.id;
+}
+
 export async function startScreenCapture(targetId: string, hideCursor: boolean, area?: AreaRect): Promise<boolean> {
   if (active || !canCaptureTarget(targetId)) return false;
 
   if (process.platform === "darwin") {
+    const helperPath = await resolveScreenCaptureKitHelperPath();
+    if (helperPath) {
+      const displayId = await resolveMacDisplayId(targetId);
+      if (displayId !== null) {
+        const outputPath = path.join(os.tmpdir(), `doculigent-screen-${randomUUID()}.mp4`);
+        const capture = await startScreenCaptureKitCapture(helperPath, {
+          fps: FPS,
+          displayId,
+          outputPath,
+          areaX: area?.x,
+          areaY: area?.y,
+          areaWidth: area?.width,
+          areaHeight: area?.height,
+        });
+        if (capture) {
+          active = capture;
+          return true;
+        }
+        console.warn("[screenCapture] ScreenCaptureKit helper failed, falling back to avfoundation");
+      }
+    }
+
     const macDeviceIndex = await resolveMacScreenDeviceIndex(targetId);
     if (macDeviceIndex === null) return false;
-    const capture: ActiveCapture = {
+    const capture: FfmpegCapture = {
+      kind: "ffmpeg",
       hideCursor,
       isArea: !!area,
       current: null,
@@ -308,7 +435,7 @@ export async function startScreenCapture(targetId: string, hideCursor: boolean, 
       }
     : displayRect;
 
-  const capture: ActiveCapture = { winRect, hideCursor, isArea: !!area, current: null, segments: [] };
+  const capture: FfmpegCapture = { kind: "ffmpeg", winRect, hideCursor, isArea: !!area, current: null, segments: [] };
   const segment = await spawnSegment(capture);
   if (!segment) return false;
   capture.current = segment;
@@ -317,7 +444,12 @@ export async function startScreenCapture(targetId: string, hideCursor: boolean, 
 }
 
 export async function pauseScreenCapture(): Promise<boolean> {
-  if (!active || !active.current) return false;
+  if (!active) return false;
+  if (active.kind === "sck") {
+    active.proc.stdin?.write("pause\n");
+    return true;
+  }
+  if (!active.current) return false;
   const segment = active.current;
   active.current = null;
   await finishSegment(segment);
@@ -326,7 +458,12 @@ export async function pauseScreenCapture(): Promise<boolean> {
 }
 
 export async function resumeScreenCapture(): Promise<boolean> {
-  if (!active || active.current) return false;
+  if (!active) return false;
+  if (active.kind === "sck") {
+    active.proc.stdin?.write("resume\n");
+    return true;
+  }
+  if (active.current) return false;
   const segment = await spawnSegment(active);
   if (!segment) return false;
   active.current = segment;
@@ -337,6 +474,16 @@ export async function stopScreenCapture(): Promise<string | null> {
   if (!active) return null;
   const capture = active;
   active = null;
+
+  if (capture.kind === "sck") {
+    const outputPath = capture.outputPath;
+    await new Promise<void>((resolve) => {
+      capture.proc.once("close", () => resolve());
+      capture.proc.stdin?.write("stop\n");
+      capture.proc.stdin?.end();
+    });
+    return outputPath;
+  }
 
   if (capture.current) {
     await finishSegment(capture.current);
@@ -353,12 +500,23 @@ export async function discardScreenCapture(): Promise<void> {
   const capture = active;
   active = null;
 
+  if (capture.kind === "sck") {
+    if (!capture.proc.killed) capture.proc.kill();
+    await fs.unlink(capture.outputPath).catch(() => {});
+    return;
+  }
+
   if (capture.current && !capture.current.proc.killed) capture.current.proc.kill();
   const paths = capture.current ? [...capture.segments, capture.current.outputPath] : capture.segments;
   for (const p of paths) await fs.unlink(p).catch(() => {});
 }
 
 export function killPendingScreenCapture(): void {
-  if (active?.current && !active.current.proc.killed) active.current.proc.kill();
+  if (!active) return;
+  if (active.kind === "sck") {
+    if (!active.proc.killed) active.proc.kill();
+  } else if (active.current && !active.current.proc.killed) {
+    active.current.proc.kill();
+  }
   active = null;
 }
