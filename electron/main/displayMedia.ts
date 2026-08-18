@@ -14,6 +14,7 @@ import { desktopCapturer, session } from "electron";
 let pendingTargetId: string | null = null;
 
 export function setPendingDisplayMediaTarget(targetId: string | null): void {
+  console.log("[displayMedia] setPendingDisplayMediaTarget", { targetId });
   pendingTargetId = targetId;
 }
 
@@ -21,15 +22,23 @@ export function registerDisplayMediaHandler(): void {
   session.defaultSession.setDisplayMediaRequestHandler(
     async (_request, callback) => {
       const targetId = pendingTargetId;
+      console.log("[displayMedia] request handler fired", { targetId });
       if (!targetId) {
+        console.error("[displayMedia] no pending target set — denying request");
         callback({});
         return;
       }
       try {
         const sources = await desktopCapturer.getSources({ types: ["screen", "window"] });
         const source = sources.find((s) => s.id === targetId);
+        console.log("[displayMedia] resolved source", {
+          found: !!source,
+          name: source?.name,
+          availableIds: sources.map((s) => s.id),
+        });
         callback(source ? { video: source } : {});
-      } catch {
+      } catch (e) {
+        console.error("[displayMedia] failed to resolve source", e);
         callback({});
       }
     },

@@ -44,13 +44,17 @@ function bindMac(): boolean {
     const koffi = require("koffi") as KoffiModule;
     macCoreGraphics = koffi.load("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices");
     macButtonStateFn = macCoreGraphics.func("CGEventSourceButtonState", "bool", ["int32", "int32"]) as Fn;
+    console.log("[cursorIcon] mac CGEventSourceButtonState bound successfully");
     return true;
-  } catch {
+  } catch (e) {
+    console.error("[cursorIcon] failed to bind CGEventSourceButtonState — clicks won't be detected", e);
     macCoreGraphics = null;
     macButtonStateFn = null;
     return false;
   }
 }
+
+let macPollLogged = false;
 
 function pollLeftButtonMac(): LeftButtonState {
   if (!bindMac() || !macButtonStateFn) return { isDown: false, wasPressed: false };
@@ -63,8 +67,17 @@ function pollLeftButtonMac(): LeftButtonState {
     // own bit has at high enough click rates.
     const wasPressed = isDown && !macLeftButtonWasDown;
     macLeftButtonWasDown = isDown;
+    if (!macPollLogged) {
+      // Only once per process, not per poll (this runs at 60Hz) — just confirms the call
+      // itself doesn't throw and returns a real value (permission-denied still returns
+      // `false` silently rather than erroring, so this can't distinguish "no permission"
+      // from "button really isn't down right now").
+      macPollLogged = true;
+      console.log("[cursorIcon] first mac button-state poll succeeded", { isDown });
+    }
     return { isDown, wasPressed };
-  } catch {
+  } catch (e) {
+    console.error("[cursorIcon] CGEventSourceButtonState call threw", e);
     return { isDown: false, wasPressed: false };
   }
 }

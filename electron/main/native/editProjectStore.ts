@@ -317,6 +317,7 @@ const NO_MEDIA: EditProjectMedia = {
   singleFilePath: null,
   cursorMetadataPath: null,
   cursorIconsDir: null,
+  cursorBakedIn: false,
   recordedCamera: null,
 };
 
@@ -327,11 +328,13 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
   let recordingFilePath: string | null = null;
   let recordedOverlay: OverlayConfig | null = null;
   let recordedBubbleConfig: CameraBubbleConfig | null = null;
+  let cursorBakedIn = false;
   if (project.source.kind === "video" && project.source.videoId) {
     const video = getVideo(project.source.videoId);
     recordingFilePath = video?.filePath ?? null;
     recordedOverlay = video?.overlay ?? null;
     recordedBubbleConfig = video?.cameraBubbleConfig ?? null;
+    cursorBakedIn = !!video?.cursorBakedIn;
   } else if (project.source.kind === "file" && project.source.filePath) {
     recordingFilePath = project.source.filePath;
   }
@@ -350,6 +353,7 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
       singleFilePath: null,
       cursorMetadataPath: hasCursor ? cursorMetaPath : null,
       cursorIconsDir: hasCursor ? path.join(recDir, "metadata", "cursor-icons") : null,
+      cursorBakedIn,
       recordedCamera: recordedOverlay ? recordedCameraSettings(recordedOverlay, recDir, recordedBubbleConfig) : null,
     };
   }
@@ -370,6 +374,7 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
     singleFilePath: isVideoFile ? recordingFilePath : null,
     cursorMetadataPath: hasCursor ? cursorMetaPath : null,
     cursorIconsDir: hasCursor ? path.join(recDir, "metadata", "cursor-icons") : null,
+    cursorBakedIn,
     recordedCamera: null,
   };
 }

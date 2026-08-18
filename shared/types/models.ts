@@ -518,6 +518,12 @@ export interface EditProjectMedia {
   cursorMetadataPath: string | null;
   /** Absolute path to the directory holding that track's cursor icon PNGs. */
   cursorIconsDir: string | null;
+  /** True when the video behind screenFilePath/singleFilePath already has a real,
+   *  physically-captured OS cursor baked into its pixels — the non-native (no gdigrab)
+   *  screen-capture fallback has no way to suppress it at the source. Drawing the
+   *  synthetic cursor track on top of one of these would show two cursors, so the editor
+   *  skips that render (and any style/replacement it'd otherwise offer) entirely here. */
+  cursorBakedIn: boolean;
   /** The camera bubble config actually used at record time, mapped to edit-settings
    *  shape — used as the Camera tab's starting point (and Reset target) instead of a
    *  generic default, so untouched projects preview exactly as they were recorded. */
@@ -538,6 +544,9 @@ export interface Video {
   /** Camera bubble shape/blur actually in effect while this was recorded — absent for
    *  audio-only recordings and anything saved before this field existed. */
   cameraBubbleConfig?: CameraBubbleConfig;
+  /** True when the screen video was captured via the non-native (no gdigrab) fallback,
+   *  which bakes the real OS cursor into it — see EditProjectMedia.cursorBakedIn. */
+  cursorBakedIn?: boolean;
 }
 
 export interface TranscriptSegment {
