@@ -186,6 +186,17 @@ function macArgs(capture: ActiveCapture, outputPath: string): string[] {
     `${capture.macDeviceIndex}:none`,
     "-vf",
     vf,
+    // avfoundation's screen device only delivers a new frame when content actually
+    // changes, not on a steady clock — without this, ffmpeg forces constant-framerate
+    // output by duplicating the last frame to fill the gap, which for a mostly-static
+    // screen can run away entirely (confirmed — a short recording produced 30000+
+    // duplicated frames and took real minutes to encode, "More than 1000 frames
+    // duplicated" in stderr). -fps_mode vfr passes the real, variable frame timestamps
+    // through instead of forcing a duplicated 30fps stream; overlayCameraBubble/
+    // overlayCursorTrack already position by elapsed time (`t`), not frame count, so VFR
+    // input doesn't break sync with the camera/cursor tracks.
+    "-fps_mode",
+    "vfr",
     "-c:v",
     "libx264",
     "-preset",
