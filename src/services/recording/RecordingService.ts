@@ -210,16 +210,21 @@ class RecordingService {
 
   private async startRawScreenRecording(targetId: string): Promise<void> {
     // getDisplayMedia, not the legacy getUserMedia({chromeMediaSource: "desktop"})
-    // constraints used elsewhere (e.g. the live setup preview) — only getDisplayMedia
-    // supports a `cursor` constraint, and only suppressing the OS cursor here (`"never"`)
-    // keeps the real one from getting baked into screen.mp4 underneath the app's own
-    // synthetic cursor overlay, applied on top of it afterward from cursor.json. The
-    // target itself is supplied via displayMedia.ts's request handler (registerDisplayMediaHandler)
-    // rather than Chromium's native picker, so this still records exactly the target the
-    // user chose in RecordPage's own list, not whatever the OS dialog would offer.
+    // constraints used elsewhere (e.g. the live setup preview) — needed for the `targetId`
+    // hand-off via displayMedia.ts's request handler (registerDisplayMediaHandler) rather
+    // than Chromium's native picker, so this still records exactly the target the user
+    // chose in RecordPage's own list, not whatever the OS dialog would offer.
+    //
+    // `cursor: "always"`, not "never" — this constraint doesn't reliably suppress the OS
+    // cursor on this same-process capture anyway (ipc/recording.ts's finishRecordingSave
+    // treats every fallback recording as already having a real cursor baked in and skips
+    // its own synthetic overlay pass for that reason). Asking Chromium for "never" here
+    // fights the OS's own hardware cursor compositor without actually removing it, which
+    // was producing a doubled/ghosted cursor on macOS (the real hardware cursor plus a
+    // stale software-composited one). "always" lets exactly one, consistent cursor render.
     await window.api.capture.setDisplayMediaTarget(targetId);
     this.screenStream = await navigator.mediaDevices.getDisplayMedia({
-      video: { cursor: "never" } as MediaTrackConstraints,
+      video: { cursor: "always" } as MediaTrackConstraints,
       audio: false,
     });
     console.log(
