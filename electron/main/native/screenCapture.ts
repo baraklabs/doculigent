@@ -19,11 +19,18 @@ interface Segment {
 }
 
 interface ActiveCapture {
-  rect: { x: number; y: number; width: number; height: number };
   hideCursor: boolean;
   isArea: boolean;
   current: Segment | null;
   segments: string[];
+  // Windows (gdigrab) — precise physical-pixel rect resolved once at start; gdigrab
+  // captures exactly this rect at the source via -offset_x/-offset_y/-video_size.
+  winRect?: { x: number; y: number; width: number; height: number };
+  // macOS (avfoundation) — a device index plus the fractional (0..1) area rect, cropped
+  // via -vf at encode time instead: unlike gdigrab, avfoundation can only capture a whole
+  // display, not an arbitrary sub-rectangle at the source.
+  macDeviceIndex?: number;
+  macArea?: AreaRect | null;
 }
 
 let active: ActiveCapture | null = null;
@@ -55,8 +62,70 @@ async function resolveDisplayRect(targetId: string): Promise<PhysicalMonitor["re
   return matchPhysicalRect(display, monitors);
 }
 
+// macOS equivalent of listPhysicalMonitors — avfoundation exposes screens as numbered
+// "video devices" ("Capture screen 0", "Capture screen 1", ...) rather than through any
+// queryable display-id API, so the only way to find their indices is asking ffmpeg
+// itself via -list_devices and parsing the device list it prints to stderr.
+async function listAvfoundationScreenIndices(): Promise<number[]> {
+  return new Promise((resolve) => {
+    const proc = spawn(ffmpegPath, ["-f", "avfoundation", "-list_devices", "true", "-i", ""], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    let settled = false;
+    proc.stderr?.on("data", (d: Buffer) => {
+      stderr += d.toString();
+    });
+    const finish = (indices: number[]) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(indices);
+    };
+    const timer = setTimeout(() => {
+      if (!proc.killed) proc.kill();
+      finish([]);
+    }, 5000);
+    proc.once("error", () => finish([]));
+    proc.once("close", () => {
+      const indices: number[] = [];
+      const re = /\[(\d+)\]\s+Capture screen/gi;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(stderr))) indices.push(Number(m[1]));
+      console.log("[screenCapture] avfoundation screen devices", { indices });
+      finish(indices);
+    });
+  });
+}
+
+/** Maps a desktopCapturer "screen:..." targetId to the avfoundation device index that
+ *  captures the same physical display. There's no documented API correlating the two —
+ *  this assumes avfoundation's screen-device enumeration order matches
+ *  screen.getAllDisplays() with the primary display first, which holds for the common
+ *  single/dual-monitor cases but isn't a guaranteed mapping on more exotic multi-monitor
+ *  setups. The single-display case (by far the most common) is unambiguous regardless. */
+async function resolveMacScreenDeviceIndex(targetId: string): Promise<number | null> {
+  const sources = await desktopCapturer.getSources({ types: ["screen"] });
+  const source = sources.find((s) => s.id === targetId);
+  if (!source) return null;
+  const displays = screen.getAllDisplays();
+  const display = displays.find((d) => String(d.id) === source.display_id) ?? screen.getPrimaryDisplay();
+
+  const screenIndices = await listAvfoundationScreenIndices();
+  if (screenIndices.length === 0) return null;
+  if (screenIndices.length === 1) return screenIndices[0];
+
+  const primary = screen.getPrimaryDisplay();
+  const ordered = [primary, ...displays.filter((d) => d.id !== primary.id)];
+  const position = ordered.findIndex((d) => d.id === display.id);
+  return position >= 0 && position < screenIndices.length ? screenIndices[position] : screenIndices[0];
+}
+
 export function canCaptureTarget(targetId: string): boolean {
-  return process.platform === "win32" && targetId.startsWith("screen:");
+  // Only whole-display targets — neither gdigrab nor avfoundation can capture a single
+  // window the way desktopCapturer's window sources can, so "window:..." targets always
+  // fall back to the getDisplayMedia-based pipeline on both platforms.
+  return (process.platform === "win32" || process.platform === "darwin") && targetId.startsWith("screen:");
 }
 
 export function vfFor(isArea: boolean): string {
@@ -66,15 +135,14 @@ export function vfFor(isArea: boolean): string {
         `pad=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`;
 }
 
-function spawnSegment(capture: ActiveCapture): Promise<Segment | null> {
-  const { rect, hideCursor, isArea } = capture;
-  const outputPath = path.join(os.tmpdir(), `doculigent-screen-${randomUUID()}.mp4`);
-  const args = [
+function winArgs(capture: ActiveCapture, outputPath: string): string[] {
+  const rect = capture.winRect!;
+  return [
     "-y",
     "-f",
     "gdigrab",
     "-draw_mouse",
-    hideCursor ? "0" : "1",
+    capture.hideCursor ? "0" : "1",
     "-framerate",
     String(FPS),
     "-offset_x",
@@ -86,15 +154,59 @@ function spawnSegment(capture: ActiveCapture): Promise<Segment | null> {
     "-i",
     "desktop",
     "-vf",
-    vfFor(isArea),
+    vfFor(capture.isArea),
     "-c:v",
     "libx264",
     "-preset",
     "ultrafast",
     outputPath,
   ];
+}
+
+function macArgs(capture: ActiveCapture, outputPath: string): string[] {
+  // avfoundation captures a whole display only, so an area recording is cropped via -vf
+  // using the same fractional (0..1) formula as the getDisplayMedia fallback path in
+  // ipc/recording.ts's buildFinalMp4 — no physical-pixel rect resolution needed here at
+  // all, unlike gdigrab. -capture_cursor is avfoundation's equivalent of gdigrab's
+  // -draw_mouse: it excludes the real cursor at the capture source rather than relying on
+  // (unreliable, per displayMedia.ts) browser-level cursor suppression.
+  const area = capture.macArea;
+  const vf = area
+    ? `crop=iw*${area.width}:ih*${area.height}:iw*${area.x}:ih*${area.y},${vfFor(true)}`
+    : vfFor(false);
+  return [
+    "-y",
+    "-f",
+    "avfoundation",
+    "-capture_cursor",
+    capture.hideCursor ? "0" : "1",
+    "-framerate",
+    String(FPS),
+    "-i",
+    `${capture.macDeviceIndex}:none`,
+    "-vf",
+    vf,
+    "-c:v",
+    "libx264",
+    "-preset",
+    "ultrafast",
+    outputPath,
+  ];
+}
+
+function spawnSegment(capture: ActiveCapture): Promise<Segment | null> {
+  const outputPath = path.join(os.tmpdir(), `doculigent-screen-${randomUUID()}.mp4`);
+  const args = process.platform === "darwin" ? macArgs(capture, outputPath) : winArgs(capture, outputPath);
 
   const proc = spawn(ffmpegPath, args, { stdio: ["pipe", "ignore", "pipe"] });
+  let stderr = "";
+  proc.stderr?.on("data", (d: Buffer) => {
+    stderr += d.toString();
+    if (stderr.length > 4000) stderr = stderr.slice(-4000);
+  });
+  proc.once("close", (code) => {
+    if (code !== 0 && code !== null) console.error(`[screenCapture] ffmpeg segment exited ${code}:`, stderr.slice(-1000));
+  });
 
   return new Promise((resolve) => {
     proc.once("spawn", () => resolve({ proc, outputPath }));
@@ -145,10 +257,28 @@ async function concatSegments(segmentPaths: string[]): Promise<string> {
 export async function startScreenCapture(targetId: string, hideCursor: boolean, area?: AreaRect): Promise<boolean> {
   if (active || !canCaptureTarget(targetId)) return false;
 
+  if (process.platform === "darwin") {
+    const macDeviceIndex = await resolveMacScreenDeviceIndex(targetId);
+    if (macDeviceIndex === null) return false;
+    const capture: ActiveCapture = {
+      hideCursor,
+      isArea: !!area,
+      current: null,
+      segments: [],
+      macDeviceIndex,
+      macArea: area ?? null,
+    };
+    const segment = await spawnSegment(capture);
+    if (!segment) return false;
+    capture.current = segment;
+    active = capture;
+    return true;
+  }
+
   const displayRect = await resolveDisplayRect(targetId);
   if (!displayRect) return false;
 
-  const rect = area
+  const winRect = area
     ? {
         x: displayRect.x + Math.round(area.x * displayRect.width),
         y: displayRect.y + Math.round(area.y * displayRect.height),
@@ -157,7 +287,7 @@ export async function startScreenCapture(targetId: string, hideCursor: boolean, 
       }
     : displayRect;
 
-  const capture: ActiveCapture = { rect, hideCursor, isArea: !!area, current: null, segments: [] };
+  const capture: ActiveCapture = { winRect, hideCursor, isArea: !!area, current: null, segments: [] };
   const segment = await spawnSegment(capture);
   if (!segment) return false;
   capture.current = segment;
