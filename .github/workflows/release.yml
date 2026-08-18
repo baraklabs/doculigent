@@ -33,6 +33,15 @@ jobs:
 
       - name: Type check
         run: npm run typecheck
+
+      # Compiles the ScreenCaptureKit helper (see electron/native/mac/ScreenCaptureKitRecorder.swift
+      # and native/screenCapture.ts) so it ships in the mac DMG. Without this the packaged
+      # app silently falls back to the older avfoundation-based capture, which is exactly
+      # the regression this step exists to catch — a release DMG missing the helper is the
+      # bug, not an acceptable degrade, so this must run (and succeed) before packaging.
+      - name: Build macOS native helper
+        if: matrix.os == 'macos-latest'
+        run: npm run build:mac-native
       - name: Write production env
         shell: bash
         run: |
