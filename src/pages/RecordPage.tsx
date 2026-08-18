@@ -283,6 +283,15 @@ export function RecordPage() {
 
   useEffect(() => {
     if (captureMode === "camera") return;
+    // Waits on the saved settings round-trip (preferredTargetId), not just the targets
+    // query — capture.listTargets() usually resolves before settings:getRecordSettings
+    // does, and without this guard that race picked pool[0] (whichever target happens to
+    // be first) as soon as the target list arrived, then the "already have a valid
+    // targetId, leave it alone" check below meant the *real* saved preference — arriving
+    // moments later — was ignored, since the id it just picked was itself already valid.
+    // Every remount (e.g. switching tabs and back) re-runs this race, which is why it only
+    // reset "sometimes" rather than consistently.
+    if (!settingsLoaded) return;
     const pool = captureMode === "window" ? windowTargets : displayTargets;
     if (pool.length === 0) {
       if (targetId) setTargetId("");
@@ -291,7 +300,7 @@ export function RecordPage() {
     if (targetId && pool.some((t) => t.id === targetId)) return;
     const preferred = preferredTargetId && pool.some((t) => t.id === preferredTargetId) ? preferredTargetId : pool[0].id;
     setTargetId(preferred);
-  }, [captureMode, windowTargets, displayTargets, targetId, preferredTargetId]);
+  }, [captureMode, windowTargets, displayTargets, targetId, preferredTargetId, settingsLoaded]);
 
   useEffect(() => {
     if (!settingsLoaded) return;

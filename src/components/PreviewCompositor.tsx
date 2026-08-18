@@ -32,6 +32,11 @@ interface PreviewCompositorProps {
    *  rendered live here from the same track used to burn it into the final export. */
   cursorMetadataPath?: string | null;
   cursorIconsDir?: string | null;
+  /** True when screenFilePath already has a real, physically-captured OS cursor baked
+   *  into its pixels (the non-native screen-capture fallback — see
+   *  EditProjectMedia.cursorBakedIn) — drawing the synthetic track on top of one of these
+   *  would show two cursors, so the draw loop skips it entirely. */
+  cursorBakedIn?: boolean;
   camera: CameraEditSettings;
   onCameraChange: (next: CameraEditSettings) => void;
   background: BackgroundEditSettings;
@@ -608,6 +613,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     cameraFilePath,
     cursorMetadataPath,
     cursorIconsDir,
+    cursorBakedIn,
     camera,
     onCameraChange,
     background,
@@ -778,6 +784,12 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   useEffect(() => {
     cursorRef.current = cursor;
   }, [cursor]);
+
+  const cursorBakedInRef = useRef(!!cursorBakedIn);
+  useEffect(() => {
+    cursorBakedInRef.current = !!cursorBakedIn;
+    console.log("[PreviewCompositor] cursorBakedIn prop", { cursorBakedIn, screenFilePath });
+  }, [cursorBakedIn, screenFilePath]);
 
   const layoutRef = useRef(layout);
   useEffect(() => {
@@ -1211,8 +1223,9 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       // getEditProjectMedia), so it's drawn live here from the recorded track (reusing the
       // sample taken above for the zoom-focus crop, rather than searching it again).
       // Skipped entirely during a deleted (blank) Clips stretch, same as the screen/camera
-      // content.
-      if (showScreenContent && track && cursorSample) {
+      // content — and skipped altogether when cursorBakedIn, since screenVideo *does* have
+      // a real one baked in there and drawing this on top of it would show two cursors.
+      if (showScreenContent && track && cursorSample && !cursorBakedInRef.current) {
         const { point, pos } = cursorSample;
         const frame = frameDimensions(track.metadata);
         const icon = track.icons[point.icon];

@@ -149,6 +149,12 @@ export async function writeCursorMetadata(recordingId: string, recordingDir: str
       clicks: captured.clicks,
     };
     await fs.writeFile(path.join(metaDir, "cursor.json"), JSON.stringify(metadata), "utf-8");
+    console.log("[cursorTrack] wrote cursor.json", {
+      points: metadata.points.length,
+      clicks: metadata.clicks?.length,
+      icons: metadata.icons.length,
+      captureKind: metadata.capture.kind,
+    });
   } catch (e) {
     console.error("Couldn't write cursor metadata:", e);
   }

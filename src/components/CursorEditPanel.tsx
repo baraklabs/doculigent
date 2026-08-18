@@ -50,9 +50,19 @@ interface CursorEditPanelProps {
   onChange: (next: CursorEditSettings) => void;
   onResetAllToOriginal: () => void;
   onResetAllToDefault: () => void;
+  /** True when this recording's screen video already has a real cursor baked into its
+   *  pixels (see EditProjectMedia.cursorBakedIn) — none of the controls below have
+   *  anything to draw on top of it, so a real one shows through unstyled regardless. */
+  cursorBakedIn?: boolean;
 }
 
-export function CursorEditPanel({ cursor, onChange, onResetAllToOriginal, onResetAllToDefault }: CursorEditPanelProps) {
+export function CursorEditPanel({
+  cursor,
+  onChange,
+  onResetAllToOriginal,
+  onResetAllToDefault,
+  cursorBakedIn,
+}: CursorEditPanelProps) {
   function patch(partial: Partial<CursorEditSettings>) {
     onChange({ ...cursor, ...partial });
   }
@@ -61,6 +71,12 @@ export function CursorEditPanel({ cursor, onChange, onResetAllToOriginal, onRese
 
   return (
     <div className="cursor-edit-panel">
+      {cursorBakedIn && (
+        <div className="cursor-edit-baked-in-note">
+          This recording's cursor can't be restyled — it was captured without a way to
+          keep the real one out of the video, so it always shows through as-is.
+        </div>
+      )}
       <div className="cursor-edit-section">
         <span className="cursor-edit-label">Style</span>
         <div className="cursor-style-grid">

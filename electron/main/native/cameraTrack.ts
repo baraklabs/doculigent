@@ -17,6 +17,7 @@ let track: ActiveTrack | null = null;
 
 export function startCameraTrack(): void {
   stopCameraTrack();
+  console.log("[cameraTrack] startCameraTrack", { initialBounds: getCameraBubbleBounds() });
   track = { startedAt: Date.now(), points: [] };
 
   timer = setInterval(() => {
@@ -45,6 +46,7 @@ export function stopCameraTrack(): void {
 export async function writeCameraMetadata(recordingId: string, recordingDir: string): Promise<void> {
   const captured = track;
   track = null;
+  console.log("[cameraTrack] writeCameraMetadata", { points: captured?.points.length ?? 0 });
   if (!captured || captured.points.length === 0) return;
 
   const metadata: CameraTrackMetadata = {

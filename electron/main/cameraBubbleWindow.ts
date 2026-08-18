@@ -106,6 +106,7 @@ export function setCameraBubbleRecordingActive(active: boolean, native: boolean)
   // window can't appear in any capture no matter how it's composited. The tradeoff is that
   // the bubble can't be dragged *during* a fallback recording — wherever it was positioned
   // before hitting record is where it stays for that recording.
+  console.log("[cameraBubbleWindow] setCameraBubbleRecordingActive", { active, native, wasVisible: win.isVisible() });
   if (active && !native) win.hide();
   else if (!active && !win.isVisible()) win.showInactive();
   win.webContents.send(Channels.cameraBubble.recordingActiveChanged, active, native);

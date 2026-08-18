@@ -116,6 +116,21 @@ export function RecordingDockPage() {
     []
   );
 
+  // The push above can land before this page has even mounted (RecordPage fires its
+  // first syncTimer call as soon as it opens this window, not once this is actually
+  // ready to receive it) — a push that arrives with no listener yet registered is just
+  // dropped, not queued, which was leaving the dock stuck at 0:00 until the next
+  // pause/resume happened to push a fresh value. Pulling the last known value here too
+  // covers exactly that gap.
+  useEffect(() => {
+    window.api.recordingDock.getTimerSync().then((sync) => {
+      if (!sync) return;
+      setElapsedMs(sync.elapsedMs);
+      setPaused(sync.paused);
+      setStarted(true);
+    });
+  }, []);
+
   useEffect(() => {
     if (!started || paused) return;
     const id = setInterval(() => setElapsedMs((ms) => ms + 1000), 1000);

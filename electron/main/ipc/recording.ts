@@ -134,6 +134,17 @@ async function buildFinalMp4(
   signal: AbortSignal,
   cleanupPaths: string[]
 ): Promise<void> {
+  console.log("[recording] buildFinalMp4", {
+    id,
+    hasScreenFilePath: !!input.screenFilePath,
+    hasScreenBytes: !!input.screenBytes,
+    screenBytesLength: input.screenBytes?.byteLength,
+    areaRect: input.areaRect,
+    hasSideClip: !!input.sideClip,
+    sideClipHasVideo: input.sideClip?.hasVideo,
+    sideClipHasAudio: input.sideClip?.hasAudio,
+  });
+
   if (input.screenFilePath || input.screenBytes) {
     const metaDir = path.join(recDir, "metadata");
     await fs.mkdir(metaDir, { recursive: true });
@@ -156,10 +167,17 @@ async function buildFinalMp4(
       const vf = area
         ? `crop=iw*${area.width}:ih*${area.height}:iw*${area.x}:ih*${area.y},${vfFor(true)}`
         : vfFor(false);
-      await transcodeScreenRecording(tempScreenWebm, screenKeepPath, vf, onProgress, signal);
+      console.log("[recording] transcoding fallback screen recording", { tempScreenWebm, vf });
+      try {
+        await transcodeScreenRecording(tempScreenWebm, screenKeepPath, vf, onProgress, signal);
+      } catch (e) {
+        console.error("[recording] transcodeScreenRecording failed", e);
+        throw e;
+      }
     }
 
     if (!input.sideClip) {
+      console.log("[recording] no side clip — copying screen straight to final mp4");
       await copyToMp4(screenKeepPath, finalMp4, onProgress, signal);
       return;
     }
@@ -173,17 +191,29 @@ async function buildFinalMp4(
     if (input.sideClip.hasVideo) {
       const track = await resolveCameraBubbleTrack(recDir, input.overlay);
       const { shape, mirror } = getCameraBubbleConfig();
-      await overlayCameraBubble(
-        screenKeepPath,
-        sideClipPath,
-        track,
+      console.log("[recording] overlaying camera bubble", {
+        trackPoints: track.points.length,
+        trackWidth: track.width,
+        trackHeight: track.height,
         shape,
         mirror,
-        input.sideClip.hasAudio,
-        finalMp4,
-        onProgress,
-        signal
-      );
+      });
+      try {
+        await overlayCameraBubble(
+          screenKeepPath,
+          sideClipPath,
+          track,
+          shape,
+          mirror,
+          input.sideClip.hasAudio,
+          finalMp4,
+          onProgress,
+          signal
+        );
+      } catch (e) {
+        console.error("[recording] overlayCameraBubble failed", e);
+        throw e;
+      }
     } else {
       await muxScreenWithAudio(screenKeepPath, sideClipPath, finalMp4, onProgress, signal);
     }
@@ -205,6 +235,13 @@ async function tryOverlayCursor(
 ): Promise<void> {
   const metaPath = path.join(recDir, "metadata", "cursor.json");
   const metadata = await readJsonIfExists<CursorMetadata>(metaPath);
+  console.log("[recording] tryOverlayCursor", {
+    found: !!metadata,
+    points: metadata?.points.length,
+    clicks: metadata?.clicks?.length,
+    captureKind: metadata?.capture.kind,
+    durationSecs,
+  });
   if (!metadata || metadata.points.length === 0 || durationSecs <= 0) return;
 
   const composedPath = path.join(recDir, "recording-with-cursor.mp4.tmp");
@@ -225,6 +262,7 @@ async function finishRecordingSave(
   input: SaveRecordingInput,
   sender: IpcMainInvokeEvent["sender"]
 ): Promise<void> {
+  console.log("[recording] finishRecordingSave start", { id, finalMp4 });
   const abort = new AbortController();
   pendingSaves.set(id, abort);
   const cleanupPaths: string[] = [];
@@ -242,7 +280,12 @@ async function finishRecordingSave(
       abort.signal,
       cleanupPaths
     );
-    if (input.screenFilePath || input.screenBytes) {
+    // screenBytes (the non-native fallback) already has a real, physically-captured OS
+    // cursor baked into it — see SaveRecordingInput.screenBytes and EditProjectMedia's
+    // cursorBakedIn. Burning the synthetic track on top of that would show two cursors, so
+    // this overlay pass only ever runs for a native (gdigrab) screenFilePath, which never
+    // has one baked in to begin with.
+    if (input.screenFilePath) {
       await tryOverlayCursor(
         path.dirname(finalMp4),
         finalMp4,
@@ -266,10 +309,13 @@ async function finishRecordingSave(
       summary: null,
       source: input.source,
       cameraBubbleConfig: input.sideClip?.hasVideo ? getCameraBubbleConfig() : undefined,
+      cursorBakedIn: !!input.screenBytes,
     };
+    console.log("[recording] finishRecordingSave done", { id, cursorBakedIn: video.cursorBakedIn });
     insertVideo(video);
     if (!sender.isDestroyed()) sender.send(Channels.recording.saveCompleted, video);
   } catch (e) {
+    console.error("[recording] finishRecordingSave failed", { id }, e);
     if (e instanceof FfmpegCancelledError) {
       await fs.rm(path.dirname(finalMp4), { recursive: true, force: true });
     } else if (!sender.isDestroyed()) {

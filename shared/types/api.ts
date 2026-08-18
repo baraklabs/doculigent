@@ -104,6 +104,10 @@ export interface DoculigentApi {
     setBounds(bounds: RecordingDockBounds): Promise<void>;
     sendAction(action: RecordingDockAction): Promise<void>;
     syncTimer(sync: RecordingDockTimerSync): Promise<void>;
+    /** Pulls whatever the last pushed syncTimer value was — for the dock's own mount,
+     *  rather than only ever relying on that push, which is dropped with no queueing if
+     *  it lands before the dock's onTimerSync listener is registered. */
+    getTimerSync(): Promise<RecordingDockTimerSync | null>;
     showMainWindow(): Promise<void>;
     hideMainWindow(): Promise<void>;
     isMainWindowVisible(): Promise<boolean>;

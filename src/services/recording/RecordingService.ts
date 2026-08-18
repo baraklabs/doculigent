@@ -118,6 +118,12 @@ class RecordingService {
     this.nativeCapture =
       captureMode !== "camera" &&
       (await window.api.screenCapture.start(targetId, true, this.areaRect ?? undefined)).available;
+    console.log("[RecordingService] start()", {
+      captureMode,
+      nativeCapture: this.nativeCapture,
+      showCamera: this.overlay.showCamera,
+      areaRect: this.areaRect,
+    });
 
     // Awaited, and before any screen capture actually starts below — on the fallback path
     // this hides the camera bubble window outright (see setCameraBubbleRecordingActive),
@@ -216,12 +222,19 @@ class RecordingService {
       video: { cursor: "never" } as MediaTrackConstraints,
       audio: false,
     });
-    this.rawScreenRecorder = new MediaRecorder(this.screenStream, { mimeType: pickMimeType() });
+    console.log(
+      "[RecordingService] startRawScreenRecording — track settings",
+      this.screenStream.getVideoTracks()[0]?.getSettings()
+    );
+    const mimeType = pickMimeType();
+    this.rawScreenRecorder = new MediaRecorder(this.screenStream, { mimeType });
     this.rawScreenChunks = [];
     this.rawScreenRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) this.rawScreenChunks.push(e.data);
     };
+    this.rawScreenRecorder.onerror = (e) => console.error("[RecordingService] rawScreenRecorder error", e);
     this.rawScreenRecorder.start();
+    console.log("[RecordingService] rawScreenRecorder started", { mimeType });
   }
 
   private async startCameraOnlyPipeline(): Promise<void> {
@@ -395,6 +408,13 @@ class RecordingService {
     overlay: OverlayConfig
   ): Promise<{ id: string }> {
     const sideClip = await this.stopSideClip();
+    console.log("[RecordingService] stopSeparateFiles", {
+      nativeCapture: this.nativeCapture,
+      hasSideClip: !!sideClip,
+      sideClipHasVideo: sideClip?.hasVideo,
+      sideClipHasAudio: sideClip?.hasAudio,
+      sideClipBytes: sideClip?.bytes.byteLength,
+    });
 
     if (this.nativeCapture) {
       const { available, filePath } = await window.api.screenCapture.stop();
@@ -411,6 +431,10 @@ class RecordingService {
       this.rawScreenRecorder.stop();
     });
     const screenBytes = await finalBlob.arrayBuffer();
+    console.log("[RecordingService] raw screen recording stopped", {
+      screenBytes: screenBytes.byteLength,
+      areaRect: this.areaRect,
+    });
     return window.api.recording.save({
       screenBytes,
       areaRect: this.areaRect,

@@ -842,6 +842,7 @@ export function EditPage() {
                       onChange={handleCursorChange}
                       onResetAllToOriginal={resetAllToOriginal}
                       onResetAllToDefault={resetAllToDefault}
+                      cursorBakedIn={media!.cursorBakedIn}
                     />
                   ) : activeTab === "background" ? (
                     <BackgroundEditPanel
@@ -888,6 +889,7 @@ export function EditPage() {
                   cameraFilePath={media!.cameraFilePath ?? undefined}
                   cursorMetadataPath={media!.cursorMetadataPath}
                   cursorIconsDir={media!.cursorIconsDir}
+                  cursorBakedIn={media!.cursorBakedIn}
                   camera={camera}
                   onCameraChange={handleCameraChange}
                   background={background}

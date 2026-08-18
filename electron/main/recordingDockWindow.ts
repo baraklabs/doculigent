@@ -164,6 +164,9 @@ export function openRecordingDockWindow(): void {
 export function closeRecordingDockWindow(): void {
   if (win && !win.isDestroyed()) win.close();
   win = null;
+  // Otherwise the next recording's dock could briefly pull this stale value (see
+  // getRecordingDockTimerSync) before the fresh push for the new session arrives.
+  lastTimerSync = null;
 }
 
 export function setRecordingDockOrientation(orientation: RecordingDockOrientation): void {
@@ -201,8 +204,21 @@ export function forwardRecordingDockAction(action: RecordingDockAction): void {
   }
 }
 
+// Remembered so a dock window that opens *after* this fires (its BrowserWindow takes a
+// moment to load, mount, and subscribe its onTimerSync listener — see openRecordingDockWindow)
+// can pull the current state itself once ready, instead of only ever getting it pushed:
+// a push sent before that listener is registered is simply dropped, no queueing, which
+// was leaving the dock stuck showing 0:00 for however long recording ran before the next
+// state-change (pause/resume) happened to push a fresh value.
+let lastTimerSync: RecordingDockTimerSync | null = null;
+
 export function forwardRecordingDockTimerSync(sync: RecordingDockTimerSync): void {
+  lastTimerSync = sync;
   if (win && !win.isDestroyed()) win.webContents.send(Channels.recordingDock.timerSync, sync);
+}
+
+export function getRecordingDockTimerSync(): RecordingDockTimerSync | null {
+  return lastTimerSync;
 }
 
 export function showMainWindowForDock(): void {

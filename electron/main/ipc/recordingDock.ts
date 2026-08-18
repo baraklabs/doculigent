@@ -13,6 +13,7 @@ import {
   forwardRecordingDockTimerSync,
   getRecordingDockBounds,
   getRecordingDockConfig,
+  getRecordingDockTimerSync,
   hideMainWindowForDock,
   isMainWindowVisibleForDock,
   openRecordingDockWindow,
@@ -54,6 +55,11 @@ export function registerRecordingDockIpc(): void {
   ipcMain.handle(Channels.recordingDock.syncTimer, async (_event, sync: RecordingDockTimerSync): Promise<void> => {
     forwardRecordingDockTimerSync(sync);
   });
+
+  ipcMain.handle(
+    Channels.recordingDock.getTimerSync,
+    async (): Promise<RecordingDockTimerSync | null> => getRecordingDockTimerSync()
+  );
 
   ipcMain.handle(Channels.recordingDock.showMainWindow, async (): Promise<void> => {
     showMainWindowForDock();
