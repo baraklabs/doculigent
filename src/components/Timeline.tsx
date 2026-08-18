@@ -70,6 +70,14 @@ function formatTime(ms: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+// Short "1.2s" form used for the always-visible start–end label burned onto each Clips/
+// Camera piece — formatTime's m:ss is what the hover title still uses, but at a piece's
+// usual on-screen width there's only room for something this compact.
+function formatTimeSecs(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "0.0s";
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 // Picks a "nice" tick spacing that lands roughly 6-10 ticks across the ruler.
 const TICK_STEPS_MS = [500, 1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000, 600000, 900000];
 function pickTickStepMs(durationMs: number): number {
@@ -79,6 +87,64 @@ function pickTickStepMs(durationMs: number): number {
 
 function newId(): string {
   return crypto.randomUUID();
+}
+
+// Piece-to-piece drag snapping (Clips-to-Clips, Camera-to-Camera — the two tracks are
+// otherwise fully independent, so a Clips piece never snaps onto a Camera one here). Pulls
+// a dragged/trimmed edge flush onto whichever neighbor edge on the same track it's closest
+// to, within tolerance, so a piece can be dropped exactly touching another — no gap, no
+// overlap — instead of hand-aligning pixel by pixel.
+function snapMoveToNeighbors(
+  pieces: TimelineClip[],
+  selfId: string,
+  desiredStart: number,
+  durationOfSelf: number,
+  toleranceMs: number
+): { start: number; touchId: string | null } {
+  let bestDist = toleranceMs;
+  let start = desiredStart;
+  let touchId: string | null = null;
+  const desiredEnd = desiredStart + durationOfSelf;
+  for (const p of pieces) {
+    if (p.id === selfId) continue;
+    const pStart = p.timelineStart;
+    const pEnd = p.timelineStart + (p.sourceEnd - p.sourceStart);
+    const dLeft = Math.abs(desiredStart - pEnd);
+    if (dLeft < bestDist) {
+      bestDist = dLeft;
+      start = pEnd;
+      touchId = p.id;
+    }
+    const dRight = Math.abs(desiredEnd - pStart);
+    if (dRight < bestDist) {
+      bestDist = dRight;
+      start = pStart - durationOfSelf;
+      touchId = p.id;
+    }
+  }
+  return { start: Math.max(0, start), touchId };
+}
+function snapEdgeToNeighbors(
+  pieces: TimelineClip[],
+  selfId: string,
+  desiredMs: number,
+  toleranceMs: number
+): { ms: number; touchId: string | null } {
+  let bestDist = toleranceMs;
+  let ms = desiredMs;
+  let touchId: string | null = null;
+  for (const p of pieces) {
+    if (p.id === selfId) continue;
+    for (const edge of [p.timelineStart, p.timelineStart + (p.sourceEnd - p.sourceStart)]) {
+      const d = Math.abs(desiredMs - edge);
+      if (d < bestDist) {
+        bestDist = d;
+        ms = edge;
+        touchId = p.id;
+      }
+    }
+  }
+  return { ms, touchId };
 }
 
 // Cursor is set on <body> directly for the duration of a drag rather than relying on
@@ -132,6 +198,11 @@ export function Timeline({
   // is close enough to snap onto a piece boundary already sitting on the *other* track — a
   // preview of "cut here and it'll line up with that one," shown before the click happens.
   const [cutGuide, setCutGuide] = useState<{ track: "clips" | "camera"; ms: number } | null>(null);
+  // While dragging (moving or edge-trimming) a Clips/Camera piece, which other piece on
+  // that same track it's currently snapped flush against (no gap, no overlap) — both the
+  // dragged piece and its neighbor get a highlight so the touch is obvious mid-drag.
+  const [clipSnapPair, setClipSnapPair] = useState<{ dragged: string; touching: string } | null>(null);
+  const [cameraSnapPair, setCameraSnapPair] = useState<{ dragged: string; touching: string } | null>(null);
 
   const rulerRef = useRef<HTMLDivElement>(null);
   const clipsTrackRef = useRef<HTMLDivElement>(null);
@@ -154,6 +225,16 @@ export function Timeline({
   const clipTrimDragRef = useRef<{ id: string; edge: "left" | "right" } | null>(null);
   const cameraClipDragRef = useRef<{ id: string; grabOffsetMs: number } | null>(null);
   const cameraClipTrimDragRef = useRef<{ id: string; edge: "left" | "right" } | null>(null);
+  // Frozen at the start of a Clips/Camera piece drag (move or edge-trim) — `durationMs`
+  // isn't a fixed value, it's recomputed every animation frame from the live clip data
+  // (see PreviewCompositor's draw loop), including whatever's mid-drag. Without freezing
+  // it, dragging/expanding whichever piece currently defines the *overall* timeline length
+  // feeds its own growth straight back into the pixel↔ms scale used to interpret that same
+  // drag's pointer position — every render, the same on-screen pointer position maps to a
+  // different ms, snowballing into runaway growth or collapse instead of tracking the
+  // pointer normally. Dragging any other piece never moves `durationMs`, which is exactly
+  // why only the piece currently at the far edge of its track shows this.
+  const dragDurationMsRef = useRef(durationMs);
   // Reassigned fresh below on every render (after the delete helper it calls is declared)
   // so the one, never-resubscribed keydown listener below always acts on whatever's
   // currently selected, without re-subscribing on every timeline edit.
@@ -252,9 +333,9 @@ export function Timeline({
   // Snap tolerance, converted from a fixed on-screen pixel radius to ms using the track's
   // current rendered width — so it feels the same regardless of the recording's length.
   const CUT_SNAP_PX = 8;
-  function cutSnapToleranceMs(trackEl: HTMLElement): number {
+  function cutSnapToleranceMs(trackEl: HTMLElement, durationMsForScale = durationMs): number {
     const width = trackEl.getBoundingClientRect().width;
-    return width > 0 ? (CUT_SNAP_PX / width) * durationMs : 0;
+    return width > 0 ? (CUT_SNAP_PX / width) * durationMsForScale : 0;
   }
   function nearestPointMs(points: number[], ms: number, toleranceMs: number): number | null {
     let best: number | null = null;
@@ -300,6 +381,7 @@ export function Timeline({
     e.stopPropagation();
     const track = clipsTrackRef.current;
     if (!track) return;
+    dragDurationMsRef.current = durationMs;
     const pointerMs = pctToMs(e.clientX, track, durationMs);
     clipDragRef.current = { id: clip.id, grabOffsetMs: pointerMs - clip.timelineStart };
     setDragCursor("grabbing");
@@ -311,13 +393,20 @@ export function Timeline({
     const track = clipsTrackRef.current;
     if (!drag || !track) return;
     const clips = clipsList();
-    const pointerMs = pctToMs(e.clientX, track, durationMs);
-    const newStart = Math.max(0, pointerMs - drag.grabOffsetMs);
+    const clip = clips.find((c) => c.id === drag.id);
+    if (!clip) return;
+    const dur = clip.sourceEnd - clip.sourceStart;
+    const scaleMs = dragDurationMsRef.current;
+    const pointerMs = pctToMs(e.clientX, track, scaleMs);
+    const rawStart = Math.max(0, pointerMs - drag.grabOffsetMs);
+    const { start: newStart, touchId } = snapMoveToNeighbors(clips, drag.id, rawStart, dur, cutSnapToleranceMs(track, scaleMs));
+    setClipSnapPair(touchId ? { dragged: drag.id, touching: touchId } : null);
     updateClips(clips.map((c) => (c.id === drag.id ? { ...c, timelineStart: newStart } : c)));
   }
   function handleClipBodyPointerUp(e: React.PointerEvent<HTMLDivElement>) {
     clipDragRef.current = null;
     setDragCursor("");
+    setClipSnapPair(null);
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   }
 
@@ -332,6 +421,7 @@ export function Timeline({
   function handleClipEdgePointerDown(e: React.PointerEvent<HTMLDivElement>, clip: TimelineClip, edge: "left" | "right") {
     if (tool === "cut") return; // let it bubble to the track's cut-mode split handler
     e.stopPropagation();
+    dragDurationMsRef.current = durationMs;
     clipTrimDragRef.current = { id: clip.id, edge };
     setDragCursor("ew-resize");
     updateClips(bringClipToFront(clipsList(), clip.id));
@@ -344,7 +434,14 @@ export function Timeline({
     const clips = clipsList();
     const clip = clips.find((c) => c.id === drag.id);
     if (!clip) return;
-    const pointerMs = pctToMs(e.clientX, track, durationMs);
+    const scaleMs = dragDurationMsRef.current;
+    const rawMs = pctToMs(e.clientX, track, scaleMs);
+    // The edge being dragged sits directly on the edited timeline (for the left edge it
+    // *is* the new timelineStart; for the right edge, timelineStart is unchanged so the
+    // pointer's edited-ms position equals the new right-edge position too) — so it can be
+    // snapped against neighbor edges the same way a whole-piece move is.
+    const { ms: pointerMs, touchId } = snapEdgeToNeighbors(clips, drag.id, rawMs, cutSnapToleranceMs(track, scaleMs));
+    setClipSnapPair(touchId ? { dragged: drag.id, touching: touchId } : null);
     if (drag.edge === "left") {
       // The dragged edge *is* both the new sourceStart and the new timelineStart — they
       // move together so the piece's right edge stays put. Clamped so neither goes
@@ -367,16 +464,18 @@ export function Timeline({
   function handleClipEdgePointerUp(e: React.PointerEvent<HTMLDivElement>) {
     clipTrimDragRef.current = null;
     setDragCursor("");
+    setClipSnapPair(null);
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   }
 
   function renderClipsPieces() {
     return clipsList().map((clip) => {
       const dur = clip.sourceEnd - clip.sourceStart;
+      const touching = clipSnapPair !== null && (clipSnapPair.dragged === clip.id || clipSnapPair.touching === clip.id);
       return (
         <div
           key={clip.id}
-          className="tl-clip-base"
+          className={`tl-clip-base${touching ? " tl-piece-touching" : ""}`}
           style={{ left: `${msToPct(clip.timelineStart, durationMs)}%`, width: `${msToPct(dur, durationMs)}%` }}
           onPointerDown={(e) => handleClipBodyPointerDown(e, clip)}
           onPointerMove={handleClipBodyPointerMove}
@@ -387,6 +486,7 @@ export function Timeline({
         >
           <div className="tl-piece-edge tl-piece-edge-left" onPointerDown={(e) => handleClipEdgePointerDown(e, clip, "left")} onPointerMove={handleClipEdgePointerMove} onPointerUp={handleClipEdgePointerUp} />
           <div className="tl-piece-edge tl-piece-edge-right" onPointerDown={(e) => handleClipEdgePointerDown(e, clip, "right")} onPointerMove={handleClipEdgePointerMove} onPointerUp={handleClipEdgePointerUp} />
+          <span className="tl-piece-time">{formatTimeSecs(clip.timelineStart)} – {formatTimeSecs(clip.timelineStart + dur)}</span>
           <button
             type="button"
             className="tl-piece-delete"
@@ -419,6 +519,7 @@ export function Timeline({
     e.stopPropagation();
     const track = cameraTrackRef.current;
     if (!track) return;
+    dragDurationMsRef.current = durationMs;
     const pointerMs = pctToMs(e.clientX, track, durationMs);
     cameraClipDragRef.current = { id: clip.id, grabOffsetMs: pointerMs - clip.timelineStart };
     setDragCursor("grabbing");
@@ -430,18 +531,26 @@ export function Timeline({
     const track = cameraTrackRef.current;
     if (!drag || !track) return;
     const clips = cameraClipsList();
-    const pointerMs = pctToMs(e.clientX, track, durationMs);
-    const newStart = Math.max(0, pointerMs - drag.grabOffsetMs);
+    const clip = clips.find((c) => c.id === drag.id);
+    if (!clip) return;
+    const dur = clip.sourceEnd - clip.sourceStart;
+    const scaleMs = dragDurationMsRef.current;
+    const pointerMs = pctToMs(e.clientX, track, scaleMs);
+    const rawStart = Math.max(0, pointerMs - drag.grabOffsetMs);
+    const { start: newStart, touchId } = snapMoveToNeighbors(clips, drag.id, rawStart, dur, cutSnapToleranceMs(track, scaleMs));
+    setCameraSnapPair(touchId ? { dragged: drag.id, touching: touchId } : null);
     updateCameraClips(clips.map((c) => (c.id === drag.id ? { ...c, timelineStart: newStart } : c)));
   }
   function handleCameraClipBodyPointerUp(e: React.PointerEvent<HTMLDivElement>) {
     cameraClipDragRef.current = null;
     setDragCursor("");
+    setCameraSnapPair(null);
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   }
   function handleCameraClipEdgePointerDown(e: React.PointerEvent<HTMLDivElement>, clip: TimelineClip, edge: "left" | "right") {
     if (tool === "cut") return; // let it bubble to the track's cut-mode split handler
     e.stopPropagation();
+    dragDurationMsRef.current = durationMs;
     cameraClipTrimDragRef.current = { id: clip.id, edge };
     setDragCursor("ew-resize");
     updateCameraClips(bringClipToFront(cameraClipsList(), clip.id));
@@ -454,7 +563,10 @@ export function Timeline({
     const clips = cameraClipsList();
     const clip = clips.find((c) => c.id === drag.id);
     if (!clip) return;
-    const pointerMs = pctToMs(e.clientX, track, durationMs);
+    const scaleMs = dragDurationMsRef.current;
+    const rawMs = pctToMs(e.clientX, track, scaleMs);
+    const { ms: pointerMs, touchId } = snapEdgeToNeighbors(clips, drag.id, rawMs, cutSnapToleranceMs(track, scaleMs));
+    setCameraSnapPair(touchId ? { dragged: drag.id, touching: touchId } : null);
     if (drag.edge === "left") {
       let delta = pointerMs - clip.timelineStart;
       delta = Math.max(delta, -clip.sourceStart, -clip.timelineStart);
@@ -474,6 +586,7 @@ export function Timeline({
   function handleCameraClipEdgePointerUp(e: React.PointerEvent<HTMLDivElement>) {
     cameraClipTrimDragRef.current = null;
     setDragCursor("");
+    setCameraSnapPair(null);
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   }
 
@@ -696,10 +809,11 @@ export function Timeline({
   function renderCameraPieces() {
     return cameraClipsList().map((clip) => {
       const dur = clip.sourceEnd - clip.sourceStart;
+      const touching = cameraSnapPair !== null && (cameraSnapPair.dragged === clip.id || cameraSnapPair.touching === clip.id);
       return (
         <div
           key={clip.id}
-          className="tl-camera-fill"
+          className={`tl-camera-fill${touching ? " tl-piece-touching" : ""}`}
           style={{ left: `${msToPct(clip.timelineStart, durationMs)}%`, width: `${msToPct(dur, durationMs)}%` }}
           onPointerDown={(e) => handleCameraClipBodyPointerDown(e, clip)}
           onPointerMove={handleCameraClipBodyPointerMove}
@@ -710,6 +824,7 @@ export function Timeline({
         >
           <div className="tl-piece-edge tl-piece-edge-left" onPointerDown={(e) => handleCameraClipEdgePointerDown(e, clip, "left")} onPointerMove={handleCameraClipEdgePointerMove} onPointerUp={handleCameraClipEdgePointerUp} />
           <div className="tl-piece-edge tl-piece-edge-right" onPointerDown={(e) => handleCameraClipEdgePointerDown(e, clip, "right")} onPointerMove={handleCameraClipEdgePointerMove} onPointerUp={handleCameraClipEdgePointerUp} />
+          <span className="tl-piece-time">{formatTimeSecs(clip.timelineStart)} – {formatTimeSecs(clip.timelineStart + dur)}</span>
           <button
             type="button"
             className="tl-piece-delete"

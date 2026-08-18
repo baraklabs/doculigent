@@ -21,6 +21,7 @@ import { BackgroundEditPanel } from "../components/BackgroundEditPanel";
 import { SoundEditPanel } from "../components/SoundEditPanel";
 import { LayoutEditPanel } from "../components/LayoutEditPanel";
 import { PreviewCompositor, type PreviewCompositorHandle } from "../components/PreviewCompositor";
+import { ExportDialog } from "../components/ExportDialog";
 import { Timeline, type TimelineTool } from "../components/Timeline";
 import {
   useCreateEditProject,
@@ -469,6 +470,23 @@ export function EditPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  // Space — play/pause the preview, the same global-with-text-field-exclusion pattern as
+  // undo/redo and the tool shortcuts above. preventDefault unconditionally (not just when
+  // a text field is excluded) so Space doesn't *also* click whatever button happens to have
+  // focus — the play button itself included, which would otherwise double-toggle.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.code !== "Space" || e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
+      e.preventDefault();
+      compositorRef.current?.togglePlay();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   // Which project id the `project` query result has already been applied for, so a
   // background refetch (e.g. after rename) doesn't stomp on newer local edits.
   const loadedForIdRef = useRef<string | undefined>(undefined);
@@ -650,6 +668,8 @@ export function EditPage() {
     handleLayoutChange(DEFAULT_LAYOUT_EDIT_SETTINGS);
   }
 
+  const [exportOpen, setExportOpen] = useState(false);
+
   const [showMediaPaths, setShowMediaPaths] = useState(false);
   const mediaPathsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -747,12 +767,20 @@ export function EditPage() {
               </div>
             )}
           </div>
-          <button type="button" className="edit-topbar-btn primary">
+          <button type="button" className="edit-topbar-btn primary" onClick={() => setExportOpen(true)} disabled={!hasMedia}>
             <Upload size={15} />
             Export
           </button>
         </div>
       </div>
+
+      <ExportDialog
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        compositorRef={compositorRef}
+        layoutFormat={layout.format}
+        title={title}
+      />
 
       <div className="edit-body" ref={bodyRef}>
         {!hasMedia ? (

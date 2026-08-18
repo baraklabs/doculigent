@@ -176,6 +176,19 @@ export interface DoculigentApi {
     getMedia(id: string): Promise<EditProjectMedia>;
     delete(id: string): Promise<void>;
     deleteMany(ids: string[]): Promise<void>;
+    export(
+      exportId: string,
+      input: {
+        webmBytes: ArrayBuffer;
+        title: string;
+        durationSecs: number;
+        width: number;
+        height: number;
+        fps: number;
+      }
+    ): Promise<{ canceled: boolean; filePath?: string }>;
+    exportCancel(exportId: string): Promise<boolean>;
+    onExportProgress(callback: (progress: { exportId: string; percent: number }) => void): () => void;
   };
   library: {
     list(): Promise<Video[]>;

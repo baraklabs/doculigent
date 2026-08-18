@@ -72,6 +72,41 @@ export function remuxToMp4(
   );
 }
 
+export function transcodeExport(
+  inputWebmPath: string,
+  outputMp4Path: string,
+  width: number,
+  height: number,
+  fps: number,
+  onProgress?: ProgressHandler,
+  signal?: AbortSignal
+): Promise<void> {
+  return run(
+    [
+      "-y",
+      "-i",
+      inputWebmPath,
+      "-vf",
+      `scale=${width}:${height}:flags=lanczos,fps=${fps}`,
+      "-c:v",
+      "libx264",
+      "-preset",
+      "medium",
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "192k",
+      "-movflags",
+      "+faststart",
+      outputMp4Path,
+    ],
+    onProgress,
+    signal
+  );
+}
+
 export function convertToWav(
   inputWebmPath: string,
   outputWavPath: string,

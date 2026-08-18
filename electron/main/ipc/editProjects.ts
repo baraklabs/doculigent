@@ -1,4 +1,7 @@
-import { dialog, ipcMain } from "electron";
+import { app, dialog, ipcMain } from "electron";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { Channels } from "@shared/constants/channels";
 import type {
   BackgroundEditSettings,
@@ -13,6 +16,18 @@ import type {
 } from "@shared/types/models";
 import { NotFoundError } from "@shared/ipc/errors";
 import * as store from "../native/editProjectStore";
+import { FfmpegCancelledError, transcodeExport } from "../native/ffmpeg";
+
+interface ExportVideoInput {
+  webmBytes: ArrayBuffer;
+  title: string;
+  durationSecs: number;
+  width: number;
+  height: number;
+  fps: number;
+}
+
+const pendingExports = new Map<string, AbortController>();
 
 export function registerEditProjectsIpc(): void {
   ipcMain.handle(Channels.editProjects.list, async (): Promise<EditProject[]> => store.listEditProjects());
@@ -106,5 +121,55 @@ export function registerEditProjectsIpc(): void {
 
   ipcMain.handle(Channels.editProjects.deleteMany, async (_event, ids: string[]): Promise<void> => {
     store.deleteEditProjects(ids);
+  });
+
+  ipcMain.handle(
+    Channels.editProjects.export,
+    async (event, exportId: string, input: ExportVideoInput): Promise<{ canceled: boolean; filePath?: string }> => {
+      const safeTitle = input.title.replace(/[\\/:*?"<>|]+/g, " ").trim() || "Untitled project";
+      const result = await dialog.showSaveDialog({
+        title: "Export video",
+        defaultPath: path.join(app.getPath("videos"), `${safeTitle}.mp4`),
+        filters: [{ name: "MP4 Video", extensions: ["mp4"] }],
+      });
+      if (result.canceled || !result.filePath) return { canceled: true };
+
+      const tempWebm = path.join(os.tmpdir(), `export-${exportId}.webm`);
+      await fs.writeFile(tempWebm, Buffer.from(input.webmBytes));
+      const abort = new AbortController();
+      pendingExports.set(exportId, abort);
+      try {
+        await transcodeExport(
+          tempWebm,
+          result.filePath,
+          input.width,
+          input.height,
+          input.fps,
+          (secondsDone) => {
+            if (event.sender.isDestroyed() || input.durationSecs <= 0) return;
+            const percent = Math.max(0, Math.min(99, Math.round((secondsDone / input.durationSecs) * 100)));
+            event.sender.send(Channels.editProjects.exportProgress, { exportId, percent });
+          },
+          abort.signal
+        );
+        return { canceled: false, filePath: result.filePath };
+      } catch (e) {
+        if (e instanceof FfmpegCancelledError) {
+          await fs.rm(result.filePath, { force: true });
+          return { canceled: true };
+        }
+        throw e;
+      } finally {
+        pendingExports.delete(exportId);
+        await fs.rm(tempWebm, { force: true });
+      }
+    }
+  );
+
+  ipcMain.handle(Channels.editProjects.exportCancel, async (_event, exportId: string): Promise<boolean> => {
+    const abort = pendingExports.get(exportId);
+    if (!abort) return false;
+    abort.abort();
+    return true;
   });
 }

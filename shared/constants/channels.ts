@@ -108,6 +108,9 @@ export const Channels = {
     getMedia: "editProjects:getMedia",
     delete: "editProjects:delete",
     deleteMany: "editProjects:deleteMany",
+    export: "editProjects:export",
+    exportProgress: "editProjects:exportProgress",
+    exportCancel: "editProjects:exportCancel",
   },
   library: {
     list: "library:list",

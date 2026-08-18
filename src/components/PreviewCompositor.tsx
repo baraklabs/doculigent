@@ -59,8 +59,35 @@ interface PreviewCompositorProps {
   canRedo?: boolean;
 }
 
+export interface ExportCaptureResult {
+  blob: Blob;
+  durationSecs: number;
+  width: number;
+  height: number;
+  hasAudio: boolean;
+}
+
+export class ExportCancelledError extends Error {
+  constructor() {
+    super("export cancelled");
+    this.name = "ExportCancelledError";
+  }
+}
+
 export interface PreviewCompositorHandle {
   seekMs: (ms: number) => void;
+  togglePlay: () => void;
+  /** Captures the canvas exactly as shown in the preview — same camera/background/cursor/
+   *  zoom/cuts rendering, same audio source the Mute toggle governs — by rewinding to the
+   *  start and playing the whole edited timeline through in real time while recording it.
+   *  `fps` sets the capture rate; final export resolution/scaling is handled downstream
+   *  (see EditPage's export flow), since this always captures at the canvas's own native
+   *  pixel size. Returns a cancelable handle rather than a bare promise so a real-time,
+   *  potentially long capture can be aborted mid-flight. */
+  exportVideo: (opts: {
+    fps: number;
+    onProgress?: (fraction: number) => void;
+  }) => { promise: Promise<ExportCaptureResult>; cancel: () => void };
 }
 
 interface LoadedCursorIcon {
@@ -836,6 +863,11 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     // edited-timeline position every frame via the clips sequence, and that's what the
     // scrub bar needs to reflect, not screenVideo's own raw source-time progress.
     function onEnded() {
+      // isPlayingRef, not just the `playing` state — otherwise the draw loop (which reads
+      // the ref, not the state) still believes playback is active after screenVideo hits
+      // the *raw source's* natural end, and keeps trying to advance/resolve clips as if
+      // still playing.
+      isPlayingRef.current = false;
       setPlaying(false);
     }
     screenVideo.addEventListener("ended", onEnded);
@@ -922,15 +954,20 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       const timelineState = timelineRef.current;
       const sourceDurationMs = (screenVideo.duration || 0) * 1000;
       const clips = effectiveClips(timelineState.clips, sourceDurationMs);
+      // Computed up front (rather than down where the Camera track is otherwise resolved
+      // below) so its own rightmost edge can extend `totalMs` — a Camera piece dragged/
+      // trimmed past the end of the Clips track should grow the overall timeline to fit it,
+      // not get silently clipped off the end.
+      const cameraClips = effectiveClips(timelineState.cameraClips, sourceDurationMs);
       let currentMs = 0;
-      let totalMs = 0;
+      let totalMs = totalClipsExtentMs(cameraClips);
       let showScreenContent = false;
       const now = performance.now();
       const dtMs = Math.max(0, now - lastFrameAtRef.current);
       lastFrameAtRef.current = now;
 
       if (clips.length > 0) {
-        totalMs = totalClipsExtentMs(clips);
+        totalMs = Math.max(totalMs, totalClipsExtentMs(clips));
         let activeClip: TimelineClip | undefined = activeClipIdRef.current
           ? clips.find((c) => c.id === activeClipIdRef.current)
           : undefined;
@@ -939,7 +976,10 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
           const sourceMsNow = screenVideo.currentTime * 1000;
           const clipDur = activeClip.sourceEnd - activeClip.sourceStart;
           if (sourceMsNow >= activeClip.sourceEnd - 1) {
-            // Ran out of footage — resolve whatever covers the instant right after.
+            // Ran out of footage — resolve whatever covers the instant right after. If
+            // that's a real gap, editedMsRef/currentMs land exactly on the boundary here;
+            // the gap's own wall-clock advancement (below) picks it up next frame, rather
+            // than also advancing it a second time within this same frame.
             const boundaryEditedMs = activeClip.timelineStart + clipDur;
             const next = resolveClipAt(clips, boundaryEditedMs);
             if (next) {
@@ -955,9 +995,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
           } else {
             currentMs = activeClip.timelineStart + Math.max(0, sourceMsNow - activeClip.sourceStart);
           }
-        }
-
-        if (!activeClip) {
+        } else {
           // In a gap — advance by wall-clock time and check whether something now covers it.
           editedMsRef.current = Math.min(totalMs, editedMsRef.current + (isPlayingRef.current ? dtMs : 0));
           const found = resolveClipAt(clips, editedMsRef.current);
@@ -986,7 +1024,6 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       // piece boundary/gap crossing, same drift-tolerant approach as the screen clip
       // above, so the camera's own audio doesn't stutter from a re-seek every frame.
       const cameraVideo = cameraVideoRef.current;
-      const cameraClips = effectiveClips(timelineState.cameraClips, sourceDurationMs);
       const cameraResolved = resolveClipAt(cameraClips, currentMs);
       if ((cameraResolved?.clip.id ?? null) !== activeCameraClipIdRef.current && cameraVideo) {
         if (cameraResolved) {
@@ -1480,7 +1517,8 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     if (!screenVideo || !screenVideo.duration) return;
     const sourceDurationMs = screenVideo.duration * 1000;
     const clips = effectiveClips(timelineRef.current.clips, sourceDurationMs);
-    const totalMs = totalClipsExtentMs(clips);
+    const cameraClips = effectiveClips(timelineRef.current.cameraClips, sourceDurationMs);
+    const totalMs = Math.max(totalClipsExtentMs(clips), totalClipsExtentMs(cameraClips));
     editedMsRef.current = Math.max(0, Math.min(totalMs, editedMs));
     const resolved = resolveClipAt(clips, editedMsRef.current);
     if (resolved) {
@@ -1492,7 +1530,6 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       screenVideo.pause();
       activeClipIdRef.current = null;
     }
-    const cameraClips = effectiveClips(timelineRef.current.cameraClips, sourceDurationMs);
     const cameraResolved = resolveClipAt(cameraClips, editedMsRef.current);
     if (cameraVideo) {
       if (cameraResolved) {
@@ -1509,9 +1546,131 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     seekToEditedMs(fraction * duration * 1000);
   }
 
+  function pickExportMimeType(): string {
+    const candidates = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+    return candidates.find((c) => MediaRecorder.isTypeSupported(c)) ?? "video/webm";
+  }
+
+  // Captures the actual canvas as a real-time recording — the most reliable way to
+  // guarantee the export pixel-matches the preview, since it's literally the same canvas
+  // element the draw loop above already renders every frame, rather than a second,
+  // separately-maintained render path that could drift out of sync with it. Audio is
+  // pulled from whichever element the Mute toggle already governs (see mutedRef's own
+  // comment) via HTMLMediaElement.captureStream(), not re-mixed through Web Audio.
+  function exportVideo(opts: { fps: number; onProgress?: (fraction: number) => void }): {
+    promise: Promise<ExportCaptureResult>;
+    cancel: () => void;
+  } {
+    const canvas = canvasRef.current;
+    const screenVideo = screenVideoRef.current;
+    if (!canvas || !screenVideo || !screenVideo.duration) {
+      return { promise: Promise.reject(new Error("Preview isn't ready yet.")), cancel: () => {} };
+    }
+
+    let cancelled = false;
+    const cancel = () => {
+      cancelled = true;
+    };
+
+    const promise = (async (): Promise<ExportCaptureResult> => {
+      const cameraVideo = cameraVideoRef.current;
+      screenVideo.pause();
+      cameraVideo?.pause();
+      isPlayingRef.current = false;
+      setPlaying(false);
+      seekToEditedMs(0);
+      // Let the draw loop settle on the rewound position for a couple of frames before
+      // capture starts, so the recording's first frame isn't whatever was on screen right
+      // before the seek.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      if (cancelled) throw new ExportCancelledError();
+
+      const sourceDurationMs = screenVideo.duration * 1000;
+      const clips = effectiveClips(timelineRef.current.clips, sourceDurationMs);
+      const cameraClips = effectiveClips(timelineRef.current.cameraClips, sourceDurationMs);
+      const totalMs = Math.max(totalClipsExtentMs(clips), totalClipsExtentMs(cameraClips));
+      if (totalMs <= 0) throw new Error("There's nothing on the timeline to export.");
+
+      const canvasStream = canvas.captureStream(opts.fps);
+      // Same source the Mute toggle already governs (see mutedRef's declaration above) —
+      // whichever element actually carries the recorded audio.
+      const audioSource = (cameraFilePath ? cameraVideo : screenVideo) as
+        | (HTMLVideoElement & { captureStream?: () => MediaStream })
+        | null;
+      const hasAudio = !mutedRef.current && !!audioSource?.captureStream;
+      const tracks: MediaStreamTrack[] = [...canvasStream.getVideoTracks()];
+      if (hasAudio && audioSource?.captureStream) tracks.push(...audioSource.captureStream().getAudioTracks());
+
+      const recorder = new MediaRecorder(new MediaStream(tracks), {
+        mimeType: pickExportMimeType(),
+        videoBitsPerSecond: 16_000_000,
+      });
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+      const stopped = new Promise<Blob>((resolve) => {
+        recorder.onstop = () => resolve(new Blob(chunks, { type: "video/webm" }));
+      });
+
+      // Piggybacks on the draw loop's own per-frame time callback (rather than polling)
+      // to both report progress and detect "reached the end" — the same condition the
+      // loop itself uses to stop playback at the end of the timeline (see its own
+      // `editedMsRef.current >= totalMs` check).
+      const previousOnTimeUpdate = onTimeUpdateRef.current;
+      let reachedEnd = false;
+      onTimeUpdateRef.current = (currentMs, durationMs, srcDurationMs) => {
+        previousOnTimeUpdate?.(currentMs, durationMs, srcDurationMs);
+        opts.onProgress?.(durationMs > 0 ? Math.min(1, currentMs / durationMs) : 0);
+        if (durationMs > 0 && currentMs >= durationMs - 1 && !isPlayingRef.current) reachedEnd = true;
+      };
+
+      recorder.start(250);
+      isPlayingRef.current = true;
+      setPlaying(true);
+      if (activeClipIdRef.current !== null) screenVideo.play().catch(() => {});
+      if (activeCameraClipIdRef.current !== null) cameraVideo?.play().catch(() => {});
+
+      try {
+        await new Promise<void>((resolve) => {
+          const tick = () => {
+            if (cancelled || reachedEnd) {
+              resolve();
+              return;
+            }
+            requestAnimationFrame(tick);
+          };
+          tick();
+        });
+      } finally {
+        onTimeUpdateRef.current = previousOnTimeUpdate;
+      }
+
+      screenVideo.pause();
+      cameraVideo?.pause();
+      isPlayingRef.current = false;
+      setPlaying(false);
+
+      if (recorder.state !== "inactive") recorder.stop();
+      const blob = await stopped;
+      canvasStream.getTracks().forEach((t) => t.stop());
+
+      if (cancelled) throw new ExportCancelledError();
+      return { blob, durationSecs: totalMs / 1000, width: canvas.width, height: canvas.height, hasAudio };
+    })();
+
+    return { promise, cancel };
+  }
+
   useImperativeHandle(ref, () => ({
     seekMs(ms: number) {
       seekToEditedMs(ms);
+    },
+    togglePlay() {
+      togglePlay();
+    },
+    exportVideo(opts: { fps: number; onProgress?: (fraction: number) => void }) {
+      return exportVideo(opts);
     },
   }));
 
@@ -1848,7 +2007,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         </div>
       </div>
       <div className="preview-controls">
-        <button type="button" className="preview-play-btn" onClick={togglePlay}>
+        <button type="button" className="preview-play-btn" onClick={togglePlay} title={`${playing ? "Pause" : "Play"} (Space)`}>
           {playing ? <Pause size={14} /> : <Play size={14} />}
         </button>
         <input
