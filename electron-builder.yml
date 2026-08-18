@@ -51,15 +51,15 @@ mac:
         - "**/*"
         - "!.arch-tmp"
         - "!.arch-tmp/**"
-  universal:
-    # Without this, @electron/universal's merge step errors on the helper above — it
-    # sanity-checks every executable file it finds at the same path in both the
-    # separately-packaged x64 and arm64 app bundles, and by default assumes identical
-    # content there is a mistake (confirmed in CI: "Detected file ... that's the same in
-    # both x64 and arm64 builds and not covered by the x64ArchFiles rule"). This is
-    # exactly the documented opt-out for a file that's already a lipo-merged universal
-    # binary rather than something needing arch-specific merging.
-    x64ArchFiles: "Contents/Resources/native-bin/doculigent-screencapturekit-helper"
+  # Without this, @electron/universal's merge step errors on the helper above — it
+  # sanity-checks every executable file it finds at the same path in both the
+  # separately-packaged x64 and arm64 app bundles, and by default assumes identical
+  # content there is a mistake (confirmed in CI: "Detected file ... that's the same in
+  # both x64 and arm64 builds and not covered by the x64ArchFiles rule"). This is the
+  # documented opt-out for a file that's already a lipo-merged universal binary rather
+  # than something needing arch-specific merging. A direct property of mac: in this
+  # electron-builder version (24.13.3), not nested under mac.universal.
+  x64ArchFiles: "Contents/Resources/native-bin/doculigent-screencapturekit-helper"
 linux:
   target:
     - deb
