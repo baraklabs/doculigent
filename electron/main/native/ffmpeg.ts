@@ -165,6 +165,29 @@ export function copyToMp4(
   return run(["-y", "-i", inputPath, "-c", "copy", outputMp4Path], onProgress, signal);
 }
 
+/** macOS-only normalization pass — native/screenCapture.ts's avfoundation capture uses
+ *  -fps_mode vfr at capture time to avoid a runaway frame-duplication bug (real-time
+ *  encoding pressure against avfoundation's irregular, damage-driven frame delivery), but
+ *  everything downstream (overlayCameraBubble, overlayCursorTrack) assumes a predictable
+ *  CFR stream — overlayCursorTrack in particular precomputes its overlay frame count as
+ *  durationSecs * 30 and pipes exactly that many raw frames into ffmpeg's stdin, which
+ *  faults with EPIPE the moment the primary (VFR, frame-count-mismatched) video input
+ *  runs out of frames first (confirmed). This is a cheap, non-realtime, bounded-by-file-
+ *  length pass — unlike the live capture, there's no risk of the same runaway
+ *  duplication here, since it's just re-encoding an already-finished file. */
+export function normalizeToCfr(
+  inputPath: string,
+  outputMp4Path: string,
+  onProgress?: ProgressHandler,
+  signal?: AbortSignal
+): Promise<void> {
+  return run(
+    ["-y", "-i", inputPath, "-vf", "fps=30", "-c:v", "libx264", "-preset", "ultrafast", "-an", outputMp4Path],
+    onProgress,
+    signal
+  );
+}
+
 export function muxScreenWithAudio(
   screenPath: string,
   audioPath: string,

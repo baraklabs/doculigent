@@ -12,6 +12,7 @@ import {
   copyToMp4,
   FfmpegCancelledError,
   muxScreenWithAudio,
+  normalizeToCfr,
   overlayCameraBubble,
   remuxToMp4,
   transcodeScreenRecording,
@@ -151,8 +152,20 @@ async function buildFinalMp4(
     const screenKeepPath = path.join(metaDir, "screen.mp4");
 
     if (input.screenFilePath) {
-      // Native (gdigrab) — already an mp4, already cropped/scaled at capture time.
-      await moveFile(input.screenFilePath, screenKeepPath);
+      if (process.platform === "darwin") {
+        // macOS's native avfoundation capture is intentionally variable-frame-rate (see
+        // native/screenCapture.ts's -fps_mode vfr) — normalize to a real CFR 30fps file
+        // here so overlayCameraBubble/overlayCursorTrack downstream can keep assuming a
+        // predictable frame count, same as Windows' native gdigrab output already is.
+        const tempNativeScreen = path.join(os.tmpdir(), `${id}-screen-native.mp4`);
+        await moveFile(input.screenFilePath, tempNativeScreen);
+        cleanupPaths.push(tempNativeScreen);
+        console.log("[recording] normalizing mac native capture to CFR", { tempNativeScreen });
+        await normalizeToCfr(tempNativeScreen, screenKeepPath, onProgress, signal);
+      } else {
+        // Native (gdigrab) — already an mp4, already cropped/scaled and CFR at capture time.
+        await moveFile(input.screenFilePath, screenKeepPath);
+      }
     } else {
       // Non-native fallback — a raw, uncropped/unscaled getUserMedia recording of the
       // *whole* display (there's no way to crop at the capture source itself), transcoded
