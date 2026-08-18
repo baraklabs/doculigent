@@ -71,6 +71,10 @@
   width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
   font-size: 34px; background: linear-gradient(135deg, #4338ca 0%, #7c3aed 55%, #0f766e 100%);
 }
+.thumb-project {
+  width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+  color: #fff; background: linear-gradient(135deg, #7c3aed 0%, #a855f7 55%, #4338ca 100%);
+}
 .thumb-badge {
   position: absolute; bottom: 6px; left: 6px; font-size: 10px; font-weight: 600;
   color: #fff; background: rgba(0, 0, 0, .55); padding: 2px 7px; border-radius: 999px;
@@ -90,6 +94,7 @@
 .icon-btn:hover:not(:disabled) { transform: translateY(-1px); opacity: .75; }
 .icon-btn:disabled { opacity: .35; transform: none; }
 .icon-btn-folder { color: var(--accent); }
+.icon-btn-open { color: #7c3aed; }
 .icon-btn-transcribe { color: #2563eb; }
 .icon-btn-rename { color: #b45309; }
 .icon-btn-share { color: #0f766e; }
@@ -169,3 +174,31 @@
 }
 .shared-tab.active { color: var(--section-accent); border-color: var(--section-accent); background: var(--section-tint); }
 .shared-empty { padding: 32px 8px; text-align: center; }
+
+/* Rendered outside .library-list-panel (as a page-level modal), so it can't see that
+   panel's --section-accent/--section-tint — use the global accent instead. */
+.create-project-source-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
+.create-project-source-tile {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  aspect-ratio: 1; min-height: 84px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  color: var(--muted); font-size: 12px; font-weight: 600;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease, color 140ms ease;
+}
+.create-project-source-tile:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+.create-project-source-tile.active {
+  border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); background: var(--accent-soft); color: var(--accent);
+}
+.create-project-file-options { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.create-project-file-options button { display: flex; align-items: center; gap: 8px; justify-content: flex-start; }
+.create-project-source-list {
+  display: flex; flex-direction: column; gap: 6px; margin-top: 4px;
+  max-height: 260px; overflow-y: auto;
+}
+.create-project-source-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 9px 12px; text-align: left; font-size: 13px;
+}
+.create-project-source-item:hover:not(:disabled) { border-color: var(--accent); }
+.create-project-source-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

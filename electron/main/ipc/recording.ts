@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { Channels } from "@shared/constants/channels";
 import type { CameraTrackMetadata, CursorMetadata, OverlayConfig, Transcript, Video } from "@shared/types/models";
 import { cameraBubbleRectForShape, OUTPUT_HEIGHT, OUTPUT_WIDTH } from "@shared/lib/cameraBubble";
-import { ensureSaveDir } from "../native/paths";
+import { meetingsRoot, recordingsRoot } from "../native/paths";
 import {
   convertToWav,
   copyToMp4,
@@ -242,6 +242,7 @@ async function finishRecordingSave(
       transcript: null,
       summary: null,
       source: input.source,
+      cameraBubbleConfig: input.sideClip?.hasVideo ? getCameraBubbleConfig() : undefined,
     };
     insertVideo(video);
     if (!sender.isDestroyed()) sender.send(Channels.recording.saveCompleted, video);
@@ -259,7 +260,7 @@ async function finishRecordingSave(
 
 export function registerRecordingIpc(): void {
   ipcMain.handle(Channels.recording.save, async (event, input: SaveRecordingInput): Promise<{ id: string }> => {
-    const saveDir = ensureSaveDir();
+    const saveDir = input.source === "meeting" ? meetingsRoot() : recordingsRoot();
     const id = randomUUID();
     const recDir = recordingDir(saveDir, id);
     await fs.mkdir(recDir, { recursive: true });
@@ -278,7 +279,7 @@ export function registerRecordingIpc(): void {
   });
 
   ipcMain.handle(Channels.recording.saveAudio, async (_event, input: SaveAudioInput): Promise<Video> => {
-    const saveDir = ensureSaveDir();
+    const saveDir = meetingsRoot();
     const id = randomUUID();
     const recDir = recordingDir(saveDir, id);
     await fs.mkdir(recDir, { recursive: true });

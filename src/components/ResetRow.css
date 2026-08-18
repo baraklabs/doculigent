@@ -1,0 +1,23 @@
+.reset-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; }
+.reset-row-group { display: flex; align-items: center; gap: 8px; }
+
+/* "Original" (as recorded) vs "default" (generic preset) get their own colors so the
+ *  four reset controls stay visually distinct at a glance, and stay consistent whichever
+ *  tab you're on. */
+.reset-row-btn {
+  display: flex; align-items: center; gap: 6px; justify-content: center;
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 600;
+}
+.reset-row-btn.is-original:hover { border-color: var(--accent); color: var(--accent); }
+.reset-row-btn.is-default:hover { border-color: var(--reset-default); color: var(--reset-default); }
+
+.reset-row-icon-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0; flex: none;
+  background: transparent; border: 1px solid var(--border); border-radius: 8px;
+}
+.reset-row-icon-btn.is-original { color: var(--accent); }
+.reset-row-icon-btn.is-original:hover { border-color: var(--accent); background: var(--accent-soft); }
+.reset-row-icon-btn.is-default { color: var(--reset-default); }
+.reset-row-icon-btn.is-default:hover { border-color: var(--reset-default); background: var(--reset-default-soft); }

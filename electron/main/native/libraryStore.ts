@@ -31,6 +31,7 @@ function normalizeVideo(raw: Partial<Video>): Video {
     summary: (raw.summary as Summary | null) ?? null,
     source: raw.source === "meeting" ? "meeting" : "record",
     syncedFromTeamFileId: raw.syncedFromTeamFileId,
+    cameraBubbleConfig: raw.cameraBubbleConfig,
   };
 }
 

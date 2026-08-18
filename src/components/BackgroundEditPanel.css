@@ -1,0 +1,63 @@
+.background-edit-panel {
+  flex: 1; min-width: 0; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 18px; padding: 16px;
+}
+.background-edit-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.background-edit-section { display: flex; flex-direction: column; gap: 8px; }
+
+.background-fill-grid { display: grid; grid-template-columns: repeat(auto-fill, 64px); gap: 6px; width: 100%; }
+.background-fill-tile {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  width: 64px; height: 64px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  color: var(--muted); font-size: 11px; font-weight: 600;
+}
+.background-fill-tile:hover { border-color: var(--accent); color: var(--text); }
+.background-fill-tile.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+
+.background-swatch-grid { display: grid; grid-template-columns: repeat(auto-fill, 48px); gap: 8px; width: 100%; }
+.background-swatch {
+  width: 48px; height: 48px; border-radius: 8px; border: 2px solid var(--border); padding: 0;
+  box-shadow: 0 1px 2px rgba(20, 20, 40, .08); background-size: cover; background-position: center;
+}
+.background-swatch:hover { border-color: var(--accent); }
+.background-swatch.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+
+.background-swatch-import {
+  display: flex; align-items: center; justify-content: center;
+  border-style: dashed; color: var(--muted); background-size: cover; background-position: center;
+}
+.background-swatch-import:hover { color: var(--accent); border-color: var(--accent); }
+.background-swatch-import.active { border-style: solid; }
+.background-swatch-import-spin { animation: background-swatch-import-spin 900ms linear infinite; }
+@keyframes background-swatch-import-spin { to { transform: rotate(360deg); } }
+
+/* Color/gradient "custom" swatches — the visible tile is styled to look like every
+ * other swatch; the actual <input type="color"> is stretched invisibly on top so
+ * clicking anywhere on the tile opens the native color picker. */
+.background-swatch-custom {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  border-style: dashed; color: var(--muted); cursor: pointer;
+}
+.background-swatch-custom:hover { color: var(--accent); border-color: var(--accent); }
+.background-swatch-custom.active { border-style: solid; }
+.background-swatch-custom input[type="color"] {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; border: none; padding: 0; cursor: pointer;
+}
+
+.background-swatch-gradient-custom {
+  position: relative; display: flex; border-style: dashed; overflow: hidden; padding: 0;
+}
+.background-swatch-gradient-custom:hover { border-color: var(--accent); }
+.background-swatch-gradient-custom.active { border-style: solid; }
+.background-swatch-gradient-custom input[type="color"] {
+  flex: 1 1 50%; height: 100%; min-width: 0;
+  opacity: 0; border: none; padding: 0; cursor: pointer;
+}
+
+.background-edit-slider-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.background-edit-slider-row .background-edit-label { flex: none; min-width: 100px; }
+.background-edit-slider-row input[type="range"] { flex: 1 1 90px; min-width: 60px; accent-color: var(--accent); }
+.background-edit-slider-row input[type="range"]:disabled { opacity: .4; }
+.background-edit-slider-value { flex: none; width: 40px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); }
+

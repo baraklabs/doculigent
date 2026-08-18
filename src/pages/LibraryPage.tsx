@@ -10,12 +10,16 @@ import {
   Check,
   X,
   FolderOpen,
+  FolderKanban,
+  SquarePlay,
+  FileUp,
+  Plus,
   Pencil,
   Trash2,
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
-import type { TranscriptSegment, Video } from "@shared/types/models";
+import type { EditProject, EditProjectSource, TranscriptSegment, Video } from "@shared/types/models";
 import { mediaUrl } from "@shared/constants/media";
 import { DEFAULT_TRANSCRIPTION_LANGUAGE, TRANSCRIPTION_LANGUAGES } from "@shared/constants/languages";
 import { WHISPER_MODELS } from "@shared/constants/whisperModels";
@@ -30,6 +34,7 @@ import {
   useVideo,
   useVideos,
 } from "../hooks/useVideos";
+import { useCreateEditProject, useDeleteEditProject, useDeleteEditProjects, useEditProjects } from "../hooks/useEditProjects";
 import { useLlmProfiles } from "../hooks/useLlmProfiles";
 import { useAutoTranscribeSettings } from "../hooks/useAutoTranscribeSettings";
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
@@ -63,6 +68,7 @@ const SECTIONS = [
   { id: "videos", label: "Videos", icon: <Clapperboard size={16} />, accent: "#5b4bf5", tint: "rgba(91, 75, 245, .09)" },
   { id: "meeting", label: "Meeting", icon: <Mic size={16} />, accent: "#0284c7", tint: "rgba(14, 165, 233, .11)" },
   { id: "team", label: "Team", icon: <Users size={16} />, accent: "#0f766e", tint: "rgba(15, 118, 110, .1)" },
+  { id: "projects", label: "Projects", icon: <FolderKanban size={16} />, accent: "#7c3aed", tint: "rgba(124, 58, 237, .1)" },
   { id: "shared", label: "Shared", icon: <Link2 size={16} />, accent: "#db2777", tint: "rgba(236, 72, 153, .1)" },
 ] as const;
 type SectionId = (typeof SECTIONS)[number]["id"];
@@ -104,6 +110,8 @@ export function LibraryPage() {
   const [folderError, setFolderError] = useState<{ id: string; message: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Video | null>(null);
   const [bulkDeleteScope, setBulkDeleteScope] = useState<"all" | "selected" | null>(null);
+  const [projectDeleteTarget, setProjectDeleteTarget] = useState<EditProject | null>(null);
+  const [projectBulkDeleteScope, setProjectBulkDeleteScope] = useState<"all" | "selected" | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [uploadingKind, setUploadingKind] = useState<"video" | "audio" | null>(null);
   const [importProgress, setImportProgress] = useState<{ percent: number; fileIndex: number; totalFiles: number } | null>(
@@ -129,6 +137,18 @@ export function LibraryPage() {
   const setVideoTranscript = useSetVideoTranscript();
   const importVideos = useImportVideos();
   const { data: autoTranscribe } = useAutoTranscribeSettings();
+
+  const { data: editProjects = [], isLoading: projectsLoading } = useEditProjects();
+  const createEditProjectMut = useCreateEditProject();
+  const deleteEditProjectMut = useDeleteEditProject();
+  const deleteEditProjectsMut = useDeleteEditProjects();
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [createSource, setCreateSource] = useState<"library" | "meeting" | "file">("library");
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [createProjectError, setCreateProjectError] = useState<string | null>(null);
+  const sectionProjects = editProjects.filter(
+    (p) => !query.trim() || p.title.toLowerCase().includes(query.trim().toLowerCase())
+  );
 
   const sectionVideos =
     section === "meeting" ? videos.filter((v) => v.source === "meeting") : videos.filter((v) => v.source === "record");
@@ -304,6 +324,10 @@ export function LibraryPage() {
   }
 
   function selectAll() {
+    if (section === "projects") {
+      setSelectedIds(new Set(sectionProjects.map((p) => p.id)));
+      return;
+    }
     setSelectedIds(new Set(sectionVideos.map((v) => v.id)));
   }
 
@@ -312,6 +336,13 @@ export function LibraryPage() {
   }
 
   function handleBulkDelete(scope: "all" | "selected") {
+    if (section === "projects") {
+      const hasTargets =
+        scope === "all" ? sectionProjects.length > 0 : sectionProjects.some((p) => selectedIds.has(p.id));
+      if (!hasTargets) return;
+      setProjectBulkDeleteScope(scope);
+      return;
+    }
     const hasTargets =
       scope === "all" ? sectionVideos.length > 0 : sectionVideos.some((v) => selectedIds.has(v.id));
     if (!hasTargets) return;
@@ -335,9 +366,66 @@ export function LibraryPage() {
     setBulkDeleteScope(null);
   }
 
+  const projectBulkDeleteTargetIds =
+    projectBulkDeleteScope === "all"
+      ? sectionProjects.map((p) => p.id)
+      : projectBulkDeleteScope === "selected"
+        ? sectionProjects.filter((p) => selectedIds.has(p.id)).map((p) => p.id)
+        : [];
+
+  function confirmProjectBulkDelete() {
+    if (projectBulkDeleteTargetIds.length === 0) {
+      setProjectBulkDeleteScope(null);
+      return;
+    }
+    deleteEditProjectsMut.mutate(projectBulkDeleteTargetIds);
+    setSelectedIds(new Set());
+    setProjectBulkDeleteScope(null);
+  }
+
+  function openCreateProject() {
+    setCreateProjectError(null);
+    setCreateSource("library");
+    setCreateProjectOpen(true);
+  }
+
+  function closeCreateProject() {
+    if (creatingProject) return;
+    setCreateProjectOpen(false);
+    setCreateProjectError(null);
+  }
+
+  async function finishCreateProject(title: string, source?: EditProjectSource) {
+    setCreatingProject(true);
+    setCreateProjectError(null);
+    try {
+      const created = await createEditProjectMut.mutateAsync({ title, source });
+      setCreateProjectOpen(false);
+      navigate(`/edit/${created.id}`);
+    } catch (e) {
+      setCreateProjectError(friendlyErrorMessage(e));
+    } finally {
+      setCreatingProject(false);
+    }
+  }
+
+  async function handleCreateFromFile(kind: "video" | "audio") {
+    setCreateProjectError(null);
+    const filePaths = await LibraryService.pickFiles(kind, false);
+    if (filePaths.length === 0) return;
+    const base = fileName(filePaths[0]).replace(/\.[^./\\]+$/, "");
+    await finishCreateProject(base || "Untitled project", { kind: "file", filePath: filePaths[0] });
+  }
+
+  const libraryVideosForCreate = videos.filter((v) => v.source === "record");
+  const meetingVideosForCreate = videos.filter((v) => v.source === "meeting");
+
   const activeSection = SECTIONS.find((s) => s.id === section)!;
   const canBulkDelete = section === "videos" || section === "meeting";
-  const selectedCount = sectionVideos.filter((v) => selectedIds.has(v.id)).length;
+  const selectedCount =
+    section === "projects"
+      ? sectionProjects.filter((p) => selectedIds.has(p.id)).length
+      : sectionVideos.filter((v) => selectedIds.has(v.id)).length;
 
   return (
     <div className="library-layout">
@@ -445,6 +533,117 @@ export function LibraryPage() {
               </div>
 
               <TeamsSection />
+            </>
+          ) : section === "projects" ? (
+            <>
+              <div className="library-section-head">
+                <span className="library-section-icon">{activeSection.icon}</span>
+                <div>
+                  <h1>Projects</h1>
+                  <p className="muted">Edit projects, stored locally — open one to keep working.</p>
+                </div>
+                <button type="button" className="library-upload-btn" onClick={openCreateProject}>
+                  <Plus size={16} />
+                  New Project
+                </button>
+              </div>
+
+              <div className="library-toolbar">
+                <input
+                  type="search"
+                  placeholder="Search projects…"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+                <button type="button" onClick={selectAll} disabled={sectionProjects.length === 0}>
+                  Select All
+                </button>
+                <button type="button" onClick={deselectAll} disabled={selectedCount === 0}>
+                  Deselect All
+                </button>
+                <span className="muted library-selection-count">
+                  {selectedCount > 0 ? `${selectedCount} selected` : ""}
+                </span>
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={selectedCount === 0}
+                  onClick={() => handleBulkDelete("selected")}
+                >
+                  Delete Selected
+                </button>
+                <button
+                  type="button"
+                  className="danger library-delete-all"
+                  disabled={sectionProjects.length === 0}
+                  onClick={() => handleBulkDelete("all")}
+                >
+                  Delete All
+                </button>
+              </div>
+
+              {projectsLoading && <p className="muted">Loading…</p>}
+              {!projectsLoading && sectionProjects.length === 0 && (
+                <p className="muted">No projects yet — head to the Edit tab to start one.</p>
+              )}
+
+              <div className="library-grid">
+                {sectionProjects.map((p) => (
+                  <div
+                    key={p.id}
+                    className={selectedIds.has(p.id) ? "video-card selected" : "video-card"}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => navigate(`/edit/${p.id}`)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") navigate(`/edit/${p.id}`);
+                    }}
+                  >
+                    <div className="thumb">
+                      <label className="video-card-select" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(p.id)}
+                          onChange={() => toggleSelect(p.id)}
+                        />
+                      </label>
+                      <div className="thumb-project">
+                        <FolderKanban size={32} />
+                      </div>
+                    </div>
+
+                    <div className="meta">
+                      <h3>{p.title}</h3>
+                      <p className="muted sub">Updated {new Date(p.updatedAt).toLocaleDateString()}</p>
+                    </div>
+
+                    <div className="video-card-icons">
+                      <button
+                        type="button"
+                        title="Open in Editor"
+                        className="icon-btn icon-btn-open"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/edit/${p.id}`);
+                        }}
+                      >
+                        <SquarePlay size={20} />
+                      </button>
+                      <button
+                        type="button"
+                        title="Delete project"
+                        className="icon-btn icon-btn-delete"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setProjectDeleteTarget(p);
+                        }}
+                      >
+                        <Trash2 size={20} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </>
           ) : (
             <>
@@ -712,6 +911,130 @@ export function LibraryPage() {
               </button>
               <button type="button" className="danger" onClick={() => confirmBulkDelete(false)}>
                 Delete from Disk
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {projectDeleteTarget && (
+        <div className="modal-backdrop" onClick={() => setProjectDeleteTarget(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Delete "{projectDeleteTarget.title}"?</h2>
+            <p className="muted">This deletes the project and its files. This can't be undone.</p>
+            <div className="actions modal-actions">
+              <button type="button" onClick={() => setProjectDeleteTarget(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => {
+                  deleteEditProjectMut.mutate(projectDeleteTarget.id);
+                  setProjectDeleteTarget(null);
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {projectBulkDeleteScope && (
+        <div className="modal-backdrop" onClick={() => setProjectBulkDeleteScope(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>
+              Delete {projectBulkDeleteTargetIds.length}{" "}
+              {projectBulkDeleteTargetIds.length === 1 ? "project" : "projects"}?
+            </h2>
+            <p className="muted">This can't be undone.</p>
+            <div className="actions modal-actions">
+              <button type="button" onClick={() => setProjectBulkDeleteScope(null)}>
+                Cancel
+              </button>
+              <button type="button" className="danger" onClick={confirmProjectBulkDelete}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {createProjectOpen && (
+        <div className="modal-backdrop" onClick={closeCreateProject}>
+          <div className="modal create-project-modal" onClick={(e) => e.stopPropagation()}>
+            <h2>New Project</h2>
+            <p className="muted">
+              Start from an existing recording or a file — the project name is generated from what you pick.
+            </p>
+
+            <div className="create-project-source-picker">
+              <button
+                type="button"
+                className={createSource === "library" ? "create-project-source-tile active" : "create-project-source-tile"}
+                onClick={() => setCreateSource("library")}
+              >
+                <Clapperboard size={48} />
+                <span>Videos</span>
+              </button>
+              <button
+                type="button"
+                className={createSource === "meeting" ? "create-project-source-tile active" : "create-project-source-tile"}
+                onClick={() => setCreateSource("meeting")}
+              >
+                <Mic size={48} />
+                <span>Meeting</span>
+              </button>
+              <button
+                type="button"
+                className={createSource === "file" ? "create-project-source-tile active" : "create-project-source-tile"}
+                onClick={() => setCreateSource("file")}
+              >
+                <FileUp size={48} />
+                <span>File</span>
+              </button>
+            </div>
+
+            {createSource === "file" ? (
+              <div className="create-project-file-options">
+                <button type="button" disabled={creatingProject} onClick={() => handleCreateFromFile("video")}>
+                  <Clapperboard size={16} />
+                  Choose video file…
+                </button>
+                <button type="button" disabled={creatingProject} onClick={() => handleCreateFromFile("audio")}>
+                  <Mic size={16} />
+                  Choose audio file…
+                </button>
+              </div>
+            ) : (
+              <div className="create-project-source-list">
+                {(createSource === "library" ? libraryVideosForCreate : meetingVideosForCreate).map((v) => (
+                  <button
+                    key={v.id}
+                    type="button"
+                    className="create-project-source-item"
+                    disabled={creatingProject}
+                    onClick={() => finishCreateProject(v.title, { kind: "video", videoId: v.id })}
+                  >
+                    <span className="create-project-source-title">{v.title}</span>
+                    <span className="muted">{new Date(v.createdAt).toLocaleDateString()}</span>
+                  </button>
+                ))}
+                {(createSource === "library" ? libraryVideosForCreate : meetingVideosForCreate).length === 0 && (
+                  <p className="muted">
+                    {createSource === "library" ? "No videos in your library yet." : "No meetings recorded yet."}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {creatingProject && <p className="muted">Creating…</p>}
+            {createProjectError && <p className="error">{createProjectError}</p>}
+
+            <div className="actions modal-actions">
+              <button type="button" onClick={closeCreateProject} disabled={creatingProject}>
+                Cancel
               </button>
             </div>
           </div>

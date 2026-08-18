@@ -11,6 +11,7 @@ let bindAttempted = false;
 let user32: LibraryHandle | null = null;
 let gdi32: LibraryHandle | null = null;
 let getCursorInfoFn: Fn | null = null;
+let getAsyncKeyStateFn: Fn | null = null;
 let getIconInfoFn: Fn | null = null;
 let getObjectWFn: Fn | null = null;
 let getDIBitsFn: Fn | null = null;
@@ -71,6 +72,7 @@ function bind(): boolean {
     getCursorInfoFn = user32.func("__stdcall", "GetCursorInfo", "bool", [
       koffi.out(koffi.pointer(CURSORINFO)),
     ]) as Fn;
+    getAsyncKeyStateFn = user32.func("__stdcall", "GetAsyncKeyState", "int16", ["int32"]) as Fn;
     getIconInfoFn = user32.func("__stdcall", "GetIconInfo", "bool", [
       "void *",
       koffi.out(koffi.pointer(ICONINFO)),
@@ -113,6 +115,29 @@ export function sampleCursorShape(): CursorShape | null {
     return { key: String(ci.hCursor), hCursor: ci.hCursor };
   } catch {
     return null;
+  }
+}
+
+const VK_LBUTTON = 0x01;
+
+export interface LeftButtonState {
+  /** Physically held down right now (high bit of GetAsyncKeyState). */
+  isDown: boolean;
+  /** Pressed at any point since the previous call (low bit) — catches clicks that
+   *  fully press-and-release between two polls, which a currently-down check alone
+   *  would miss at typical sampling rates. */
+  wasPressed: boolean;
+}
+
+/** System-wide left mouse button state (not just within the app). Each call consumes
+ *  the "since last call" bit, so this must be the only poller of VK_LBUTTON. */
+export function pollLeftButton(): LeftButtonState {
+  if (!bind() || !getAsyncKeyStateFn) return { isDown: false, wasPressed: false };
+  try {
+    const state = getAsyncKeyStateFn(VK_LBUTTON) as number;
+    return { isDown: (state & 0x8000) !== 0, wasPressed: (state & 0x0001) !== 0 };
+  } catch {
+    return { isDown: false, wasPressed: false };
   }
 }
 

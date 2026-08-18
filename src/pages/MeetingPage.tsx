@@ -376,13 +376,10 @@ export function MeetingPage() {
     }
   }, [micEnabled, settingsLoaded]);
 
-  // Same save location the Record tab uses (recording.saveAudio writes into it too, see
-  // electron/main/ipc/recording.ts) — editable here too so you don't have to switch tabs
-  // just to change where meetings land.
   const [saveDir, setSaveDir] = useState("");
   const [pickingDir, setPickingDir] = useState(false);
   useEffect(() => {
-    window.api.settings.getSaveDir().then(setSaveDir).catch(() => { });
+    window.api.settings.getMeetingsDir().then(setSaveDir).catch(() => { });
   }, []);
 
   async function browseSaveDir() {
@@ -391,10 +388,10 @@ export function MeetingPage() {
     if (pickingDir) return;
     setPickingDir(true);
     try {
-      const picked = await window.api.settings.pickSaveDir();
+      const picked = await window.api.settings.pickMeetingsDir();
       if (picked) {
         setSaveDir(picked);
-        await window.api.settings.setSaveDir(picked);
+        await window.api.settings.setMeetingsDir(picked);
       }
     } finally {
       setPickingDir(false);
@@ -402,7 +399,7 @@ export function MeetingPage() {
   }
 
   function commitSaveDir() {
-    if (saveDir) window.api.settings.setSaveDir(saveDir).catch(() => { });
+    if (saveDir) window.api.settings.setMeetingsDir(saveDir).catch(() => { });
   }
 
   // Caps how many segments can be in flight to the (single-threaded) main process at

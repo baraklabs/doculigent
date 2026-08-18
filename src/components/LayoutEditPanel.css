@@ -1,0 +1,41 @@
+.layout-edit-panel {
+  flex: 1; min-width: 0; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 18px; padding: 16px;
+}
+.layout-edit-empty { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+
+.layout-edit-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.layout-edit-section { display: flex; flex-direction: column; gap: 8px; }
+
+.layout-mode-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; width: 100%; }
+.layout-mode-tile {
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px;
+  min-width: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  color: var(--muted); padding: 10px 12px; text-align: left;
+}
+.layout-mode-tile:hover { border-color: var(--accent); color: var(--text); }
+.layout-mode-tile.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.layout-mode-tile-label { font-size: 12px; font-weight: 700; }
+.layout-mode-tile-sublabel { font-size: 10.5px; font-weight: 500; opacity: .8; line-height: 1.3; }
+.layout-mode-tile.active .layout-mode-tile-sublabel { color: var(--accent); opacity: .85; }
+
+.layout-edit-hint { font-size: 11px; color: var(--muted); line-height: 1.4; margin: 0; }
+
+/* A 3x3 grid of boxes — for "overlay" the 4 corners are clickable camera-position
+ * presets (each holding a dot); for "split" the 4 edge midpoints are instead. The center
+ * box, and whichever 4 cells don't apply to the active format, render as disabled
+ * placeholders sharing the same dashed style. */
+.layout-position-picker {
+  display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr);
+  gap: 6px; width: 132px; height: 96px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px;
+}
+.layout-position-cell {
+  display: flex; align-items: center; justify-content: center; padding: 0;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+}
+.layout-position-cell:hover { border-color: var(--accent); background: var(--accent-soft); }
+.layout-position-cell:active .layout-position-dot { background: var(--accent); border-color: var(--accent); }
+.layout-position-cell-center { border-style: dashed; opacity: .45; pointer-events: none; }
+.layout-position-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); border: none; }
+

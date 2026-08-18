@@ -1,0 +1,190 @@
+.tl-root {
+  flex: 1; min-width: 0; min-height: 0; display: flex;
+  overflow: auto; padding: 12px 16px 16px;
+}
+
+.tl-empty {
+  margin: auto; display: flex; flex-direction: column; align-items: center; gap: 8px;
+  color: var(--muted); font-size: 12px; padding: 24px;
+}
+.tl-empty-icon { font-size: 26px; }
+
+.tl-inner {
+  position: relative; flex: 1; min-width: 480px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+
+/* The gap here is what actually separates the Clips/Zoom/Camera labels from their track —
+   every row (including the ruler) carries the same header width + gap, so every track
+   (ruler, Clips, Zoom, Camera) still starts at the exact same x. Keep TL_TRACK_START_PX in
+   Timeline.tsx (the playhead's own left offset) in sync with header width + this gap. */
+.tl-row { display: flex; align-items: stretch; min-height: 44px; gap: 10px; }
+
+.tl-row-header {
+  /* min-width: 0 overrides the flex item's default automatic minimum size (its content's
+     own min-content width) — without it, a header whose label+icon can't fit in 64px (the
+     Zoom one, with its magic-wand button) silently grows wider than the other rows despite
+     flex-shrink: 0, which is exactly what was pushing the Zoom track's start a few pixels
+     right of Clips/Camera. */
+  /* Widened from the original 64px to comfortably fit the Zoom row's label + magic-wand
+     button without relying on squeezing — min-width: 0 above is what actually enforces
+     this everywhere; the extra width just means it doesn't have to clip to do it. */
+  flex: 0 0 72px; width: 72px; min-width: 0; display: flex; align-items: center; gap: 4px;
+  font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--muted);
+}
+.tl-row-header-clips,
+.tl-row-header-zoom,
+.tl-row-header-camera {
+  display: flex; align-items: center; justify-content: center; width: 100%;
+  border-radius: 6px; padding: 3px 7px; border: 1px solid transparent;
+}
+.tl-row-header-clips { color: #1e40af; background: #dbeafe; border-color: #bfdbfe; }
+.tl-row-header-zoom { color: #6b21a8; background: #f3e8ff; border-color: #e9d5ff; gap: 3px; padding: 3px 5px; }
+.tl-row-header-camera { color: #0f766e; background: #ccfbf1; border-color: #99f6e4; }
+
+/* "Magic" auto-zoom button, next to the Zoom row's label — regenerates the whole Zoom
+   track from recorded clicks (see Timeline.tsx's autoZoomFromClicks). */
+.tl-zoom-magic-btn {
+  display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  width: 14px; height: 14px; padding: 0; border: none; border-radius: 4px;
+  background: transparent; color: #7e22ce; cursor: pointer;
+}
+.tl-zoom-magic-btn:hover:not(:disabled) { background: rgba(126, 34, 206, .18); }
+.tl-zoom-magic-btn:disabled { color: #c4b5fd; cursor: not-allowed; }
+
+.tl-tool-toggle { justify-content: center; gap: 3px; }
+.tl-tool-btn {
+  flex: none; width: 22px; height: 22px; border-radius: 5px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg); color: var(--muted); border: 1px solid var(--border);
+}
+.tl-tool-btn:hover { background: var(--border); color: var(--text); }
+.tl-tool-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.tl-ruler {
+  position: relative; flex: 1; height: 20px; cursor: pointer; user-select: none;
+  border-bottom: 1px solid var(--border-strong);
+}
+.tl-tick { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--border); padding-left: 4px; }
+.tl-tick-label { font-size: 9px; color: var(--muted); white-space: nowrap; }
+
+.tl-track {
+  position: relative; flex: 1; height: 44px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+}
+.tl-track-clips { cursor: pointer; background: transparent; }
+.tl-track-zoom { cursor: copy; }
+.tl-track-camera { cursor: pointer; background: transparent; }
+.tl-track-cut-mode {
+  /* Lucide's "scissors-line-dashed" icon, rotated -90deg so the dashed cut line (originally
+     trailing right) points up toward the hotspot and the blade handles hang below. */
+  cursor: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"><g transform="rotate(-90 12 12)"><g fill="none" stroke="white" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5.42 9.42 8 12"/><circle cx="4" cy="8" r="2"/><path d="m14 6-8.58 8.58"/><circle cx="4" cy="16" r="2"/><path d="M10.8 14.8 14 18"/><path d="M16 12h-2"/><path d="M22 12h-2"/></g><g fill="none" stroke="%231f2430" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5.42 9.42 8 12"/><circle cx="4" cy="8" r="2"/><path d="m14 6-8.58 8.58"/><circle cx="4" cy="16" r="2"/><path d="M10.8 14.8 14 18"/><path d="M16 12h-2"/><path d="M22 12h-2"/></g></g></svg>') 11 9, pointer;
+}
+
+.tl-track-camera.disabled,
+.tl-row-header-camera.disabled {
+  opacity: .45; pointer-events: none; cursor: not-allowed;
+}
+
+/* Positioned by its own independent timelineStart, same free-move/overlap model as
+   .tl-clip-base below — pieces can freely overlap; later ones in the array (rendered
+   later, so painted on top — see Timeline.tsx) sit visually above and win playback
+   wherever they overlap another. A stretch nothing covers is simply bare track
+   background — the camera bubble is hidden there. */
+.tl-camera-fill {
+  position: absolute; top: 0; bottom: 0; border-radius: 6px; cursor: grab;
+  background: linear-gradient(180deg, #99f6e4, #0d9488);
+  border: 1px solid #0f766e;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, .25);
+}
+.tl-camera-fill:active { cursor: grabbing; }
+.tl-track-cut-mode .tl-camera-fill,
+.tl-track-cut-mode .tl-camera-fill:active { cursor: inherit; }
+
+/* Positioned by its own independent timelineStart — pieces can freely overlap; later ones
+   in the array (rendered later, so painted on top — see Timeline.tsx) sit visually above
+   and win playback wherever they overlap another. The shadow reinforces which is "on top"
+   at a glance when two pieces overlap. */
+.tl-clip-base {
+  position: absolute; top: 0; bottom: 0; border-radius: 6px; cursor: grab;
+  background: linear-gradient(180deg, #93c5fd, #2563eb);
+  border: 1px solid #1d4ed8;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, .25);
+}
+.tl-clip-base:active { cursor: grabbing; }
+/* Pieces tile the whole track, so their own cursor would otherwise mask the track's
+   scissors cursor everywhere — inherit it instead while the cut tool is active. */
+.tl-track-cut-mode .tl-clip-base,
+.tl-track-cut-mode .tl-clip-base:active { cursor: inherit; }
+
+/* Trim handles at each edge — drag to reveal/hide source footage on that side, out to the
+   raw recording's own start/end. Capped at 30% of the piece's own width so a narrow piece
+   still keeps a body strip in the middle to grab for a plain move instead. */
+.tl-piece-edge {
+  position: absolute; top: 0; bottom: 0; width: min(10px, 30%); cursor: ew-resize; z-index: 2;
+}
+.tl-piece-edge-left { left: -3px; }
+.tl-piece-edge-right { right: -3px; }
+.tl-track-cut-mode .tl-piece-edge { cursor: inherit; }
+
+/* Delete button for a normal (not-yet-removed) piece — only ever shown on hover, no
+   click-to-select needed first. */
+.tl-piece-delete {
+  position: absolute; top: -17px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; padding: 0; background: transparent; border: none; border-radius: 5px;
+  color: var(--danger); filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .35));
+  opacity: 0; pointer-events: none; transition: opacity .1s; z-index: 4;
+}
+.tl-clip-base:hover .tl-piece-delete,
+.tl-camera-fill:hover .tl-piece-delete { opacity: 1; pointer-events: auto; }
+.tl-piece-delete:hover { background: rgba(239, 68, 68, .12); filter: none; }
+
+.tl-zoom-block {
+  position: absolute; top: 3px; bottom: 3px; min-width: 10px; cursor: grab;
+  background: linear-gradient(180deg, #d8b4fe, #7e22ce);
+  border: 1px solid #6b21a8; border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(107, 33, 168, .4);
+  display: flex; align-items: center; justify-content: center;
+}
+.tl-zoom-block:active { cursor: grabbing; }
+.tl-zoom-block.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tl-zoom-pct-badge { font-size: 9px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .35); pointer-events: none; }
+
+.tl-zoom-toolbar {
+  position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 10;
+  display: flex; align-items: center; gap: 3px; white-space: nowrap;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 4px; box-shadow: 0 6px 18px rgba(30, 30, 60, .16);
+}
+.tl-zoom-toolbar button {
+  font-size: 10px; font-weight: 600; color: var(--muted);
+  background: transparent; border: none; border-radius: 5px; padding: 4px 6px;
+}
+.tl-zoom-toolbar button:hover { background: var(--bg); }
+.tl-zoom-toolbar button.active { background: var(--accent); color: #fff; }
+.tl-zoom-remove { display: flex; align-items: center; justify-content: center; color: var(--danger) !important; }
+.tl-zoom-remove:hover { background: rgba(239, 68, 68, .12) !important; }
+
+/* Invisible hover/drag target straddling the seam between two available pieces — wide
+   enough to hit with a pointer even though the pieces themselves butt up with no gap.
+   Draggable to trim the split; no way to undo the cut itself here, only Undo. */
+.tl-cut-mark {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 14px; margin-left: -7px; z-index: 5;
+  cursor: ew-resize;
+}
+
+/* Shown while the cut tool hovers near a piece boundary already sitting on the other
+   track — a preview of "cut here and it'll land on the exact same point," before the
+   click happens. */
+.tl-cut-guide {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; z-index: 4;
+  background: repeating-linear-gradient(180deg, var(--accent) 0 4px, transparent 4px 8px);
+  box-shadow: 0 0 5px rgba(91, 75, 245, .7); pointer-events: none;
+}
+
+.tl-playhead {
+  position: absolute; top: 0; bottom: 0; width: 1.5px; pointer-events: none; z-index: 6;
+  background: var(--accent); box-shadow: 0 0 4px rgba(91, 75, 245, .5);
+}

@@ -14,7 +14,16 @@ import type {
 } from "@shared/types/models";
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
 import { defaultLlmConfig } from "@shared/constants/llmDefaults";
-import { getSaveDir, setSaveDir } from "../native/paths";
+import {
+  getRecordingsDir,
+  setRecordingsDir,
+  getMeetingsDir,
+  setMeetingsDir,
+  getProjectsDir,
+  setProjectsDir,
+  getTeamsDir,
+  setTeamsDir,
+} from "../native/paths";
 import {
   listLlmProfiles,
   saveLlmProfile,
@@ -37,16 +46,58 @@ import { preloadWhisperModel } from "../transcription/whisper";
 import { deleteWhisperModelCache, getWhisperModelStatuses, whisperCacheDir } from "../transcription/modelCache";
 
 export function registerSettingsIpc(): void {
-  ipcMain.handle(Channels.settings.getSaveDir, async (): Promise<string> => getSaveDir());
+  ipcMain.handle(Channels.settings.getRecordingsDir, async (): Promise<string> => getRecordingsDir());
 
-  ipcMain.handle(Channels.settings.setSaveDir, async (_event, dir: string): Promise<void> => {
-    setSaveDir(dir);
+  ipcMain.handle(Channels.settings.setRecordingsDir, async (_event, dir: string): Promise<void> => {
+    setRecordingsDir(dir);
   });
 
-  ipcMain.handle(Channels.settings.pickSaveDir, async (): Promise<string | null> => {
+  ipcMain.handle(Channels.settings.pickRecordingsDir, async (): Promise<string | null> => {
     const result = await dialog.showOpenDialog({
       properties: ["openDirectory"],
-      defaultPath: getSaveDir(),
+      defaultPath: getRecordingsDir(),
+    });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+
+  ipcMain.handle(Channels.settings.getMeetingsDir, async (): Promise<string> => getMeetingsDir());
+
+  ipcMain.handle(Channels.settings.setMeetingsDir, async (_event, dir: string): Promise<void> => {
+    setMeetingsDir(dir);
+  });
+
+  ipcMain.handle(Channels.settings.pickMeetingsDir, async (): Promise<string | null> => {
+    const result = await dialog.showOpenDialog({
+      properties: ["openDirectory"],
+      defaultPath: getMeetingsDir(),
+    });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+
+  ipcMain.handle(Channels.settings.getProjectsDir, async (): Promise<string> => getProjectsDir());
+
+  ipcMain.handle(Channels.settings.setProjectsDir, async (_event, dir: string): Promise<void> => {
+    setProjectsDir(dir);
+  });
+
+  ipcMain.handle(Channels.settings.pickProjectsDir, async (): Promise<string | null> => {
+    const result = await dialog.showOpenDialog({
+      properties: ["openDirectory"],
+      defaultPath: getProjectsDir(),
+    });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+
+  ipcMain.handle(Channels.settings.getTeamsDir, async (): Promise<string> => getTeamsDir());
+
+  ipcMain.handle(Channels.settings.setTeamsDir, async (_event, dir: string): Promise<void> => {
+    setTeamsDir(dir);
+  });
+
+  ipcMain.handle(Channels.settings.pickTeamsDir, async (): Promise<string | null> => {
+    const result = await dialog.showOpenDialog({
+      properties: ["openDirectory"],
+      defaultPath: getTeamsDir(),
     });
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });

@@ -8,6 +8,7 @@ import { registerAreaSelectIpc } from "./areaSelect";
 import { registerAnnotationIpc } from "./annotation";
 import { registerRecordingIpc } from "./recording";
 import { registerLibraryIpc } from "./library";
+import { registerEditProjectsIpc } from "./editProjects";
 import { registerSettingsIpc } from "./settings";
 import { registerAppsIpc } from "./apps";
 import { registerAiIpc } from "./ai";
@@ -30,6 +31,7 @@ export function registerIpcHandlers(): void {
   registerAnnotationIpc();
   registerRecordingIpc();
   registerLibraryIpc();
+  registerEditProjectsIpc();
   registerSettingsIpc();
   registerAppsIpc();
   registerAiIpc();

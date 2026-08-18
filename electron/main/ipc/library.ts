@@ -7,7 +7,7 @@ import type { OverlayConfig, Transcript, Video } from "@shared/types/models";
 import { NotFoundError } from "@shared/ipc/errors";
 import * as store from "../native/libraryStore";
 import { removeTranscriptFile, writeTranscriptFile } from "../native/transcriptFile";
-import { ensureSaveDir, teamFileDir } from "../native/paths";
+import { meetingsRoot, recordingsRoot, teamFileDir } from "../native/paths";
 import { convertToWav, probeDuration, remuxToMp4 } from "../native/ffmpeg";
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".wmv", ".flv"]);
@@ -58,7 +58,10 @@ export async function importVideoFiles(
     const filePath = filePaths[i];
     const sourceDuration = await probeDuration(filePath);
     const id = randomUUID();
-    const recDir = teamId && syncedFromTeamFileId ? teamFileDir(teamId, syncedFromTeamFileId) : path.join(ensureSaveDir(), id);
+    const recDir =
+      teamId && syncedFromTeamFileId
+        ? teamFileDir(teamId, syncedFromTeamFileId)
+        : path.join(kind === "audio" ? meetingsRoot() : recordingsRoot(), id);
     const { finalPath, durationSecs, fileKind } = await transcodeIntoLibrary(filePath, kind, recDir, (secondsDone) => {
       const filePercent = sourceDuration > 0 ? Math.min(1, secondsDone / sourceDuration) : 0;
       onProgress?.({ percent: Math.round(((i + filePercent) / total) * 100), fileIndex: i, totalFiles: total });

@@ -8,7 +8,15 @@ import type {
   CameraBubbleConfig,
   CaptureMode,
   CaptureTarget,
+  BackgroundEditSettings,
+  CameraEditSettings,
   ChatMessage,
+  CursorEditSettings,
+  EditProject,
+  EditProjectMedia,
+  EditProjectSource,
+  LayoutEditSettings,
+  SoundEditSettings,
   LlmModelProfile,
   LlmProviderKind,
   MicConfig,
@@ -20,6 +28,7 @@ import type {
   RecordingDockTimerSync,
   SystemAudioConfig,
   Summary,
+  TimelineEditSettings,
   Transcript,
   Video,
 } from "./models";
@@ -152,6 +161,22 @@ export interface DoculigentApi {
     onSaveCompleted(callback: (video: Video) => void): () => void;
     onSaveFailed(callback: (failure: { id: string; message: string }) => void): () => void;
   };
+  editProjects: {
+    list(): Promise<EditProject[]>;
+    get(id: string): Promise<EditProject | null>;
+    create(title: string, source?: EditProjectSource): Promise<EditProject>;
+    rename(id: string, title: string): Promise<EditProject>;
+    updateCamera(id: string, camera: CameraEditSettings): Promise<EditProject>;
+    updateCursor(id: string, cursor: CursorEditSettings): Promise<EditProject>;
+    updateBackground(id: string, background: BackgroundEditSettings): Promise<EditProject>;
+    updateSound(id: string, sound: SoundEditSettings): Promise<EditProject>;
+    updateLayout(id: string, layout: LayoutEditSettings): Promise<EditProject>;
+    updateTimeline(id: string, timeline: TimelineEditSettings): Promise<EditProject>;
+    pickBackgroundImage(): Promise<string | null>;
+    getMedia(id: string): Promise<EditProjectMedia>;
+    delete(id: string): Promise<void>;
+    deleteMany(ids: string[]): Promise<void>;
+  };
   library: {
     list(): Promise<Video[]>;
     get(id: string): Promise<Video | null>;
@@ -165,9 +190,18 @@ export interface DoculigentApi {
     onImportProgress(callback: (progress: { percent: number; fileIndex: number; totalFiles: number }) => void): () => void;
   };
   settings: {
-    getSaveDir(): Promise<string>;
-    setSaveDir(dir: string): Promise<void>;
-    pickSaveDir(): Promise<string | null>;
+    getRecordingsDir(): Promise<string>;
+    setRecordingsDir(dir: string): Promise<void>;
+    pickRecordingsDir(): Promise<string | null>;
+    getMeetingsDir(): Promise<string>;
+    setMeetingsDir(dir: string): Promise<void>;
+    pickMeetingsDir(): Promise<string | null>;
+    getProjectsDir(): Promise<string>;
+    setProjectsDir(dir: string): Promise<void>;
+    pickProjectsDir(): Promise<string | null>;
+    getTeamsDir(): Promise<string>;
+    setTeamsDir(dir: string): Promise<void>;
+    pickTeamsDir(): Promise<string | null>;
     showItemInFolder(filePath: string): Promise<void>;
     listLlmProfiles(): Promise<LlmModelProfile[]>;
     saveLlmProfile(profile: LlmModelProfile, apiKey?: string | null): Promise<void>;

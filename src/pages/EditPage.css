@@ -1,1 +1,127 @@
-.edit-coming-soon { display: flex; align-items: center; justify-content: center; min-height: 60vh; }
+.edit-page {
+  flex: 1; display: flex; flex-direction: column; min-height: 0;
+  gap: 12px; padding: 12px 14px;
+}
+
+/* Top bar: name, media, export -------------------------------------------------- */
+
+.edit-topbar { display: flex; align-items: center; gap: 12px; flex: none; }
+.edit-title-group { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.edit-title-input {
+  flex: 1; min-width: 0; font-size: 15px; font-weight: 600;
+  border: 1px solid transparent; background: transparent; border-radius: 8px;
+  padding: 7px 10px; transition: border-color 120ms ease, background 120ms ease;
+}
+.edit-title-input:hover { background: var(--bg); }
+.edit-title-input:focus {
+  outline: none; background: #fff; border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(91, 75, 245, .15);
+}
+.edit-title-status {
+  flex: none; display: flex; align-items: center; gap: 5px;
+  color: var(--muted); font-size: 12px; font-weight: 600;
+  animation: edit-title-status-in 120ms ease;
+}
+.edit-title-status-saved { color: #15803d; }
+.edit-title-status-spin { animation: edit-title-status-spin 900ms linear infinite; }
+@keyframes edit-title-status-spin { to { transform: rotate(360deg); } }
+@keyframes edit-title-status-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.edit-topbar-actions { display: flex; gap: 8px; flex: none; }
+.edit-topbar-btn {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 500;
+}
+.edit-topbar-btn:hover { border-color: var(--accent); }
+.edit-topbar-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.edit-topbar-btn.primary:hover { background: var(--accent-strong); }
+
+.edit-media-info { position: relative; }
+.edit-media-info-panel {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
+  width: max-content; max-width: min(360px, calc(100vw - 32px));
+  background: #fff; border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .12);
+  padding: 10px; display: flex; flex-wrap: wrap; gap: 8px;
+}
+.edit-media-info-row {
+  display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px;
+  flex: none; width: 96px; padding: 10px 6px 8px; border-radius: 8px;
+  border: 1px solid transparent; transition: border-color 120ms ease, background 120ms ease;
+}
+.edit-media-info-row:hover { border-color: var(--border); }
+.edit-media-info-row-video, .edit-media-info-row-audio { background: rgba(200, 149, 41, .14); }
+.edit-media-info-icon { flex: none; }
+.edit-media-info-icon-video, .edit-media-info-icon-audio { color: #c89529; fill: rgba(200, 149, 41, .28); }
+.edit-media-info-text { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; width: 100%; }
+.edit-media-info-label { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.edit-media-info-path {
+  font-size: 8px; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+}
+.edit-media-info-empty { font-size: 11px; color: var(--muted); padding: 2px; grid-column: 1 / -1; }
+
+/* Resizable body: 60/40 top-bottom split, top split 40/60 left-right ------------ */
+
+.edit-body {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  background: var(--bg);
+}
+
+.edit-top-row { flex: 0 0 auto; min-height: 0; display: flex; }
+
+.edit-sidebar {
+  flex: 0 0 auto; min-width: 0; display: flex; flex-direction: column;
+  background: var(--panel); overflow: hidden;
+}
+.edit-tab-rail { display: flex; flex: none; border-bottom: 1px solid var(--border); }
+.edit-tab-btn {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  background: transparent; border: none; border-radius: 0; color: var(--muted);
+  padding: 10px 4px 8px; font-size: 10px; font-weight: 600;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.edit-tab-btn:hover { color: var(--text); background: var(--bg); }
+.edit-tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+.edit-tab-panel { flex: 1; min-height: 0; overflow: auto; display: flex; }
+
+.edit-preview {
+  flex: 1 1 auto; min-width: 0; display: flex;
+  background: #14161f; color: #fff;
+}
+
+.edit-timeline {
+  flex: 1 1 auto; min-height: 0; display: flex;
+  background: var(--panel); color: var(--text); border-top: 1px solid var(--border);
+}
+
+.edit-empty-state {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center;
+  gap: 8px; padding: 24px; margin: auto;
+}
+.edit-empty-state-icon { color: var(--muted); margin-bottom: 6px; }
+.edit-empty-state h2 { font-size: 16px; font-weight: 600; margin: 0; }
+.edit-empty-state p { margin: 0 0 8px; max-width: 320px; }
+.edit-empty-state .edit-topbar-btn { margin-top: 4px; }
+
+/* Drag handles ------------------------------------------------------------------ */
+
+.edit-handle {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  background: var(--border); transition: background 120ms ease;
+}
+.edit-handle:hover, .edit-handle:active { background: var(--accent); }
+.edit-handle-row { height: 7px; cursor: row-resize; }
+.edit-handle-col { width: 7px; cursor: col-resize; }
+.edit-handle-grip { color: var(--muted); pointer-events: none; }
+.edit-handle:hover .edit-handle-grip, .edit-handle:active .edit-handle-grip { color: #fff; }
+.edit-handle-grip-col { transform: rotate(90deg); }
+
+body.edit-resizing-row, body.edit-resizing-row * { cursor: row-resize !important; user-select: none !important; }
+body.edit-resizing-col, body.edit-resizing-col * { cursor: col-resize !important; user-select: none !important; }

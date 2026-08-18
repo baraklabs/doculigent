@@ -11,14 +11,41 @@ import type {
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
 
 export const SettingsService = {
-  getSaveDir(): Promise<string> {
-    return window.api.settings.getSaveDir();
+  getRecordingsDir(): Promise<string> {
+    return window.api.settings.getRecordingsDir();
   },
-  setSaveDir(dir: string): Promise<void> {
-    return window.api.settings.setSaveDir(dir);
+  setRecordingsDir(dir: string): Promise<void> {
+    return window.api.settings.setRecordingsDir(dir);
   },
-  pickSaveDir(): Promise<string | null> {
-    return window.api.settings.pickSaveDir();
+  pickRecordingsDir(): Promise<string | null> {
+    return window.api.settings.pickRecordingsDir();
+  },
+  getMeetingsDir(): Promise<string> {
+    return window.api.settings.getMeetingsDir();
+  },
+  setMeetingsDir(dir: string): Promise<void> {
+    return window.api.settings.setMeetingsDir(dir);
+  },
+  pickMeetingsDir(): Promise<string | null> {
+    return window.api.settings.pickMeetingsDir();
+  },
+  getProjectsDir(): Promise<string> {
+    return window.api.settings.getProjectsDir();
+  },
+  setProjectsDir(dir: string): Promise<void> {
+    return window.api.settings.setProjectsDir(dir);
+  },
+  pickProjectsDir(): Promise<string | null> {
+    return window.api.settings.pickProjectsDir();
+  },
+  getTeamsDir(): Promise<string> {
+    return window.api.settings.getTeamsDir();
+  },
+  setTeamsDir(dir: string): Promise<void> {
+    return window.api.settings.setTeamsDir(dir);
+  },
+  pickTeamsDir(): Promise<string | null> {
+    return window.api.settings.pickTeamsDir();
   },
   showItemInFolder(filePath: string): Promise<void> {
     return window.api.settings.showItemInFolder(filePath);

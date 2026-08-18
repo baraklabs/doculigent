@@ -3,7 +3,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { app } from "electron";
 import type { AreaRect, CursorIconAsset, CursorMetadata, CursorTrackPoint } from "@shared/types/models";
-import { captureCursorBitmap, renderFallbackArrowPng, rgbaToPng, sampleCursorShape, FALLBACK_ICON } from "./cursorIcon";
+import {
+  captureCursorBitmap,
+  pollLeftButton,
+  renderFallbackArrowPng,
+  rgbaToPng,
+  sampleCursorShape,
+  FALLBACK_ICON,
+} from "./cursorIcon";
 
 const SAMPLE_RATE_HZ = 60;
 const SAMPLE_INTERVAL_MS = Math.round(1000 / SAMPLE_RATE_HZ);
@@ -19,6 +26,7 @@ interface ActiveTrack {
   icons: IconEntry[];
   shapeIndex: Map<string, number>;
   fallbackIndex: number | null;
+  clicks: number[];
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -79,10 +87,21 @@ function resolveIconIndex(t: ActiveTrack): number {
 export async function startCursorTrack(targetId: string, area: AreaRect | null = null): Promise<void> {
   stopCursorTrack();
   const capture = await describeCapture(targetId, area);
-  track = { startedAt: Date.now(), capture, points: [], icons: [], shapeIndex: new Map(), fallbackIndex: null };
+  track = {
+    startedAt: Date.now(),
+    capture,
+    points: [],
+    icons: [],
+    shapeIndex: new Map(),
+    fallbackIndex: null,
+    clicks: [],
+  };
 
   timer = setInterval(() => {
     if (!track) return;
+
+    if (pollLeftButton().wasPressed) track.clicks.push(Date.now() - track.startedAt);
+
     const { x, y } = screen.getCursorScreenPoint();
     const last = track.points[track.points.length - 1];
     if (last && last.x === x && last.y === y) return;
@@ -127,6 +146,7 @@ export async function writeCursorMetadata(recordingId: string, recordingDir: str
       sampleRateHz: SAMPLE_RATE_HZ,
       icons,
       points: captured.points,
+      clicks: captured.clicks,
     };
     await fs.writeFile(path.join(metaDir, "cursor.json"), JSON.stringify(metadata), "utf-8");
   } catch (e) {

@@ -10,6 +10,8 @@
   --accent-strong: #4436e0;
   --accent-soft: #eeecff;
   --danger: #b3261e;
+  --reset-default: #b45309;
+  --reset-default-soft: #fdf1e2;
   color-scheme: light;
 }
 

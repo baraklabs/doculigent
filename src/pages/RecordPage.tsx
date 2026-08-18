@@ -331,7 +331,7 @@ export function RecordPage() {
   const [saveDir, setSaveDir] = useState("");
   const [pickingDir, setPickingDir] = useState(false);
   useEffect(() => {
-    window.api.settings.getSaveDir().then(setSaveDir).catch(() => {});
+    window.api.settings.getRecordingsDir().then(setSaveDir).catch(() => {});
   }, []);
 
   const [micLevel, setMicLevel] = useState(0);
@@ -512,10 +512,10 @@ export function RecordPage() {
     if (pickingDir) return;
     setPickingDir(true);
     try {
-      const picked = await window.api.settings.pickSaveDir();
+      const picked = await window.api.settings.pickRecordingsDir();
       if (picked) {
         setSaveDir(picked);
-        await window.api.settings.setSaveDir(picked);
+        await window.api.settings.setRecordingsDir(picked);
       }
     } finally {
       setPickingDir(false);
@@ -523,7 +523,7 @@ export function RecordPage() {
   }
 
   function commitSaveDir() {
-    if (saveDir) window.api.settings.setSaveDir(saveDir).catch(() => {});
+    if (saveDir) window.api.settings.setRecordingsDir(saveDir).catch(() => {});
   }
 
   async function beginRecording() {

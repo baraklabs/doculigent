@@ -1,0 +1,40 @@
+.camera-edit-panel {
+  flex: 1; min-width: 0; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 18px; padding: 16px;
+}
+.camera-edit-empty { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+
+.camera-edit-row { display: flex; align-items: center; justify-content: space-between; }
+.camera-edit-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.camera-edit-section { display: flex; flex-direction: column; gap: 8px; }
+
+.camera-edit-hide-btn {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+  padding: 5px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+}
+.camera-edit-hide-btn:hover { border-color: var(--accent); color: var(--text); }
+.camera-edit-hide-btn.on { color: var(--danger); border-color: var(--danger); background: rgba(179, 38, 30, .08); }
+
+.camera-edit-fieldset { border: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 18px; }
+.camera-edit-fieldset:disabled { opacity: .45; }
+
+.camera-shape-grid { display: grid; grid-template-columns: repeat(auto-fill, 64px); gap: 6px; width: 100%; }
+.camera-shape-tile {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  width: 64px; height: 64px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  color: var(--muted); font-size: 11px; font-weight: 600;
+}
+.camera-shape-tile:hover { border-color: var(--accent); color: var(--text); }
+.camera-shape-tile.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+
+.camera-edit-slider-row { display: flex; align-items: center; gap: 10px; }
+.camera-edit-slider-row .camera-edit-label { flex: none; min-width: 84px; }
+.camera-edit-slider-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.camera-edit-slider-value { flex: none; width: 36px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); }
+
+.camera-blur-segmented { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; width: fit-content; }
+.camera-blur-seg-btn { background: var(--bg); border: none; border-radius: 0; padding: 6px 12px; font-size: 12px; color: var(--muted); }
+.camera-blur-seg-btn + .camera-blur-seg-btn { border-left: 1px solid var(--border); }
+.camera-blur-seg-btn.active { background: var(--accent); color: #fff; }
+
