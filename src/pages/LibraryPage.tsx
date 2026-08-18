@@ -83,14 +83,20 @@ type SharedTabId = (typeof SHARED_TABS)[number]["id"];
 const SECTION_IDS = SECTIONS.map((s) => s.id) as readonly string[];
 
 const NAV_COLLAPSED_KEY = "library.navCollapsed";
+const LAST_SECTION_KEY = "library.lastSection";
 
 export function LibraryPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [section, setSection] = useState<SectionId>(() => {
     const requested = searchParams.get("section");
-    return requested && SECTION_IDS.includes(requested) ? (requested as SectionId) : "videos";
+    if (requested && SECTION_IDS.includes(requested)) return requested as SectionId;
+    const last = localStorage.getItem(LAST_SECTION_KEY);
+    return last && SECTION_IDS.includes(last) ? (last as SectionId) : "videos";
   });
+  useEffect(() => {
+    localStorage.setItem(LAST_SECTION_KEY, section);
+  }, [section]);
   const [navCollapsed, setNavCollapsed] = useState(() => localStorage.getItem(NAV_COLLAPSED_KEY) === "1");
   useEffect(() => {
     localStorage.setItem(NAV_COLLAPSED_KEY, navCollapsed ? "1" : "0");

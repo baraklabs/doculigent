@@ -70,6 +70,7 @@ const TABS: { id: EditTab; label: string; icon: LucideIcon }[] = [
   { id: "layout", label: "Layout", icon: LayoutTemplate },
   { id: "sound", label: "Sound", icon: Volume2 },
 ];
+const EDIT_TAB_IDS = TABS.map((t) => t.id) as readonly string[];
 
 // Constrain drag so neither pane can be squeezed to uselessness.
 const MIN_TOP_PCT = 30;
@@ -83,6 +84,7 @@ const DEFAULT_TITLE = "Untitled project";
 const TOP_PCT_KEY = "editPage.topPct";
 const LEFT_PCT_KEY = "editPage.leftPct";
 const LAST_PROJECT_KEY = "editPage.lastProjectId";
+const LAST_TAB_KEY = "editPage.lastTab";
 const TITLE_SAVE_DEBOUNCE_MS = 700;
 
 const AUDIO_PATH_RE = /\.(mp3|wav|m4a|aac|ogg|flac)$/i;
@@ -598,7 +600,13 @@ export function EditPage() {
     };
   }, []);
 
-  const [activeTab, setActiveTab] = useState<EditTab>("camera");
+  const [activeTab, setActiveTab] = useState<EditTab>(() => {
+    const last = localStorage.getItem(LAST_TAB_KEY);
+    return last && EDIT_TAB_IDS.includes(last) ? (last as EditTab) : "camera";
+  });
+  useEffect(() => {
+    localStorage.setItem(LAST_TAB_KEY, activeTab);
+  }, [activeTab]);
   const [topPct, setTopPct] = useState(() => readStoredPct(TOP_PCT_KEY, DEFAULT_TOP_PCT, MIN_TOP_PCT, MAX_TOP_PCT));
   const [leftPct, setLeftPct] = useState(() =>
     readStoredPct(LEFT_PCT_KEY, DEFAULT_LEFT_PCT, MIN_LEFT_PCT, MAX_LEFT_PCT)
