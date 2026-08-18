@@ -162,10 +162,11 @@ const SCK_HELPER_NAME = "doculigent-screencapturekit-helper";
  *  null as "fall back to the avfoundation-based FfmpegCapture path", never as an error. */
 async function resolveScreenCaptureKitHelperPath(): Promise<string | null> {
   if (process.platform !== "darwin") return null;
-  const archTag = `darwin-${process.arch}`;
+  // A single lipo-merged universal binary (see scripts/build-mac-screencapturekit-helper.mjs
+  // for why) — no per-arch subfolder to pick between at runtime.
   const candidate = app.isPackaged
-    ? path.join(process.resourcesPath, "native-bin", archTag, SCK_HELPER_NAME)
-    : path.join(app.getAppPath(), "electron", "native", "mac", "bin", archTag, SCK_HELPER_NAME);
+    ? path.join(process.resourcesPath, "native-bin", SCK_HELPER_NAME)
+    : path.join(app.getAppPath(), "electron", "native", "mac", "bin", SCK_HELPER_NAME);
   try {
     await fs.access(candidate);
     return candidate;
