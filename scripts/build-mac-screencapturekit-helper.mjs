@@ -12,17 +12,10 @@ import { fileURLToPath } from "node:url";
 // to the avfoundation-based capture automatically (with the known content-protection
 // limitation that motivated building this in the first place).
 //
-// Ships as a single lipo-merged universal binary, not two arch-specific files — the mac
-// build target is "universal" (electron-builder.yml), which merges separately-packaged
-// x64 and arm64 app bundles into one. Its merger (@electron/universal) sanity-checks any
-// executable file found at the same path in both intermediate bundles, and errors out
-// ("... that's the same in both x64 and arm64 builds and not covered by the x64ArchFiles
-// rule") for genuinely arch-specific binaries it doesn't know how to reconcile — which is
-// exactly what shipping two separate arch subfolders via extraResources produced
-// (confirmed in CI). A single fat binary, produced the same way Apple's own toolchain
-// merges arch slices for any universal executable, sidesteps that check entirely: it's
-// one identical file in both intermediate bundles, which the merger treats as an
-// ordinary shared resource.
+// Ships as a single lipo-merged universal binary rather than two arch-specific files.
+// electron-builder.yml packages separate x64 and arm64 DMGs (mac.target.arch), so this
+// isn't required for either build to run — a fat binary just means one artifact serves
+// both instead of maintaining/copying two, and it costs nothing since it's a small helper.
 
 const projectRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const swiftSource = path.join(projectRoot, "electron", "native", "mac", "ScreenCaptureKitRecorder.swift");
