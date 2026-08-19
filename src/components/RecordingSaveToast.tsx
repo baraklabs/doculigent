@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRecordingStore } from "../store/recordingStore";
+import { DEFAULT_TOAST_DURATION } from "../store/toastStore";
 import "./RecordingSaveToast.css";
 
 export function RecordingSaveToast() {
@@ -15,6 +16,15 @@ export function RecordingSaveToast() {
   useEffect(() => {
     if (status === "ready") queryClient.invalidateQueries({ queryKey: ["videos"] });
   }, [status, id, queryClient]);
+
+  // "Recording saved" is just a confirmation + a navigation shortcut, not something that
+  // needs to stick around — auto-dismiss it the same way MeetingPage's equivalent corner
+  // toast already does, using the app-wide toast system's default duration for consistency.
+  useEffect(() => {
+    if (status !== "ready") return;
+    const timer = setTimeout(dismiss, DEFAULT_TOAST_DURATION);
+    return () => clearTimeout(timer);
+  }, [status, id, dismiss]);
 
   if (!saveStatus || saveStatus.status === "processing") return null;
 
@@ -40,7 +50,7 @@ export function RecordingSaveToast() {
               className="primary"
               onClick={() => {
                 dismiss();
-                navigate("/library");
+                navigate(`/library?section=videos&video=${id}`);
               }}
             >
               Go to Library

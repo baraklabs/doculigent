@@ -87,7 +87,7 @@ const LAST_SECTION_KEY = "library.lastSection";
 
 export function LibraryPage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [section, setSection] = useState<SectionId>(() => {
     const requested = searchParams.get("section");
     if (requested && SECTION_IDS.includes(requested)) return requested as SectionId;
@@ -159,6 +159,32 @@ export function LibraryPage() {
   const sectionVideos =
     section === "meeting" ? videos.filter((v) => v.source === "meeting") : videos.filter((v) => v.source === "record");
   const viewingVideo = videos.find((v) => v.id === viewingId) ?? null;
+
+  // Deep link from RecordingSaveToast's "Go to Library" (?video=<id>) — scroll the
+  // just-saved recording into view and briefly highlight its card (see .video-card.
+  // just-saved in LibraryPage.css) so landing on a long library isn't disorienting. Runs
+  // once per link: `highlightedRef` stops a re-scroll if `sectionVideos` changes for an
+  // unrelated reason (e.g. a rename) while the highlight is still showing, and the `video`
+  // param is stripped afterward so a refresh/back-nav doesn't replay it.
+  const highlightVideoId = searchParams.get("video");
+  const highlightedRef = useRef(false);
+  useEffect(() => {
+    if (!highlightVideoId || highlightedRef.current) return;
+    if (!sectionVideos.some((v) => v.id === highlightVideoId)) return;
+    highlightedRef.current = true;
+    document.getElementById(`video-card-${highlightVideoId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const timer = setTimeout(() => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("video");
+          return next;
+        },
+        { replace: true }
+      );
+    }, 2600);
+    return () => clearTimeout(timer);
+  }, [highlightVideoId, sectionVideos, setSearchParams]);
   const canRetranscribe = !viewingVideo?.transcript || viewingVideo.transcript.engine !== "transcript-import";
 
   useEffect(() => {
@@ -734,7 +760,17 @@ export function LibraryPage() {
 
               <div className="library-grid">
                 {sectionVideos.map((v) => (
-                  <div key={v.id} className={selectedIds.has(v.id) ? "video-card selected" : "video-card"}>
+                  <div
+                    key={v.id}
+                    id={`video-card-${v.id}`}
+                    className={[
+                      "video-card",
+                      selectedIds.has(v.id) && "selected",
+                      v.id === highlightVideoId && "just-saved",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                  >
                     <div className="thumb">
                       {canBulkDelete && (
                         <label className="video-card-select" onClick={(e) => e.stopPropagation()}>
