@@ -17,11 +17,13 @@ export function RecordingSaveToast() {
     if (status === "ready") queryClient.invalidateQueries({ queryKey: ["videos"] });
   }, [status, id, queryClient]);
 
-  // "Recording saved" is just a confirmation + a navigation shortcut, not something that
-  // needs to stick around — auto-dismiss it the same way MeetingPage's equivalent corner
-  // toast already does, using the app-wide toast system's default duration for consistency.
+  // "Recording saved" and "Recording discarded" are just confirmations (the latter also
+  // has no action to take), not something that needs to stick around — auto-dismiss both
+  // the same way MeetingPage's equivalent corner toast already does, using the app-wide
+  // toast system's default duration for consistency. "failed" stays manual-dismiss since
+  // it carries an error message worth reading at the user's own pace.
   useEffect(() => {
-    if (status !== "ready") return;
+    if (status !== "ready" && status !== "cancelled") return;
     const timer = setTimeout(dismiss, DEFAULT_TOAST_DURATION);
     return () => clearTimeout(timer);
   }, [status, id, dismiss]);

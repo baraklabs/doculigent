@@ -977,7 +977,7 @@ export function RecordPage() {
       {saving && (
         <div className="record-processing-overlay">
           <Loader2 className="record-processing-spin" size={32} />
-          <span className="record-processing-label">Processing recording… {(saveStatus?.percent ?? 0).toFixed(1)}%</span>
+          <span className="record-processing-label">Processing recording… {saveStatus?.percent ?? 0}%</span>
           <div className="record-processing-bar">
             <div className="record-processing-bar-fill" style={{ width: `${saveStatus?.percent ?? 0}%` }} />
           </div>
