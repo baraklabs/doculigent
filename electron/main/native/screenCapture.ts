@@ -3,11 +3,13 @@ import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import ffmpegStaticPath from "ffmpeg-static";
 import { OUTPUT_HEIGHT, OUTPUT_WIDTH } from "@shared/lib/cameraBubble";
 import type { AreaRect } from "@shared/types/models";
 import { listPhysicalMonitors, type PhysicalMonitor } from "./monitors";
+import { logNative } from "./nativeLog";
 
 const ffmpegPath = (ffmpegStaticPath ?? "ffmpeg").replace("app.asar", "app.asar.unpacked");
 
@@ -169,8 +171,10 @@ async function resolveScreenCaptureKitHelperPath(): Promise<string | null> {
     : path.join(app.getAppPath(), "electron", "native", "mac", "bin", SCK_HELPER_NAME);
   try {
     await fs.access(candidate);
+    logNative(`ScreenCaptureKit helper found at ${candidate}`);
     return candidate;
   } catch {
+    logNative(`ScreenCaptureKit helper NOT found at ${candidate} — will fall back to avfoundation`);
     return null;
   }
 }
@@ -190,6 +194,7 @@ interface SckCaptureConfig {
  *  a null return means the helper failed to start (bad permissions, display not found,
  *  etc.), in which case the caller falls back to the avfoundation path. */
 function startScreenCaptureKitCapture(helperPath: string, config: SckCaptureConfig): Promise<SckCapture | null> {
+  console.log("[screenCapture] starting ScreenCaptureKit helper", { helperPath });
   const proc = spawn(helperPath, [JSON.stringify(config)], { stdio: ["pipe", "pipe", "pipe"] });
   let stdoutBuf = "";
   let stderrBuf = "";
@@ -200,6 +205,13 @@ function startScreenCaptureKitCapture(helperPath: string, config: SckCaptureConf
     stderrBuf += d.toString();
     if (stderrBuf.length > 4000) stderrBuf = stderrBuf.slice(-4000);
   });
+  proc.on("error", (error) => {
+    console.error("[screenCapture] native helper spawn error", error);
+    logNative(`ScreenCaptureKit helper spawn error: ${error}`);
+  });
+  proc.on("exit", (code, signal) => {
+    console.log("[screenCapture] native helper exited", { code, signal });
+  });
 
   return new Promise((resolve) => {
     let settled = false;
@@ -209,12 +221,18 @@ function startScreenCaptureKitCapture(helperPath: string, config: SckCaptureConf
       clearTimeout(timer);
       proc.stdout?.off("data", onStdout);
       if (!ok) {
-        console.error("[screenCapture] ScreenCaptureKit helper failed to start:", stderrBuf.slice(-1000) || stdoutBuf.slice(-1000));
+        const detail = stderrBuf.slice(-1000) || stdoutBuf.slice(-1000);
+        console.error("[screenCapture] ScreenCaptureKit helper failed to start:", detail);
+        logNative(`ScreenCaptureKit helper FAILED to start: ${detail}`);
         if (!proc.killed) proc.kill();
         resolve(null);
       } else {
+        logNative(`ScreenCaptureKit helper loaded and started (pid ${proc.pid})`);
         proc.once("exit", (code) => {
-          if (code !== 0 && code !== null) console.error(`[screenCapture] ScreenCaptureKit helper exited ${code}:`, stderrBuf.slice(-1000));
+          if (code !== 0 && code !== null) {
+            console.error(`[screenCapture] ScreenCaptureKit helper exited ${code}:`, stderrBuf.slice(-1000));
+            logNative(`ScreenCaptureKit helper exited ${code}: ${stderrBuf.slice(-1000)}`);
+          }
         });
         resolve({ kind: "sck", proc, outputPath: config.outputPath });
       }
@@ -385,6 +403,12 @@ export async function startScreenCapture(targetId: string, hideCursor: boolean, 
 
   if (process.platform === "darwin") {
     const helperPath = await resolveScreenCaptureKitHelperPath();
+    console.log("[screenCapture] native helper resolved", {
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      helperPath,
+      exists: helperPath ? existsSync(helperPath) : false,
+    });
     if (helperPath) {
       const displayId = await resolveMacDisplayId(targetId);
       if (displayId !== null) {
@@ -402,7 +426,8 @@ export async function startScreenCapture(targetId: string, hideCursor: boolean, 
           active = capture;
           return true;
         }
-        console.warn("[screenCapture] ScreenCaptureKit helper failed, falling back to avfoundation");
+        console.warn("[screenCapture] FALLING BACK TO AVFOUNDATION");
+        logNative("ScreenCaptureKit helper failed to start capture — falling back to avfoundation");
       }
     }
 
