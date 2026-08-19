@@ -93,36 +93,35 @@ export function getCameraBubbleConfig(): CameraBubbleConfig {
   return lastConfig;
 }
 
-export function setCameraBubbleRecordingActive(active: boolean, native: boolean): void {
+export function setCameraBubbleRecordingActive(active: boolean, contentProtected: boolean): void {
   if (!win || win.isDestroyed()) return;
   // The camera is always burned in from its own separately-recorded clip, never from
   // whatever this window happens to be showing — but the window itself stays visible on
-  // screen throughout, so it must not be *in* the screen capture. On Windows' native
-  // (gdigrab) path that's win.setContentProtection's job — proven reliable there. On the
-  // Chromium fallback path (getDisplayMedia, same-process) content protection is NOT
-  // reliably honored on Windows (confirmed — without hiding, the window's own content was
-  // showing up baked directly into the recorded screen). Actually hiding the window, rather
-  // than just swapping out what it renders, works regardless of that: a hidden window can't
-  // appear in any capture no matter how it's composited. The tradeoff is that the bubble
-  // can't be dragged *during* a fallback recording on Windows — wherever it was positioned
-  // before hitting record is where it stays for that recording.
-  //
-  // macOS was assumed to be like Windows' native case (trust setContentProtection, never
-  // hide) once native/screenCapture.ts grew an avfoundation-based native path — but that
-  // assumption was wrong: confirmed by testing that setContentProtection's
-  // NSWindowSharingType does NOT reliably exclude the window from ffmpeg's avfoundation
-  // capture (a live camera bubble ended up baked into the supposedly camera-free
-  // screen.mp4 even with native:true). So macOS always hides during recording regardless
-  // of native, same as the Windows fallback case — the live on-screen preview disappearing
-  // for the recording's duration is the accepted cost since content protection can't be
-  // trusted there; the actually-recorded camera.webm comes from the independent
-  // getUserMedia stream (RecordingService's sideClip), not from this window, so hiding it
-  // doesn't affect what gets recorded.
-  const shouldHide = active && (process.platform === "darwin" || !native);
-  console.log("[cameraBubbleWindow] setCameraBubbleRecordingActive", { active, native, shouldHide, wasVisible: win.isVisible() });
+  // screen throughout, so it must not be *in* the screen capture. `contentProtected` (see
+  // native/screenCapture.ts's isCaptureContentProtected) tells us whether the active
+  // backend can be trusted to exclude this window on its own: Windows' gdigrab native path
+  // and macOS's ScreenCaptureKit path both proved reliable — Windows via
+  // win.setContentProtection, macOS via ScreenCaptureKit automatically excluding
+  // sharingType=.none windows (see ScreenCaptureKitRecorder.swift's header comment). When
+  // it can't be trusted (Chromium's getDisplayMedia fallback on any platform, or macOS's
+  // avfoundation fallback — confirmed unreliable: a live camera bubble ended up baked into
+  // the supposedly camera-free screen.mp4 even with setContentProtection(true) set) this
+  // hides the window outright instead: a hidden window can't appear in any capture no
+  // matter how it's composited. The tradeoff there is the bubble can't be dragged *during*
+  // such a recording — wherever it was positioned before hitting record is where it stays.
+  // The actually-recorded camera.webm always comes from the independent getUserMedia
+  // stream (RecordingService's sideClip), not from this window, so hiding it never affects
+  // what gets recorded either way.
+  const shouldHide = active && !contentProtected;
+  console.log("[cameraBubbleWindow] setCameraBubbleRecordingActive", {
+    active,
+    contentProtected,
+    shouldHide,
+    wasVisible: win.isVisible(),
+  });
   if (shouldHide) win.hide();
   else if (!active && !win.isVisible()) win.showInactive();
-  win.webContents.send(Channels.cameraBubble.recordingActiveChanged, active, native);
+  win.webContents.send(Channels.cameraBubble.recordingActiveChanged, active, contentProtected);
 }
 
 export function openCameraBubbleWindow(partial: Pick<CameraBubbleConfig, "mirror" | "cameraDeviceId" | "blur">): void {

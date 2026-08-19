@@ -64,8 +64,8 @@ export function registerCameraBubbleIpc(): void {
 
   ipcMain.handle(
     Channels.cameraBubble.setRecordingActive,
-    async (_event, active: boolean, native: boolean): Promise<void> => {
-      setCameraBubbleRecordingActive(active, native);
+    async (_event, active: boolean, contentProtected: boolean): Promise<void> => {
+      setCameraBubbleRecordingActive(active, contentProtected);
     }
   );
 }

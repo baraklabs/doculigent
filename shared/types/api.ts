@@ -67,7 +67,7 @@ export interface DoculigentApi {
     stopCapture(): Promise<void>;
   };
   screenCapture: {
-    start(targetId: string, hideCursor: boolean, area?: AreaRect): Promise<{ available: boolean }>;
+    start(targetId: string, hideCursor: boolean, area?: AreaRect): Promise<{ available: boolean; contentProtected: boolean }>;
     stop(): Promise<{ available: boolean; filePath?: string }>;
     pause(): Promise<boolean>;
     resume(): Promise<boolean>;
@@ -85,15 +85,16 @@ export interface DoculigentApi {
     setBounds(bounds: CameraBubbleBounds): Promise<void>;
     startTrack(): Promise<void>;
     stopTrack(): Promise<void>;
-    /** `native` says whether the active recording burns the camera in via a separate
-     *  post-process pass (Windows) — when it doesn't (mac/Linux canvas pipeline), the
-     *  bubble window's own live feed is hidden while recording so it can't also be
-     *  picked up by the screen capture itself alongside the canvas-drawn copy. */
-    setRecordingActive(active: boolean, native?: boolean): Promise<void>;
+    /** `contentProtected` says whether the active screen-capture backend can be trusted to
+     *  exclude this window on its own (Windows' gdigrab native path, macOS's
+     *  ScreenCaptureKit path) — when it can't (any getDisplayMedia fallback, macOS's
+     *  avfoundation fallback), the bubble window is hidden outright while recording
+     *  instead. See cameraBubbleWindow.ts's setCameraBubbleRecordingActive. */
+    setRecordingActive(active: boolean, contentProtected?: boolean): Promise<void>;
     onConfigChanged(callback: (config: CameraBubbleConfig) => void): () => void;
     onClosedByUser(callback: () => void): () => void;
     onHoverChanged(callback: (hovering: boolean) => void): () => void;
-    onRecordingActiveChanged(callback: (active: boolean, native: boolean) => void): () => void;
+    onRecordingActiveChanged(callback: (active: boolean, contentProtected: boolean) => void): () => void;
   };
   recordingDock: {
     open(): Promise<void>;

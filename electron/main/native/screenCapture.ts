@@ -143,6 +143,22 @@ async function resolveMacScreenDeviceIndex(targetId: string): Promise<number | n
   return position >= 0 && position < screenIndices.length ? screenIndices[position] : screenIndices[0];
 }
 
+/** Whether the currently active capture backend reliably excludes a
+ *  sharingType/setContentProtection'd window (the camera bubble) on its own — Windows'
+ *  gdigrab native path (proven reliable) and macOS's ScreenCaptureKit path (also proven
+ *  reliable — it excludes sharingType=.none windows automatically, see
+ *  ScreenCaptureKitRecorder.swift's header comment), but NOT macOS's avfoundation fallback
+ *  (confirmed unreliable — a camera bubble ended up baked into the recording even with
+ *  setContentProtection(true) set) or the Chromium getDisplayMedia fallback on any
+ *  platform. Callers use this to decide whether cameraBubbleWindow.ts needs to hide the
+ *  bubble outright for the recording's duration instead of trusting the OS to exclude it. */
+export function isCaptureContentProtected(): boolean {
+  if (!active) return false;
+  if (process.platform === "win32") return active.kind === "ffmpeg";
+  if (process.platform === "darwin") return active.kind === "sck";
+  return false;
+}
+
 export function canCaptureTarget(targetId: string): boolean {
   // Only whole-display targets — neither gdigrab nor avfoundation can capture a single
   // window the way desktopCapturer's window sources can, so "window:..." targets always

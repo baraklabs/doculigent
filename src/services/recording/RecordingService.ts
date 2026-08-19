@@ -115,22 +115,29 @@ class RecordingService {
       }
     }
 
-    this.nativeCapture =
-      captureMode !== "camera" &&
-      (await window.api.screenCapture.start(targetId, true, this.areaRect ?? undefined)).available;
+    let contentProtected = false;
+    if (captureMode !== "camera") {
+      const captureResult = await window.api.screenCapture.start(targetId, true, this.areaRect ?? undefined);
+      this.nativeCapture = captureResult.available;
+      contentProtected = captureResult.contentProtected;
+    } else {
+      this.nativeCapture = false;
+    }
     console.log("[RecordingService] start()", {
       captureMode,
       nativeCapture: this.nativeCapture,
+      contentProtected,
       showCamera: this.overlay.showCamera,
       areaRect: this.areaRect,
     });
 
-    // Awaited, and before any screen capture actually starts below — on the fallback path
-    // this hides the camera bubble window outright (see setCameraBubbleRecordingActive),
-    // and that has to have already happened by the time startRawScreenRecording's
-    // getUserMedia(desktop) call grabs its first frame, or that frame (and however many
-    // follow until the hide takes effect) would still show the window.
-    await window.api.cameraBubble.setRecordingActive(true, this.nativeCapture).catch(() => {});
+    // Awaited, and before any screen capture actually starts below — when contentProtected
+    // is false this hides the camera bubble window outright (see
+    // setCameraBubbleRecordingActive), and that has to have already happened by the time
+    // startRawScreenRecording's getUserMedia(desktop) call grabs its first frame, or that
+    // frame (and however many follow until the hide takes effect) would still show the
+    // window.
+    await window.api.cameraBubble.setRecordingActive(true, contentProtected).catch(() => {});
 
     if (captureMode === "camera" || this.overlay.showCamera) {
       try {

@@ -3,6 +3,7 @@ import { Channels } from "@shared/constants/channels";
 import type { AreaRect } from "@shared/types/models";
 import {
   discardScreenCapture,
+  isCaptureContentProtected,
   pauseScreenCapture,
   resumeScreenCapture,
   startScreenCapture,
@@ -12,9 +13,14 @@ import {
 export function registerScreenCaptureIpc(): void {
   ipcMain.handle(
     Channels.screenCapture.start,
-    async (_event, targetId: string, hideCursor: boolean, area?: AreaRect): Promise<{ available: boolean }> => {
+    async (
+      _event,
+      targetId: string,
+      hideCursor: boolean,
+      area?: AreaRect
+    ): Promise<{ available: boolean; contentProtected: boolean }> => {
       const started = await startScreenCapture(targetId, hideCursor, area);
-      return { available: started };
+      return { available: started, contentProtected: started && isCaptureContentProtected() };
     }
   );
 

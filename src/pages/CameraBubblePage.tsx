@@ -143,9 +143,9 @@ export function CameraBubblePage() {
   }, []);
 
   useEffect(() => {
-    // `native` (second arg) governs whether the main process hides this window outright
-    // for the duration — see cameraBubbleWindow.ts's setCameraBubbleRecordingActive — so
-    // there's nothing left for the renderer itself to do about it either way.
+    // `contentProtected` (second arg) governs whether the main process hides this window
+    // outright for the duration — see cameraBubbleWindow.ts's setCameraBubbleRecordingActive
+    // — so there's nothing left for the renderer itself to do about it either way.
     return window.api.cameraBubble.onRecordingActiveChanged(setRecordingActive);
   }, []);
 
