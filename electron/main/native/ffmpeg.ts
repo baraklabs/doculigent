@@ -175,17 +175,38 @@ export function copyToMp4(
  *  runs out of frames first (confirmed). This is a cheap, non-realtime, bounded-by-file-
  *  length pass — unlike the live capture, there's no risk of the same runaway
  *  duplication here, since it's just re-encoding an already-finished file. */
-export function normalizeToCfr(
+export async function normalizeToCfr(
   inputPath: string,
   outputMp4Path: string,
   onProgress?: ProgressHandler,
   signal?: AbortSignal
 ): Promise<void> {
-  return run(
-    ["-y", "-i", inputPath, "-vf", "fps=30", "-c:v", "libx264", "-preset", "ultrafast", "-an", outputMp4Path],
-    onProgress,
-    signal
-  );
+  // This is the one re-encode pass Advanced Recording can't skip on mac (Quick doesn't
+  // run it at all — see resolveScreenTrack's needsCfr), so it's worth paying for
+  // hardware encoding here: VideoToolbox runs on the Mac's media engine instead of the
+  // CPU, cutting a ~1-minute software libx264 -preset ultrafast pass (for a 10-minute
+  // recording) down dramatically. Falls back to the software encoder if VideoToolbox
+  // isn't available for some reason (e.g. an ffmpeg-static build without it) rather than
+  // failing the whole save.
+  try {
+    await run(
+      [
+        "-y", "-i", inputPath, "-vf", "fps=30",
+        "-c:v", "h264_videotoolbox", "-b:v", "20M", "-pix_fmt", "yuv420p",
+        "-an", outputMp4Path,
+      ],
+      onProgress,
+      signal
+    );
+  } catch (e) {
+    if (e instanceof FfmpegCancelledError || (signal?.aborted ?? false)) throw e;
+    console.warn("[ffmpeg] h264_videotoolbox normalizeToCfr failed, falling back to libx264", e);
+    await run(
+      ["-y", "-i", inputPath, "-vf", "fps=30", "-c:v", "libx264", "-preset", "ultrafast", "-an", outputMp4Path],
+      onProgress,
+      signal
+    );
+  }
 }
 
 export function muxScreenWithAudio(
