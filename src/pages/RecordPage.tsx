@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   Pencil,
@@ -28,7 +29,19 @@ import { applyCameraBlur, preloadCameraBlurModel, type CameraBlurHandle } from "
 import { getSystemAudioStream } from "../services/recording/AudioRecordingService";
 import { SettingsService } from "../services/settings/SettingsService";
 import { AnnotationToolbar } from "../components/AnnotationToolbar";
+import { useToast } from "../hooks/useToast";
+import { useStoragePreference } from "../hooks/useStorage";
+import { showStorageSetupToast } from "../lib/storageSetupToast";
 import "./RecordPage.css";
+
+const RECORDING_MODE_LABEL: Record<"quick" | "advanced", string> = {
+  quick: "Quick Recording",
+  advanced: "Advanced Recording",
+};
+const RECORDING_MODE_COPY: Record<"quick" | "advanced", string> = {
+  quick: "Instantly generates a shareable link.",
+  advanced: "Set zoom, effects, and SFX for a polished video before you share it.",
+};
 
 const DEFAULT_OVERLAY: OverlayConfig = {
   corner: "bottom-right",
@@ -159,6 +172,10 @@ export function RecordPage() {
   const saving = useSavingRecording();
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  const toast = useToast();
+  const navigate = useNavigate();
+  const { data: storagePreference } = useStoragePreference();
+  const storageNotSetUp = storagePreference?.provider === "s3" && !storagePreference.s3;
 
   const { data: targets = [], refetch: refetchTargets } = useQuery<CaptureTarget[]>({
     queryKey: ["captureTargets"],
@@ -183,6 +200,7 @@ export function RecordPage() {
   const [mic, setMic] = useState<MicConfig>({ deviceId: null, muted: false });
   const [systemAudio, setSystemAudio] = useState<SystemAudioConfig>({ enabled: false, sourceId: null });
   const [countdownSecs, setCountdownSecs] = useState(3);
+  const [recordingMode, setRecordingMode] = useState<"quick" | "advanced">("quick");
 
   useEffect(() => {
     SettingsService.getRecordSettings()
@@ -195,6 +213,7 @@ export function RecordPage() {
           captureMode: savedCaptureMode,
           areaRect: savedAreaRect,
           countdownSecs: savedCountdownSecs,
+          recordingMode: savedRecordingMode,
         }) => {
           if (savedOverlay) setOverlay({ ...DEFAULT_OVERLAY, ...savedOverlay });
           setPreferredTargetId(savedTargetId);
@@ -203,6 +222,7 @@ export function RecordPage() {
           if (savedCaptureMode) setCaptureMode(savedCaptureMode);
           if (savedAreaRect) setAreaRect(savedAreaRect);
           if (savedCountdownSecs !== null) setCountdownSecs(savedCountdownSecs);
+          if (savedRecordingMode) setRecordingMode(savedRecordingMode);
         }
       )
       .finally(() => setSettingsLoaded(true));
@@ -265,7 +285,7 @@ export function RecordPage() {
         await discard();
       }
     });
-  }, [pause, resume, restart, discard]);
+  }, [pause, resume, restart, discard, handleStop]);
 
   useEffect(() => {
     return () => {
@@ -311,9 +331,10 @@ export function RecordPage() {
       systemAudio,
       captureMode,
       areaRect,
-      countdownSecs
+      countdownSecs,
+      recordingMode
     ).catch(() => {});
-  }, [overlay, targetId, mic, systemAudio, captureMode, areaRect, countdownSecs, settingsLoaded]);
+  }, [overlay, targetId, mic, systemAudio, captureMode, areaRect, countdownSecs, recordingMode, settingsLoaded]);
 
   const recordingRef = useRef(recording);
   useEffect(() => {
@@ -536,7 +557,17 @@ export function RecordPage() {
   }
 
   async function beginRecording() {
-    await start(targetId, overlay, mic, systemAudio, title, "record", captureMode, captureMode === "area" ? areaRect : null);
+    await start(
+      targetId,
+      overlay,
+      mic,
+      systemAudio,
+      title,
+      "record",
+      captureMode,
+      captureMode === "area" ? areaRect : null,
+      recordingMode
+    );
   }
 
   function handleStart() {
@@ -556,7 +587,7 @@ export function RecordPage() {
   }
 
   async function handleStop() {
-    await stop();
+    await stop(recordingMode);
   }
 
   const startDisabled =
@@ -575,6 +606,26 @@ export function RecordPage() {
               <span className="record-block-icon"><Monitor size={16} /></span>
               <div>
                 <div className="record-block-title">What to capture</div>
+              </div>
+              <div className="recording-mode-pill" role="group" aria-label="Recording mode">
+                {(["quick", "advanced"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={recordingMode === mode ? "on" : undefined}
+                    aria-pressed={recordingMode === mode}
+                    title={RECORDING_MODE_COPY[mode]}
+                    onClick={() => {
+                      setRecordingMode(mode);
+                      toast.info(RECORDING_MODE_COPY[mode], { title: RECORDING_MODE_LABEL[mode] });
+                      if (mode === "quick" && storageNotSetUp) {
+                        showStorageSetupToast(toast, navigate);
+                      }
+                    }}
+                  >
+                    {RECORDING_MODE_LABEL[mode]}
+                  </button>
+                ))}
               </div>
             </div>
             <div className="capture-mode-grid">

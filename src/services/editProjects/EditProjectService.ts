@@ -47,10 +47,10 @@ export const EditProjectService = {
   getMedia(id: string): Promise<EditProjectMedia> {
     return window.api.editProjects.getMedia(id);
   },
-  delete(id: string): Promise<void> {
-    return window.api.editProjects.delete(id);
+  delete(id: string, deleteSourceFiles?: boolean): Promise<void> {
+    return window.api.editProjects.delete(id, deleteSourceFiles);
   },
-  deleteMany(ids: string[]): Promise<void> {
-    return window.api.editProjects.deleteMany(ids);
+  deleteMany(ids: string[], deleteSourceFiles?: boolean): Promise<void> {
+    return window.api.editProjects.deleteMany(ids, deleteSourceFiles);
   },
 };

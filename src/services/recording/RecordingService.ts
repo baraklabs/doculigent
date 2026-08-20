@@ -48,6 +48,7 @@ class RecordingService {
   private audioMixCtx: AudioContext | null = null;
   private audioTrack: MediaStreamTrack | null = null;
   private overlay: OverlayConfig | null = null;
+  private mode: "quick" | "advanced" = "quick";
   private captureMode: CaptureMode = "display";
   private areaRect: AreaRect | null = null;
   private startedAt = 0;
@@ -98,11 +99,13 @@ class RecordingService {
     mic: MicConfig,
     systemAudio: SystemAudioConfig,
     captureMode: CaptureMode = "display",
-    areaRect: AreaRect | null = null
+    areaRect: AreaRect | null = null,
+    mode: "quick" | "advanced" = "quick"
   ): Promise<void> {
     this.captureMode = captureMode;
     this.areaRect = captureMode === "area" ? areaRect : null;
     this.overlay = captureMode === "camera" ? { ...overlay, showCamera: false } : overlay;
+    this.mode = mode;
     this.cameraDegraded = false;
 
     if (captureMode !== "camera" && window.api.system.platform === "darwin") {
@@ -115,9 +118,29 @@ class RecordingService {
       }
     }
 
+    // Quick Recording captures exactly what's on screen directly — no post-process
+    // compositing — so the camera bubble needs to be visible to (not excluded from) the
+    // native capture from the very first frame. Done before screenCapture.start() below,
+    // not after, so there's no race where early frames are captured while still protected.
+    const showBubbleDirectly = mode === "quick" && this.overlay.showCamera;
+    if (showBubbleDirectly) {
+      await window.api.cameraBubble.setContentProtected(false).catch(() => {});
+    }
+
     let contentProtected = false;
     if (captureMode !== "camera") {
-      const captureResult = await window.api.screenCapture.start(targetId, true, this.areaRect ?? undefined);
+      // hideCursor is false for Quick — Quick's native capture backend composites the
+      // cursor itself (Windows.Graphics.Capture on Windows, ScreenCaptureKit on Mac), the
+      // same compositor-driven path the OS uses to draw it on screen, so there's nothing
+      // to hide or resynthesize. Advanced still hides it (true) and tracks position
+      // separately for its editable overlay — unrelated to the Quick/flicker fix, just
+      // its own editing feature.
+      const captureResult = await window.api.screenCapture.start(
+        targetId,
+        mode === "advanced",
+        this.areaRect ?? undefined,
+        mode
+      );
       this.nativeCapture = captureResult.available;
       contentProtected = captureResult.contentProtected;
     } else {
@@ -125,19 +148,21 @@ class RecordingService {
     }
     console.log("[RecordingService] start()", {
       captureMode,
+      mode,
       nativeCapture: this.nativeCapture,
       contentProtected,
+      showBubbleDirectly,
       showCamera: this.overlay.showCamera,
       areaRect: this.areaRect,
     });
 
     // Awaited, and before any screen capture actually starts below — when contentProtected
-    // is false this hides the camera bubble window outright (see
-    // setCameraBubbleRecordingActive), and that has to have already happened by the time
-    // startRawScreenRecording's getUserMedia(desktop) call grabs its first frame, or that
-    // frame (and however many follow until the hide takes effect) would still show the
-    // window.
-    await window.api.cameraBubble.setRecordingActive(true, contentProtected).catch(() => {});
+    // is false (and showBubbleDirectly is false too) this hides the camera bubble window
+    // outright (see setCameraBubbleRecordingActive), and that has to have already happened
+    // by the time startRawScreenRecording's getUserMedia(desktop) call grabs its first
+    // frame, or that frame (and however many follow until the hide takes effect) would
+    // still show the window.
+    await window.api.cameraBubble.setRecordingActive(true, contentProtected, showBubbleDirectly).catch(() => {});
 
     if (captureMode === "camera" || this.overlay.showCamera) {
       try {
@@ -183,10 +208,14 @@ class RecordingService {
 
     this.startedAt = performance.now();
 
-    if (captureMode !== "camera") {
+    // Cursor tracking is Advanced-only — Quick's native capture backend composites the
+    // cursor itself (see hideCursor comment above), nothing left to track for it. Camera
+    // position tracking stays Advanced-only too, same reasoning as it always has: Quick
+    // burns the bubble in directly via the native capture, no tracking needed.
+    if (captureMode !== "camera" && mode === "advanced") {
       window.api.cursor.startCapture(targetId, this.areaRect).catch(() => {});
     }
-    if (this.overlay.showCamera) {
+    if (this.overlay.showCamera && mode === "advanced") {
       window.api.cameraBubble.startTrack().catch(() => {});
     }
   }
@@ -268,7 +297,11 @@ class RecordingService {
   }
 
   private async startSideClip(overlay: OverlayConfig): Promise<void> {
-    this.sideHasVideo = overlay.showCamera && !!this.cameraStream;
+    // Quick Recording burns the camera bubble in directly via the native capture itself
+    // (see start()) — no separate camera clip to composite afterward, so the side clip (if
+    // any) only ever carries mic/system audio for that mode. Advanced keeps today's full
+    // separate-camera-clip behavior, unchanged.
+    this.sideHasVideo = this.mode !== "quick" && overlay.showCamera && !!this.cameraStream;
     this.sideHasAudio = !!this.audioTrack;
     if (!this.sideHasVideo && !this.sideHasAudio) return;
 
@@ -357,6 +390,7 @@ class RecordingService {
 
     this.cleanupStreams();
     this.overlay = null;
+    this.mode = "quick";
     this.nativeCapture = false;
     this.captureMode = "display";
     this.areaRect = null;
@@ -364,7 +398,7 @@ class RecordingService {
     this.pausedAccumMs = 0;
   }
 
-  async stop(title: string, source: "record" | "meeting"): Promise<{ id: string }> {
+  async stop(title: string, source: "record" | "meeting", mode: "quick" | "advanced" = "quick"): Promise<{ id: string }> {
     if (!this.overlay) throw new Error("no active recording");
     const pausedMs = this.paused ? this.pausedAccumMs + (performance.now() - this.pauseStartedAt) : this.pausedAccumMs;
     const durationSecs = (performance.now() - this.startedAt - pausedMs) / 1000;
@@ -382,11 +416,12 @@ class RecordingService {
 
     const result =
       captureMode === "camera"
-        ? await this.stopCameraOnly(title, source, durationSecs, overlay)
-        : await this.stopSeparateFiles(title, source, durationSecs, overlay);
+        ? await this.stopCameraOnly(title, source, durationSecs, overlay, mode)
+        : await this.stopSeparateFiles(title, source, durationSecs, overlay, mode);
 
     this.cleanupStreams();
     this.overlay = null;
+    this.mode = "quick";
     this.nativeCapture = false;
     this.captureMode = "display";
     this.areaRect = null;
@@ -399,7 +434,8 @@ class RecordingService {
     title: string,
     source: "record" | "meeting",
     durationSecs: number,
-    overlay: OverlayConfig
+    overlay: OverlayConfig,
+    mode: "quick" | "advanced"
   ): Promise<{ id: string }> {
     const finalBlob = await new Promise<Blob>((resolve) => {
       if (!this.recorder || this.recorder.state === "inactive") {
@@ -410,14 +446,15 @@ class RecordingService {
       this.recorder.stop();
     });
     const webmBytes = await finalBlob.arrayBuffer();
-    return window.api.recording.save({ webmBytes, overlay, durationSecs, title, source });
+    return window.api.recording.save({ webmBytes, overlay, durationSecs, title, source, mode });
   }
 
   private async stopSeparateFiles(
     title: string,
     source: "record" | "meeting",
     durationSecs: number,
-    overlay: OverlayConfig
+    overlay: OverlayConfig,
+    mode: "quick" | "advanced"
   ): Promise<{ id: string }> {
     const sideClip = await this.stopSideClip();
     console.log("[RecordingService] stopSeparateFiles", {
@@ -431,7 +468,7 @@ class RecordingService {
     if (this.nativeCapture) {
       const { available, filePath } = await window.api.screenCapture.stop();
       if (!available || !filePath) throw new Error("native screen capture stopped with no output file");
-      return window.api.recording.save({ screenFilePath: filePath, sideClip, overlay, durationSecs, title, source });
+      return window.api.recording.save({ screenFilePath: filePath, sideClip, overlay, durationSecs, title, source, mode });
     }
 
     const finalBlob = await new Promise<Blob>((resolve) => {
@@ -455,6 +492,7 @@ class RecordingService {
       durationSecs,
       title,
       source,
+      mode,
     });
   }
 

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import type { S3Config, StorageProviderKind } from "@shared/types/storage";
 import { useSetStoragePreference, useStoragePreference } from "../../hooks/useStorage";
+import { useAuthStore } from "../../store/authStore";
 
 const PROVIDERS: { id: StorageProviderKind; label: string; blurb: string }[] = [
   {
@@ -20,8 +22,18 @@ const EMPTY_S3: S3Config = { accessKeyId: "", region: "", bucket: "", folder: ""
 export function StorageSection() {
   const { data: preference, isLoading } = useStoragePreference();
   const setPreference = useSetStoragePreference();
+  const navigate = useNavigate();
+  const session = useAuthStore((s) => s.session);
+  const authReady = useAuthStore((s) => s.ready);
 
-  const [selected, setSelected] = useState<StorageProviderKind | null>(null);
+  // Lets a deep link (e.g. RecordPage's "storage isn't set up" toast) land here with a
+  // specific destination already highlighted — ?provider=doculigent — instead of showing
+  // whatever's currently saved and making the user click again to get to the fix.
+  const [searchParams] = useSearchParams();
+  const requestedProvider = searchParams.get("provider");
+  const [selected, setSelected] = useState<StorageProviderKind | null>(
+    requestedProvider === "doculigent" || requestedProvider === "s3" ? requestedProvider : null
+  );
   const [s3, setS3] = useState<S3Config>(EMPTY_S3);
   const [s3Secret, setS3Secret] = useState("");
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
@@ -30,8 +42,14 @@ export function StorageSection() {
     if (preference?.s3) setS3(preference.s3);
   }, [preference]);
 
-  const provider = selected ?? preference?.provider ?? "doculigent";
+  // An S3 provider saved with no actual config (see RecordPage's storageNotSetUp — same
+  // definition) isn't a real choice of "Bring your own S3", it's an unfinished/broken
+  // state — default the page to Doculigent Cloud rather than highlighting the S3 tile for
+  // a setup that was never actually completed.
+  const savedProviderIsUsable = preference?.provider === "doculigent" || (preference?.provider === "s3" && !!preference.s3);
+  const provider = selected ?? (savedProviderIsUsable ? preference!.provider : "doculigent");
   const hasSavedS3 = preference?.provider === "s3" && !!preference.s3;
+  const needsSignIn = authReady && !session;
 
   async function saveDoculigent() {
     setResult(null);
@@ -88,10 +106,19 @@ export function StorageSection() {
 
           {provider === "doculigent" && (
             <div className="field">
-              {preference?.provider !== "doculigent" && (
-                <button type="button" className="primary" onClick={saveDoculigent} disabled={setPreference.isPending}>
-                  Switch to Doculigent Cloud
-                </button>
+              {needsSignIn ? (
+                <>
+                  <small className="field-hint">You're not signed in yet.</small>
+                  <button type="button" className="primary cta-highlight" onClick={() => navigate("/account")}>
+                    Sign in
+                  </button>
+                </>
+              ) : (
+                preference?.provider !== "doculigent" && (
+                  <button type="button" className="primary" onClick={saveDoculigent} disabled={setPreference.isPending}>
+                    Switch to Doculigent Cloud
+                  </button>
+                )
               )}
             </div>
           )}

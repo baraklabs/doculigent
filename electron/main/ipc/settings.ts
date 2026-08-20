@@ -140,6 +140,7 @@ export function registerSettingsIpc(): void {
       captureMode: CaptureMode | null;
       areaRect: AreaRect | null;
       countdownSecs: number | null;
+      recordingMode: "quick" | "advanced" | null;
     }> => getRecordSettings()
   );
 
@@ -153,9 +154,10 @@ export function registerSettingsIpc(): void {
       systemAudio: SystemAudioConfig | null,
       captureMode: CaptureMode | null,
       areaRect: AreaRect | null,
-      countdownSecs: number | null
+      countdownSecs: number | null,
+      recordingMode: "quick" | "advanced" | null
     ): Promise<void> => {
-      setRecordSettings(overlay, targetId, mic, systemAudio, captureMode, areaRect, countdownSecs);
+      setRecordSettings(overlay, targetId, mic, systemAudio, captureMode, areaRect, countdownSecs, recordingMode);
     }
   );
 

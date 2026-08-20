@@ -70,6 +70,7 @@ export const SettingsService = {
     captureMode: CaptureMode | null;
     areaRect: AreaRect | null;
     countdownSecs: number | null;
+    recordingMode: "quick" | "advanced" | null;
   }> {
     return window.api.settings.getRecordSettings();
   },
@@ -80,7 +81,8 @@ export const SettingsService = {
     systemAudio: SystemAudioConfig | null,
     captureMode: CaptureMode | null,
     areaRect: AreaRect | null,
-    countdownSecs: number | null
+    countdownSecs: number | null,
+    recordingMode: "quick" | "advanced" | null
   ): Promise<void> {
     return window.api.settings.setRecordSettings(
       overlay,
@@ -89,7 +91,8 @@ export const SettingsService = {
       systemAudio,
       captureMode,
       areaRect,
-      countdownSecs
+      countdownSecs,
+      recordingMode
     );
   },
   getMeetingSettings(): Promise<{

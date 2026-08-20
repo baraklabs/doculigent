@@ -36,6 +36,7 @@ interface StoredSettings {
   recordCaptureMode?: CaptureMode;
   recordAreaRect?: AreaRect;
   recordCountdownSecs?: number;
+  recordingMode?: "quick" | "advanced";
   meetingLanguage?: string;
   meetingMicEnabled?: boolean;
   meetingMicDeviceId?: string | null;
@@ -187,6 +188,7 @@ export function getRecordSettings(): {
   captureMode: CaptureMode | null;
   areaRect: AreaRect | null;
   countdownSecs: number | null;
+  recordingMode: "quick" | "advanced" | null;
 } {
   const stored = readStored();
   return {
@@ -197,6 +199,7 @@ export function getRecordSettings(): {
     captureMode: stored.recordCaptureMode ?? null,
     areaRect: stored.recordAreaRect ?? null,
     countdownSecs: stored.recordCountdownSecs ?? null,
+    recordingMode: stored.recordingMode ?? null,
   };
 }
 
@@ -207,7 +210,8 @@ export function setRecordSettings(
   systemAudio: SystemAudioConfig | null,
   captureMode: CaptureMode | null,
   areaRect: AreaRect | null,
-  countdownSecs: number | null
+  countdownSecs: number | null,
+  recordingMode: "quick" | "advanced" | null
 ): void {
   writeStored({
     ...readStored(),
@@ -218,6 +222,7 @@ export function setRecordSettings(
     recordCaptureMode: captureMode ?? undefined,
     recordAreaRect: areaRect ?? undefined,
     recordCountdownSecs: countdownSecs ?? undefined,
+    recordingMode: recordingMode ?? undefined,
   });
 }
 

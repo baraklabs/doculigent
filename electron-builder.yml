@@ -20,6 +20,16 @@ asarUnpack:
 win:
   target:
     - nsis
+  extraResources:
+    # Compiled Windows.Graphics.Capture helper (electron/native/windows/capture-helper,
+    # built via `npm run build:windows-native`, which must run before packaging) — Quick
+    # Recording's native capture path on Windows, see native/screenCapture.ts. Scoped
+    # under win: (not top-level) since electron/native/windows/bin only ever exists on
+    # Windows builds.
+    - from: electron/native/windows/bin
+      to: native-bin
+      filter:
+        - "**/*"
 nsis:
   # oneClick installers skip the entire wizard, including the license page — this has to be
   # off for the accept/decline terms gate below to actually show up.
@@ -59,3 +69,12 @@ linux:
     - AppImage
   icon: resources/icon.png
   category: AudioVideo
+  extraResources:
+    # Compiled PipeWire capture helper (electron/native/linux/capture-helper, built via
+    # `npm run build:linux-native`) — Quick Recording's native capture path on Linux, see
+    # native/screenCapture.ts. UNVERIFIED (see that crate's src/main.rs header comment) —
+    # falls back to the existing getDisplayMedia pipeline if missing/broken.
+    - from: electron/native/linux/bin
+      to: native-bin
+      filter:
+        - "**/*"

@@ -20,7 +20,9 @@ import { getS3SecretKey } from "../native/keyring";
 import { guessMimeType } from "../teams/upload";
 import type { StorageProvider } from "./StorageProvider";
 
-const SHARE_LINK_EXPIRY_SECONDS = 3 * 24 * 60 * 60; // 3 days
+// AWS's hard cap for a SigV4 URL presigned with static/IAM credentials — getSignedUrl
+// throws past a week, so this is the maximum a share link can stay valid for.
+const SHARE_LINK_EXPIRY_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
 function normalizeFolder(folder: string): string {
   const trimmed = folder.trim().replace(/^\/+/, "");

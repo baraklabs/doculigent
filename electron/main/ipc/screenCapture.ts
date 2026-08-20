@@ -17,9 +17,10 @@ export function registerScreenCaptureIpc(): void {
       _event,
       targetId: string,
       hideCursor: boolean,
-      area?: AreaRect
+      area?: AreaRect,
+      mode?: "quick" | "advanced"
     ): Promise<{ available: boolean; contentProtected: boolean }> => {
-      const started = await startScreenCapture(targetId, hideCursor, area);
+      const started = await startScreenCapture(targetId, hideCursor, area, mode);
       return { available: started, contentProtected: started && isCaptureContentProtected() };
     }
   );

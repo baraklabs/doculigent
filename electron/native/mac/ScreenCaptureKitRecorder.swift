@@ -33,6 +33,11 @@ struct CaptureConfig: Codable {
 	let areaY: Double?
 	let areaWidth: Double?
 	let areaHeight: Double?
+	// Quick Recording wants the real OS cursor burnt directly into the capture (no
+	// separate synthetic overlay needed); Advanced keeps it out, same as before, since it
+	// tracks cursor position separately for editing. Defaults to false (hidden) to match
+	// this recorder's pre-existing behavior when an older Node side doesn't send it.
+	let showsCursor: Bool?
 }
 
 let targetCaptureFPS = 30
@@ -78,7 +83,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		streamConfig.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(requestedFPS))
 		streamConfig.queueDepth = 6
 		streamConfig.pixelFormat = kCVPixelFormatType_32BGRA
-		streamConfig.showsCursor = false
+		streamConfig.showsCursor = config.showsCursor ?? false
 		streamConfig.capturesAudio = false
 
 		let displayBounds = CGDisplayBounds(display.displayID)

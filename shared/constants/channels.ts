@@ -31,6 +31,7 @@ export const Channels = {
     startTrack: "cameraBubble:startTrack",
     stopTrack: "cameraBubble:stopTrack",
     setRecordingActive: "cameraBubble:setRecordingActive",
+    setContentProtected: "cameraBubble:setContentProtected",
     configChanged: "cameraBubble:configChanged",
     closedByUser: "cameraBubble:closedByUser",
     hoverChanged: "cameraBubble:hoverChanged",

@@ -405,12 +405,12 @@ export function LibraryPage() {
         ? sectionProjects.filter((p) => selectedIds.has(p.id)).map((p) => p.id)
         : [];
 
-  function confirmProjectBulkDelete() {
+  function confirmProjectBulkDelete(deleteSourceFiles: boolean) {
     if (projectBulkDeleteTargetIds.length === 0) {
       setProjectBulkDeleteScope(null);
       return;
     }
-    deleteEditProjectsMut.mutate(projectBulkDeleteTargetIds);
+    deleteEditProjectsMut.mutate({ ids: projectBulkDeleteTargetIds, deleteSourceFiles });
     setSelectedIds(new Set());
     setProjectBulkDeleteScope(null);
   }
@@ -963,20 +963,33 @@ export function LibraryPage() {
         <div className="modal-backdrop" onClick={() => setProjectDeleteTarget(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h2>Delete "{projectDeleteTarget.title}"?</h2>
-            <p className="muted">This deletes the project and its files. This can't be undone.</p>
+            <p className="muted">
+              You can remove just the project and keep its source recording (including its library entry, if
+              any) on disk, or also delete the related files from disk — this removes the recording everywhere,
+              even if it's in your library. This can't be undone.
+            </p>
             <div className="actions modal-actions">
               <button type="button" onClick={() => setProjectDeleteTarget(null)}>
                 Cancel
               </button>
               <button
                 type="button"
-                className="danger"
                 onClick={() => {
-                  deleteEditProjectMut.mutate(projectDeleteTarget.id);
+                  deleteEditProjectMut.mutate({ id: projectDeleteTarget.id, deleteSourceFiles: false });
                   setProjectDeleteTarget(null);
                 }}
               >
-                Delete
+                Delete Project Only
+              </button>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => {
+                  deleteEditProjectMut.mutate({ id: projectDeleteTarget.id, deleteSourceFiles: true });
+                  setProjectDeleteTarget(null);
+                }}
+              >
+                Delete Related Files Too
               </button>
             </div>
           </div>
@@ -990,13 +1003,20 @@ export function LibraryPage() {
               Delete {projectBulkDeleteTargetIds.length}{" "}
               {projectBulkDeleteTargetIds.length === 1 ? "project" : "projects"}?
             </h2>
-            <p className="muted">This can't be undone.</p>
+            <p className="muted">
+              You can remove just the projects and keep their source recordings (including library entries, if
+              any) on disk, or also delete the related files from disk — even if they're in your library. This
+              can't be undone.
+            </p>
             <div className="actions modal-actions">
               <button type="button" onClick={() => setProjectBulkDeleteScope(null)}>
                 Cancel
               </button>
-              <button type="button" className="danger" onClick={confirmProjectBulkDelete}>
-                Delete
+              <button type="button" onClick={() => confirmProjectBulkDelete(false)}>
+                Delete Projects Only
+              </button>
+              <button type="button" className="danger" onClick={() => confirmProjectBulkDelete(true)}>
+                Delete Related Files Too
               </button>
             </div>
           </div>

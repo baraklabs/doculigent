@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { useGenerateShareLink, useStorageFiles, useUploadStorageFile } from "../hooks/useStorage";
 import { useToast } from "../hooks/useToast";
@@ -12,9 +12,14 @@ function extOf(filePath: string): string {
 export function ShareToStoragePanel({
   video,
   onClose,
+  autoShare,
 }: {
   video?: { filePath: string; title: string };
   onClose?: () => void;
+  /** Fires the same upload the "Upload & copy link" button does, once, as soon as
+   *  `video` is loaded — used by RecordingSaveToast's "storage is set up, go share it"
+   *  path so it doesn't need a manual click. */
+  autoShare?: boolean;
 }) {
   const toast = useToast();
   const uploadFile = useUploadStorageFile();
@@ -22,6 +27,7 @@ export function ShareToStoragePanel({
   const { data: sharedFiles = [] } = useStorageFiles("");
   const [error, setError] = useState<string | null>(null);
   const [confirmReplace, setConfirmReplace] = useState(false);
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const uploadPercent = uploadFile.uploadPercent;
 
   const displayName = video ? `${video.title}${extOf(video.filePath)}` : "";
@@ -30,12 +36,13 @@ export function ShareToStoragePanel({
   async function upload() {
     if (!video) return;
     setError(null);
+    setExpiresAt(null);
     try {
       const file = await uploadFile.mutateAsync({ filePath: video.filePath, displayName });
       const link = await generateLink.mutateAsync(file.id);
       await navigator.clipboard.writeText(link.url);
       toast.success("Link copied to clipboard");
-      onClose?.();
+      setExpiresAt(link.expiresAt);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -48,6 +55,14 @@ export function ShareToStoragePanel({
     }
     void upload();
   }
+
+  const autoSharedRef = useRef(false);
+  useEffect(() => {
+    if (!autoShare || autoSharedRef.current || !video) return;
+    autoSharedRef.current = true;
+    handleShare();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoShare, video]);
 
   return (
     <div className="field share-panel">
@@ -67,16 +82,29 @@ export function ShareToStoragePanel({
         </div>
       )}
 
-      <div className="actions">
-        <button type="button" className="primary" onClick={handleShare} disabled={!video || uploadPercent !== null}>
-          {uploadPercent !== null ? "Uploading…" : `Upload & copy link`}
-        </button>
-        {onClose && (
-          <button type="button" onClick={onClose} disabled={uploadPercent !== null}>
-            Cancel
+      {expiresAt ? (
+        <>
+          <p className="notice">Link copied to clipboard — expires {new Date(expiresAt).toLocaleString()}.</p>
+          <div className="actions">
+            {onClose && (
+              <button type="button" className="primary" onClick={onClose}>
+                Done
+              </button>
+            )}
+          </div>
+        </>
+      ) : (
+        <div className="actions">
+          <button type="button" className="primary" onClick={handleShare} disabled={!video || uploadPercent !== null}>
+            {uploadPercent !== null ? "Uploading…" : `Upload & copy link`}
           </button>
-        )}
-      </div>
+          {onClose && (
+            <button type="button" onClick={onClose} disabled={uploadPercent !== null}>
+              Cancel
+            </button>
+          )}
+        </div>
+      )}
 
       {error && <p className="error">{error}</p>}
 

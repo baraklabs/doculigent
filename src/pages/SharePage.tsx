@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useVideo } from "../hooks/useVideos";
 import { teamErrorCode, teamErrorMessage, useTeams, useUploadTeamFile } from "../hooks/useTeams";
 import { useStoragePreference } from "../hooks/useStorage";
@@ -12,6 +12,8 @@ export function SharePage() {
   const { id } = useParams<{ id: string }>();
   const { data: video } = useVideo(id);
   const { data: storagePreference, isLoading: storagePreferenceLoading } = useStoragePreference();
+  const [searchParams] = useSearchParams();
+  const autoShare = searchParams.get("autoShare") === "1";
 
   if (storagePreferenceLoading) {
     return (
@@ -26,15 +28,20 @@ export function SharePage() {
     return (
       <section className="panel share">
         <h1>Share</h1>
-        <ShareToStoragePanel video={video ? { filePath: video.filePath, title: video.title } : undefined} />
+        <ShareToStoragePanel
+          video={video ? { filePath: video.filePath, title: video.title } : undefined}
+          autoShare={autoShare}
+        />
       </section>
     );
   }
 
-  return <DoculigentTeamShare video={video ? { filePath: video.filePath, title: video.title } : undefined} />;
+  return (
+    <DoculigentTeamShare video={video ? { filePath: video.filePath, title: video.title } : undefined} autoShare={autoShare} />
+  );
 }
 
-function DoculigentTeamShare({ video }: { video?: { filePath: string; title: string } }) {
+function DoculigentTeamShare({ video, autoShare }: { video?: { filePath: string; title: string }; autoShare?: boolean }) {
   const session = useAuthStore((s) => s.session);
   const { data: teams = [], isLoading: teamsLoading } = useTeams(!!session);
   const [teamId, setTeamId] = useState<string>("");
@@ -67,6 +74,20 @@ function DoculigentTeamShare({ video }: { video?: { filePath: string; title: str
       setUploadPercent(null);
     }
   }
+
+  // RecordingSaveToast's "storage is set up, go share it" path lands here with
+  // ?autoShare=1 — fire the same upload the "Send to team" button does, but only once
+  // teams have actually loaded and a team is selected (i.e. once this component's own
+  // preconditions, same ones the button's `disabled` already checks, are satisfied). If
+  // there's no session or no team, this deliberately never fires — the existing sign-in/
+  // no-team notice below renders instead, same as a manual visit would show.
+  const autoSharedRef = useRef(false);
+  useEffect(() => {
+    if (!autoShare || autoSharedRef.current || !video || !teamId || teamsLoading) return;
+    autoSharedRef.current = true;
+    void handleShare();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoShare, video, teamId, teamsLoading]);
 
   if (!session) {
     return (

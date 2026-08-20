@@ -292,6 +292,25 @@
 }
 .header-toggle.on .header-toggle-knob { transform: translateX(13px); }
 
+/* Scoped as `.record-block-head > .recording-mode-pill` (not just `.recording-mode-pill`)
+   so it outranks `.record-block-head > div { flex: 1 1 auto }` above — this is a <div>
+   too, and without the extra specificity that rule's flex-grow wins the cascade over
+   `flex: none` below, stretching the pill's rounded background out to fill the row and
+   leaving a large empty gap after the last button (most visible after "Advanced
+   Recording", the longer label, since it's the one nearest that leftover space). */
+.record-block-head > .recording-mode-pill {
+  margin-left: auto; flex: none;
+  display: flex; align-items: center; gap: 2px;
+  background: var(--border); border-radius: 999px;
+  padding: 3px;
+}
+.recording-mode-pill button {
+  background: transparent; border: none;
+  padding: 5px 10px; border-radius: 999px; font-size: 12px; font-weight: 500;
+  color: var(--muted); cursor: pointer; transition: background 150ms ease, color 150ms ease;
+}
+.recording-mode-pill button.on { background: var(--block-accent); color: #fff; cursor: default; }
+
 .record-block-head > .camera-header-toggles { flex: none; min-width: 0; }
 .camera-header-toggles { display: flex; align-items: center; gap: 12px; margin-left: auto; }
 .camera-header-toggles .header-toggle { margin-left: 0; }

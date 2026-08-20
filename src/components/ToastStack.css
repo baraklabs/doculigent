@@ -23,6 +23,11 @@
 .toast-item-body { flex: 1; min-width: 0; }
 .toast-item-body strong { display: block; font-size: 13px; margin-bottom: 2px; }
 .toast-item-body p { margin: 0; font-size: 12px; color: var(--muted); word-break: break-word; }
+.toast-item-action {
+  display: inline-block; margin-top: 6px; padding: 0; border: none; background: transparent;
+  font-size: 12px; font-weight: 600; color: var(--accent); cursor: pointer; text-decoration: underline;
+}
+.toast-item-action:hover { color: var(--text); }
 .toast-item-close {
   background: transparent; border: none; color: var(--muted); font-size: 15px;
   cursor: pointer; padding: 0; line-height: 1; flex-shrink: 0;

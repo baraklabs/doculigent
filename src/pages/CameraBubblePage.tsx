@@ -195,9 +195,14 @@ export function CameraBubblePage() {
   useEffect(() => {
     if (!config || !boundsLoaded) return;
     const { width, height } = boundsRef.current;
-    const rects = shapeRegionFor(width, height, config.shape, config.roundedCorners, hovering);
+    // The corner "patches" (see shapeRegionFor) punch the resize-handle squares into the
+    // window's OS-level shape so they can render outside the circular/rounded video mask.
+    // Once recordingActive hides the handle divs (below) those patches must go too, or the
+    // window keeps exposing bare corner squares with nothing drawn in them but the
+    // underlying camera feed bleeding through past the mask.
+    const rects = shapeRegionFor(width, height, config.shape, config.roundedCorners, hovering && !recordingActive);
     window.api.cameraBubble.setShapeRegion(rects).catch(() => {});
-  }, [config?.shape, config?.roundedCorners, boundsLoaded, hovering]);
+  }, [config?.shape, config?.roundedCorners, boundsLoaded, hovering, recordingActive]);
 
   function handleDragPointerDown(e: ReactPointerEvent<HTMLDivElement>) {
     if (e.button !== 0) return;

@@ -26,6 +26,9 @@ import type {
   RecordingDockConfig,
   RecordingDockOrientation,
   RecordingDockTimerSync,
+  RecordingSaveResult,
+  SaveAudioInput,
+  SaveRecordingInput,
   SystemAudioConfig,
   Summary,
   TimelineEditSettings,
@@ -67,7 +70,12 @@ export interface DoculigentApi {
     stopCapture(): Promise<void>;
   };
   screenCapture: {
-    start(targetId: string, hideCursor: boolean, area?: AreaRect): Promise<{ available: boolean; contentProtected: boolean }>;
+    start(
+      targetId: string,
+      hideCursor: boolean,
+      area?: AreaRect,
+      mode?: "quick" | "advanced"
+    ): Promise<{ available: boolean; contentProtected: boolean }>;
     stop(): Promise<{ available: boolean; filePath?: string }>;
     pause(): Promise<boolean>;
     resume(): Promise<boolean>;
@@ -89,8 +97,15 @@ export interface DoculigentApi {
      *  exclude this window on its own (Windows' gdigrab native path, macOS's
      *  ScreenCaptureKit path) — when it can't (any getDisplayMedia fallback, macOS's
      *  avfoundation fallback), the bubble window is hidden outright while recording
-     *  instead. See cameraBubbleWindow.ts's setCameraBubbleRecordingActive. */
-    setRecordingActive(active: boolean, contentProtected?: boolean): Promise<void>;
+     *  instead. `keepVisible` (Quick Recording) skips that hide logic entirely — the
+     *  window is deliberately left visible/unprotected (see setContentProtected below) so
+     *  the native capture burns it in directly. See
+     *  cameraBubbleWindow.ts's setCameraBubbleRecordingActive. */
+    setRecordingActive(active: boolean, contentProtected?: boolean, keepVisible?: boolean): Promise<void>;
+    /** Quick Recording calls this with `false` before starting native capture so the bubble
+     *  is already visible to it from the first frame — always restored to `true` the moment
+     *  a recording ends (see setRecordingActive's `active === false` branch). */
+    setContentProtected(protect: boolean): Promise<void>;
     onConfigChanged(callback: (config: CameraBubbleConfig) => void): () => void;
     onClosedByUser(callback: () => void): () => void;
     onHoverChanged(callback: (hovering: boolean) => void): () => void;
@@ -157,32 +172,11 @@ export interface DoculigentApi {
     onOverlayOpenChanged(callback: (open: boolean) => void): () => void;
   };
   recording: {
-    save(input: {
-      webmBytes?: ArrayBuffer;
-      screenFilePath?: string;
-      /** Raw, uncropped/unscaled screen recording bytes — the non-native (no gdigrab)
-       *  equivalent of `screenFilePath`, transcoded+cropped server-side into the same
-       *  `metadata/screen.mp4` shape a native recording produces. Cropped with `areaRect`
-       *  when given (area mode always captures the *whole* display — there's no way to
-       *  crop at the getUserMedia source itself), otherwise scaled/padded like a display
-       *  capture. */
-      screenBytes?: ArrayBuffer;
-      areaRect?: AreaRect | null;
-      sideClip?: { bytes: ArrayBuffer; hasVideo: boolean; hasAudio: boolean };
-      overlay: OverlayConfig;
-      durationSecs: number;
-      title: string;
-      source: "record" | "meeting";
-    }): Promise<{ id: string }>;
-    saveAudio(input: {
-      audioBytes: ArrayBuffer;
-      durationSecs: number;
-      title: string;
-      transcript: Transcript | null;
-    }): Promise<Video>;
+    save(input: SaveRecordingInput): Promise<{ id: string }>;
+    saveAudio(input: SaveAudioInput): Promise<Video>;
     onSaveProgress(callback: (progress: { id: string; percent: number }) => void): () => void;
     cancelSave(id: string): Promise<boolean>;
-    onSaveCompleted(callback: (video: Video) => void): () => void;
+    onSaveCompleted(callback: (result: RecordingSaveResult) => void): () => void;
     onSaveFailed(callback: (failure: { id: string; message: string }) => void): () => void;
   };
   editProjects: {
@@ -198,8 +192,8 @@ export interface DoculigentApi {
     updateTimeline(id: string, timeline: TimelineEditSettings): Promise<EditProject>;
     pickBackgroundImage(): Promise<string | null>;
     getMedia(id: string): Promise<EditProjectMedia>;
-    delete(id: string): Promise<void>;
-    deleteMany(ids: string[]): Promise<void>;
+    delete(id: string, deleteSourceFiles?: boolean): Promise<void>;
+    deleteMany(ids: string[], deleteSourceFiles?: boolean): Promise<void>;
     export(
       exportId: string,
       input: {
@@ -252,6 +246,7 @@ export interface DoculigentApi {
       captureMode: CaptureMode | null;
       areaRect: AreaRect | null;
       countdownSecs: number | null;
+      recordingMode: "quick" | "advanced" | null;
     }>;
     setRecordSettings(
       overlay: OverlayConfig,
@@ -260,7 +255,8 @@ export interface DoculigentApi {
       systemAudio: SystemAudioConfig | null,
       captureMode: CaptureMode | null,
       areaRect: AreaRect | null,
-      countdownSecs: number | null
+      countdownSecs: number | null,
+      recordingMode: "quick" | "advanced" | null
     ): Promise<void>;
     getMeetingSettings(): Promise<{
       language: string | null;

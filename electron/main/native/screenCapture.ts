@@ -53,26 +53,81 @@ interface SckCapture {
   outputPath: string;
 }
 
-type ActiveCapture = FfmpegCapture | SckCapture;
+// Windows' native backend for Quick Recording — a compiled Rust helper (electron/native/
+// windows/capture-helper) using Windows.Graphics.Capture instead of ffmpeg's gdigrab. Why:
+// gdigrab's -draw_mouse polls GetCursorInfo/GDI independently of the frame capture, racing
+// DWM's hardware cursor compositor — confirmed visible flicker, both live on-screen and in
+// the recording, a structural limitation no flag fixes. WGC composites the cursor as part
+// of the same frame the compositor already produces, so there's nothing to poll or race.
+// Only used for Quick mode (mode param below) — Advanced keeps gdigrab always, since it
+// hides the cursor and tracks it separately for editable overlay and has no flicker
+// complaint. Falls back to gdigrab if the helper hasn't been built (see
+// scripts/build-windows-capture-helper.mjs — requires a Rust toolchain, so isn't run
+// automatically) or if monitor resolution fails.
+//
+// Segment/pause-resume shape matches FfmpegCapture deliberately: unlike the SCK helper
+// (which pauses/resumes in-process via stdin commands), this helper's own protocol only
+// ever runs one uninterrupted recording per launch — pause stops the current helper
+// process cleanly (via a "stop\n" stdin command, see finishWgcSegment), resume spawns a
+// fresh one, and the final stop concats all segments with concatSegments, exactly like
+// gdigrab's own pause/resume today.
+interface WgcCapture {
+  kind: "wgc";
+  monitorIndex: number;
+  showCursor: boolean;
+  areaX?: number;
+  areaY?: number;
+  areaWidth?: number;
+  areaHeight?: number;
+  current: Segment | null;
+  segments: string[];
+}
+
+// Linux's native backend for Quick Recording — a compiled Rust helper (electron/native/
+// linux/capture-helper) using PipeWire via the xdg-desktop-portal ScreenCast interface.
+// UNVERIFIED (see that crate's src/main.rs header comment — written with no Linux
+// environment available to build or test against). Mirrors SckCapture's shape (a single
+// long-lived process, pause/resume handled in-process via stdin rather than
+// FfmpegCapture/WgcCapture's segment-per-pause model) rather than gdigrab/WGC's — re-
+// running the portal permission handshake on every resume would re-show its picker
+// dialog each time, which the in-process approach avoids. Falls back to the existing
+// getDisplayMedia pipeline (Linux's only capture path before this) if the helper hasn't
+// been built or fails to start — see scripts/build-linux-capture-helper.mjs.
+interface PipeWireCapture {
+  kind: "pipewire";
+  proc: ChildProcess;
+  outputPath: string;
+}
+
+type ActiveCapture = FfmpegCapture | SckCapture | WgcCapture | PipeWireCapture;
 
 let active: ActiveCapture | null = null;
 
-function matchPhysicalRect(display: Electron.Display, monitors: PhysicalMonitor[]): PhysicalMonitor["rect"] | null {
+// Returns both the matched monitor's rect (for gdigrab's -offset_x/-offset_y/-video_size)
+// and its 0-based index within `monitors` (for WGC's Monitor::from_index — the Rust
+// helper enumerates via the identical EnumDisplayMonitors Win32 call listPhysicalMonitors
+// uses, in the same order, so this index is directly usable there, 1-based).
+function matchPhysicalMonitor(
+  display: Electron.Display,
+  monitors: PhysicalMonitor[]
+): { monitor: PhysicalMonitor; index: number } | null {
   const expectedW = Math.round(display.bounds.width * display.scaleFactor);
   const expectedH = Math.round(display.bounds.height * display.scaleFactor);
   const isPrimaryDisplay = display.id === screen.getPrimaryDisplay().id;
 
-  const candidates = monitors.filter(
-    (m) => Math.abs(m.rect.width - expectedW) <= 2 && Math.abs(m.rect.height - expectedH) <= 2
-  );
-  if (candidates.length === 1) return candidates[0].rect;
+  const candidates = monitors
+    .map((monitor, index) => ({ monitor, index }))
+    .filter(({ monitor: m }) => Math.abs(m.rect.width - expectedW) <= 2 && Math.abs(m.rect.height - expectedH) <= 2);
+  if (candidates.length === 1) return candidates[0];
   if (candidates.length > 1) {
-    return (candidates.find((m) => m.primary === isPrimaryDisplay) ?? candidates[0]).rect;
+    return candidates.find(({ monitor: m }) => m.primary === isPrimaryDisplay) ?? candidates[0];
   }
-  return isPrimaryDisplay ? (monitors.find((m) => m.primary)?.rect ?? null) : null;
+  if (!isPrimaryDisplay) return null;
+  const primaryIndex = monitors.findIndex((m) => m.primary);
+  return primaryIndex >= 0 ? { monitor: monitors[primaryIndex], index: primaryIndex } : null;
 }
 
-async function resolveDisplayRect(targetId: string): Promise<PhysicalMonitor["rect"] | null> {
+async function resolveMonitor(targetId: string): Promise<{ rect: PhysicalMonitor["rect"]; index: number } | null> {
   const sources = await desktopCapturer.getSources({ types: ["screen"] });
   const source = sources.find((s) => s.id === targetId);
   if (!source) return null;
@@ -81,7 +136,13 @@ async function resolveDisplayRect(targetId: string): Promise<PhysicalMonitor["re
 
   const monitors = listPhysicalMonitors();
   if (monitors.length === 0) return null;
-  return matchPhysicalRect(display, monitors);
+  const match = matchPhysicalMonitor(display, monitors);
+  return match ? { rect: match.monitor.rect, index: match.index } : null;
+}
+
+async function resolveDisplayRect(targetId: string): Promise<PhysicalMonitor["rect"] | null> {
+  const resolved = await resolveMonitor(targetId);
+  return resolved?.rect ?? null;
 }
 
 // macOS equivalent of listPhysicalMonitors — avfoundation exposes screens as numbered
@@ -154,16 +215,22 @@ async function resolveMacScreenDeviceIndex(targetId: string): Promise<number | n
  *  bubble outright for the recording's duration instead of trusting the OS to exclude it. */
 export function isCaptureContentProtected(): boolean {
   if (!active) return false;
-  if (process.platform === "win32") return active.kind === "ffmpeg";
+  if (process.platform === "win32") return active.kind === "ffmpeg" || active.kind === "wgc";
   if (process.platform === "darwin") return active.kind === "sck";
   return false;
 }
 
 export function canCaptureTarget(targetId: string): boolean {
-  // Only whole-display targets — neither gdigrab nor avfoundation can capture a single
-  // window the way desktopCapturer's window sources can, so "window:..." targets always
-  // fall back to the getDisplayMedia-based pipeline on both platforms.
-  return (process.platform === "win32" || process.platform === "darwin") && targetId.startsWith("screen:");
+  // Only whole-display targets — neither gdigrab/WGC nor avfoundation/SCK can capture a
+  // single window the way desktopCapturer's window sources can, so "window:..." targets
+  // always fall back to the getDisplayMedia-based pipeline on every platform. Linux is
+  // included here only for the PipeWire helper (Quick mode) — see startScreenCapture's
+  // linux branch, which returns false itself (no gdigrab-equivalent fallback exists on
+  // Linux) if that helper is missing or fails to start.
+  return (
+    (process.platform === "win32" || process.platform === "darwin" || process.platform === "linux") &&
+    targetId.startsWith("screen:")
+  );
 }
 
 export function vfFor(isArea: boolean): string {
@@ -203,6 +270,10 @@ interface SckCaptureConfig {
   areaY?: number;
   areaWidth?: number;
   areaHeight?: number;
+  /** Requires ScreenCaptureKitRecorder.swift to read this field and set
+   *  streamConfig.showsCursor accordingly (currently hardcoded false there) — until the
+   *  native helper is rebuilt with that change, this is sent but has no effect. */
+  showsCursor?: boolean;
 }
 
 /** Spawns the helper and waits for its "Recording started" stdout line (mirrors the
@@ -257,6 +328,208 @@ function startScreenCaptureKitCapture(helperPath: string, config: SckCaptureConf
       if (stdoutBuf.includes("Recording started")) finish(true);
     };
     const timer = setTimeout(() => finish(false), 12000);
+    proc.stdout?.on("data", onStdout);
+    proc.once("error", () => finish(false));
+    proc.once("exit", () => finish(false));
+  });
+}
+
+const WGC_HELPER_NAME = "doculigent-wgc-helper.exe";
+
+/** Resolves the compiled Windows.Graphics.Capture helper, or null if it hasn't been built
+ *  (see scripts/build-windows-capture-helper.mjs) — callers treat null as "fall back to
+ *  the gdigrab-based path", never as an error, same shape as
+ *  resolveScreenCaptureKitHelperPath above. */
+async function resolveWindowsCaptureHelperPath(): Promise<string | null> {
+  if (process.platform !== "win32") return null;
+  const candidate = app.isPackaged
+    ? path.join(process.resourcesPath, "native-bin", WGC_HELPER_NAME)
+    : path.join(app.getAppPath(), "electron", "native", "windows", "bin", WGC_HELPER_NAME);
+  try {
+    await fs.access(candidate);
+    logNative(`WGC helper found at ${candidate}`);
+    return candidate;
+  } catch {
+    logNative(`WGC helper NOT found at ${candidate} — will fall back to gdigrab`);
+    return null;
+  }
+}
+
+interface WgcHelperConfig {
+  monitorIndex: number;
+  outputPath: string;
+  fps: number;
+  showCursor: boolean;
+  areaX?: number;
+  areaY?: number;
+  areaWidth?: number;
+  areaHeight?: number;
+}
+
+/** Spawns the WGC helper for one segment and waits for its "Recording started" stdout
+ *  line — mirrors startScreenCaptureKitCapture's handshake, but returns a plain Segment
+ *  (proc + outputPath) so pauseScreenCapture/resumeScreenCapture/stopScreenCapture can
+ *  reuse the exact same segments[]/concatSegments flow gdigrab already uses. A null
+ *  return means the helper failed to start, in which case the caller falls back to
+ *  gdigrab (only relevant on the very first segment — see startScreenCapture). */
+function spawnWgcSegment(helperPath: string, capture: WgcCapture): Promise<Segment | null> {
+  const outputPath = path.join(os.tmpdir(), `doculigent-screen-${randomUUID()}.mp4`);
+  const config: WgcHelperConfig = {
+    monitorIndex: capture.monitorIndex,
+    outputPath,
+    fps: FPS,
+    showCursor: capture.showCursor,
+    areaX: capture.areaX,
+    areaY: capture.areaY,
+    areaWidth: capture.areaWidth,
+    areaHeight: capture.areaHeight,
+  };
+
+  console.log("[screenCapture] starting WGC helper", { helperPath, config });
+  const proc = spawn(helperPath, [JSON.stringify(config)], { stdio: ["pipe", "pipe", "pipe"] });
+  let stdoutBuf = "";
+  let stderrBuf = "";
+  proc.stdout?.on("data", (d: Buffer) => {
+    stdoutBuf += d.toString();
+  });
+  proc.stderr?.on("data", (d: Buffer) => {
+    stderrBuf += d.toString();
+    if (stderrBuf.length > 4000) stderrBuf = stderrBuf.slice(-4000);
+  });
+  proc.on("error", (error) => {
+    console.error("[screenCapture] WGC helper spawn error", error);
+    logNative(`WGC helper spawn error: ${error}`);
+  });
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      proc.stdout?.off("data", onStdout);
+      if (!ok) {
+        const detail = stderrBuf.slice(-1000) || stdoutBuf.slice(-1000);
+        console.error("[screenCapture] WGC helper failed to start:", detail);
+        logNative(`WGC helper FAILED to start: ${detail}`);
+        if (!proc.killed) proc.kill();
+        resolve(null);
+      } else {
+        logNative(`WGC helper started (pid ${proc.pid})`);
+        proc.once("close", (code) => {
+          if (code !== 0 && code !== null) {
+            console.error(`[screenCapture] WGC helper exited ${code}:`, stderrBuf.slice(-1000));
+            logNative(`WGC helper exited ${code}: ${stderrBuf.slice(-1000)}`);
+          }
+        });
+        resolve({ proc, outputPath });
+      }
+    };
+    const onStdout = () => {
+      if (stdoutBuf.includes("Recording started")) finish(true);
+    };
+    const timer = setTimeout(() => finish(false), 12000);
+    proc.stdout?.on("data", onStdout);
+    proc.once("error", () => finish(false));
+    proc.once("exit", () => finish(false));
+  });
+}
+
+/** Stops one WGC helper segment cleanly via its "stop\n" stdin command (not "q" — that's
+ *  gdigrab/ffmpeg's quit key, the WGC helper reads line-based commands, see
+ *  capture-helper/src/main.rs). Finalizing the MP4 requires this graceful stop — a hard
+ *  kill (the 5s fallback below) leaves the file unfinalized/corrupt, so the timeout here
+ *  exists only as a safety net, not the expected path. */
+async function finishWgcSegment(segment: Segment): Promise<void> {
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    segment.proc.once("close", finish);
+    const timer = setTimeout(() => {
+      if (!segment.proc.killed) segment.proc.kill();
+      finish();
+    }, 5000);
+    segment.proc.stdin?.write("stop\n");
+    segment.proc.stdin?.end();
+  });
+}
+
+const PIPEWIRE_HELPER_NAME = "doculigent-pipewire-helper";
+
+/** Resolves the compiled PipeWire helper, or null if it hasn't been built (see
+ *  scripts/build-linux-capture-helper.mjs) — same fallback shape as the other two
+ *  helpers' resolve functions. UNVERIFIED end to end, see capture-helper/src/main.rs. */
+async function resolveLinuxCaptureHelperPath(): Promise<string | null> {
+  if (process.platform !== "linux") return null;
+  const candidate = app.isPackaged
+    ? path.join(process.resourcesPath, "native-bin", PIPEWIRE_HELPER_NAME)
+    : path.join(app.getAppPath(), "electron", "native", "linux", "bin", PIPEWIRE_HELPER_NAME);
+  try {
+    await fs.access(candidate);
+    logNative(`PipeWire helper found at ${candidate}`);
+    return candidate;
+  } catch {
+    logNative(`PipeWire helper NOT found at ${candidate} — will fall back to getDisplayMedia`);
+    return null;
+  }
+}
+
+/** Spawns the PipeWire helper and waits for its "Recording started" stdout line — same
+ *  handshake shape as startScreenCaptureKitCapture. The helper needs the bundled ffmpeg
+ *  binary's path itself (it has no built-in encoder, unlike WGC/SCK — see main.rs). */
+function startPipeWireCapture(helperPath: string, outputPath: string, fps: number): Promise<PipeWireCapture | null> {
+  const config = { outputPath, fps, ffmpegPath: ffmpegPath };
+  console.log("[screenCapture] starting PipeWire helper", { helperPath, config });
+  const proc = spawn(helperPath, [JSON.stringify(config)], { stdio: ["pipe", "pipe", "pipe"] });
+  let stdoutBuf = "";
+  let stderrBuf = "";
+  proc.stdout?.on("data", (d: Buffer) => {
+    stdoutBuf += d.toString();
+  });
+  proc.stderr?.on("data", (d: Buffer) => {
+    stderrBuf += d.toString();
+    if (stderrBuf.length > 4000) stderrBuf = stderrBuf.slice(-4000);
+  });
+  proc.on("error", (error) => {
+    console.error("[screenCapture] PipeWire helper spawn error", error);
+    logNative(`PipeWire helper spawn error: ${error}`);
+  });
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      proc.stdout?.off("data", onStdout);
+      if (!ok) {
+        const detail = stderrBuf.slice(-1000) || stdoutBuf.slice(-1000);
+        console.error("[screenCapture] PipeWire helper failed to start:", detail);
+        logNative(`PipeWire helper FAILED to start: ${detail}`);
+        if (!proc.killed) proc.kill();
+        resolve(null);
+      } else {
+        logNative(`PipeWire helper started (pid ${proc.pid})`);
+        proc.once("exit", (code) => {
+          if (code !== 0 && code !== null) {
+            console.error(`[screenCapture] PipeWire helper exited ${code}:`, stderrBuf.slice(-1000));
+            logNative(`PipeWire helper exited ${code}: ${stderrBuf.slice(-1000)}`);
+          }
+        });
+        resolve({ kind: "pipewire", proc, outputPath });
+      }
+    };
+    const onStdout = () => {
+      if (stdoutBuf.includes("Recording started")) finish(true);
+    };
+    // Longer than the other two helpers' 12s — this one involves an interactive portal
+    // permission dialog the user has to click through, not just native init.
+    const timer = setTimeout(() => finish(false), 60000);
     proc.stdout?.on("data", onStdout);
     proc.once("error", () => finish(false));
     proc.once("exit", () => finish(false));
@@ -414,8 +687,62 @@ async function resolveMacDisplayId(targetId: string): Promise<number | null> {
   return display.id;
 }
 
-export async function startScreenCapture(targetId: string, hideCursor: boolean, area?: AreaRect): Promise<boolean> {
+export async function startScreenCapture(
+  targetId: string,
+  hideCursor: boolean,
+  area?: AreaRect,
+  mode: "quick" | "advanced" = "advanced"
+): Promise<boolean> {
   if (active || !canCaptureTarget(targetId)) return false;
+
+  if (process.platform === "win32" && mode === "quick") {
+    const helperPath = await resolveWindowsCaptureHelperPath();
+    if (helperPath) {
+      const resolved = await resolveMonitor(targetId);
+      if (resolved) {
+        const capture: WgcCapture = {
+          kind: "wgc",
+          monitorIndex: resolved.index + 1,
+          showCursor: !hideCursor,
+          areaX: area?.x,
+          areaY: area?.y,
+          areaWidth: area?.width,
+          areaHeight: area?.height,
+          current: null,
+          segments: [],
+        };
+        const segment = await spawnWgcSegment(helperPath, capture);
+        if (segment) {
+          capture.current = segment;
+          active = capture;
+          return true;
+        }
+        console.warn("[screenCapture] FALLING BACK TO GDIGRAB");
+        logNative("WGC helper failed to start capture — falling back to gdigrab");
+      }
+    }
+  }
+
+  if (process.platform === "linux") {
+    if (mode === "quick") {
+      const helperPath = await resolveLinuxCaptureHelperPath();
+      if (helperPath) {
+        const outputPath = path.join(os.tmpdir(), `doculigent-screen-${randomUUID()}.mp4`);
+        const capture = await startPipeWireCapture(helperPath, outputPath, FPS);
+        if (capture) {
+          active = capture;
+          return true;
+        }
+        console.warn("[screenCapture] PipeWire helper failed to start capture");
+        logNative("PipeWire helper failed to start capture — no native fallback on Linux, using getDisplayMedia");
+      }
+    }
+    // No gdigrab/avfoundation-equivalent fallback exists on Linux — Advanced mode, and
+    // Quick mode when the helper is missing/fails, both fall through to the existing
+    // getDisplayMedia pipeline via this `false` return (same as before this helper
+    // existed at all).
+    return false;
+  }
 
   if (process.platform === "darwin") {
     const helperPath = await resolveScreenCaptureKitHelperPath();
@@ -437,6 +764,7 @@ export async function startScreenCapture(targetId: string, hideCursor: boolean, 
           areaY: area?.y,
           areaWidth: area?.width,
           areaHeight: area?.height,
+          showsCursor: !hideCursor,
         });
         if (capture) {
           active = capture;
@@ -487,25 +815,34 @@ export async function startScreenCapture(targetId: string, hideCursor: boolean, 
 
 export async function pauseScreenCapture(): Promise<boolean> {
   if (!active) return false;
-  if (active.kind === "sck") {
+  if (active.kind === "sck" || active.kind === "pipewire") {
     active.proc.stdin?.write("pause\n");
     return true;
   }
   if (!active.current) return false;
   const segment = active.current;
   active.current = null;
-  await finishSegment(segment);
+  if (active.kind === "wgc") await finishWgcSegment(segment);
+  else await finishSegment(segment);
   active.segments.push(segment.outputPath);
   return true;
 }
 
 export async function resumeScreenCapture(): Promise<boolean> {
   if (!active) return false;
-  if (active.kind === "sck") {
+  if (active.kind === "sck" || active.kind === "pipewire") {
     active.proc.stdin?.write("resume\n");
     return true;
   }
   if (active.current) return false;
+  if (active.kind === "wgc") {
+    const helperPath = await resolveWindowsCaptureHelperPath();
+    if (!helperPath) return false;
+    const segment = await spawnWgcSegment(helperPath, active);
+    if (!segment) return false;
+    active.current = segment;
+    return true;
+  }
   const segment = await spawnSegment(active);
   if (!segment) return false;
   active.current = segment;
@@ -517,7 +854,7 @@ export async function stopScreenCapture(): Promise<string | null> {
   const capture = active;
   active = null;
 
-  if (capture.kind === "sck") {
+  if (capture.kind === "sck" || capture.kind === "pipewire") {
     const outputPath = capture.outputPath;
     await new Promise<void>((resolve) => {
       capture.proc.once("close", () => resolve());
@@ -528,7 +865,8 @@ export async function stopScreenCapture(): Promise<string | null> {
   }
 
   if (capture.current) {
-    await finishSegment(capture.current);
+    if (capture.kind === "wgc") await finishWgcSegment(capture.current);
+    else await finishSegment(capture.current);
     capture.segments.push(capture.current.outputPath);
   }
 
@@ -542,7 +880,7 @@ export async function discardScreenCapture(): Promise<void> {
   const capture = active;
   active = null;
 
-  if (capture.kind === "sck") {
+  if (capture.kind === "sck" || capture.kind === "pipewire") {
     if (!capture.proc.killed) capture.proc.kill();
     await fs.unlink(capture.outputPath).catch(() => {});
     return;
@@ -555,7 +893,7 @@ export async function discardScreenCapture(): Promise<void> {
 
 export function killPendingScreenCapture(): void {
   if (!active) return;
-  if (active.kind === "sck") {
+  if (active.kind === "sck" || active.kind === "pipewire") {
     if (!active.proc.killed) active.proc.kill();
   } else if (active.current && !active.current.proc.killed) {
     active.current.proc.kill();

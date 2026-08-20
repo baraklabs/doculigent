@@ -1,0 +1,19 @@
+# UNVERIFIED — written without a Linux environment to build or run against (see
+# src/main.rs's header comment and the plan doc for details). Version pins below are best
+# guesses at what's current/compatible as of writing; expect to adjust them the first time
+# this is actually built on Linux.
+[package]
+name = "doculigent-pipewire-helper"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "doculigent-pipewire-helper"
+path = "src/main.rs"
+
+[dependencies]
+ashpd = { version = "0.13", features = ["async-std"] }
+pipewire = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-std = { version = "1", features = ["attributes"] }

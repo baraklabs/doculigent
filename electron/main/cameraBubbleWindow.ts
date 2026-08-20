@@ -93,9 +93,23 @@ export function getCameraBubbleConfig(): CameraBubbleConfig {
   return lastConfig;
 }
 
-export function setCameraBubbleRecordingActive(active: boolean, contentProtected: boolean): void {
+export function setCameraBubbleContentProtected(protect: boolean): void {
   if (!win || win.isDestroyed()) return;
-  // The camera is always burned in from its own separately-recorded clip, never from
+  win.setContentProtection(protect);
+}
+
+export function setCameraBubbleRecordingActive(active: boolean, contentProtected: boolean, keepVisible = false): void {
+  if (!win || win.isDestroyed()) return;
+  if (!active) {
+    // Recording ended (of either mode) — always back to protected/hidden-from-capture by
+    // default, undoing whatever setCameraBubbleContentProtected(false) a Quick recording
+    // may have set at start.
+    win.setContentProtection(true);
+    if (!win.isVisible()) win.showInactive();
+    win.webContents.send(Channels.cameraBubble.recordingActiveChanged, active, contentProtected);
+    return;
+  }
+  // The camera is normally burned in from its own separately-recorded clip, never from
   // whatever this window happens to be showing — but the window itself stays visible on
   // screen throughout, so it must not be *in* the screen capture. `contentProtected` (see
   // native/screenCapture.ts's isCaptureContentProtected) tells us whether the active
@@ -109,18 +123,19 @@ export function setCameraBubbleRecordingActive(active: boolean, contentProtected
   // hides the window outright instead: a hidden window can't appear in any capture no
   // matter how it's composited. The tradeoff there is the bubble can't be dragged *during*
   // such a recording — wherever it was positioned before hitting record is where it stays.
-  // The actually-recorded camera.webm always comes from the independent getUserMedia
-  // stream (RecordingService's sideClip), not from this window, so hiding it never affects
-  // what gets recorded either way.
-  const shouldHide = active && !contentProtected;
+  //
+  // `keepVisible` (Quick Recording) skips all of that — the caller has already called
+  // setCameraBubbleContentProtected(false) and deliberately wants this window burned into
+  // the capture directly, so it's never hidden regardless of backend trust.
+  const shouldHide = !keepVisible && !contentProtected;
   console.log("[cameraBubbleWindow] setCameraBubbleRecordingActive", {
     active,
     contentProtected,
+    keepVisible,
     shouldHide,
     wasVisible: win.isVisible(),
   });
   if (shouldHide) win.hide();
-  else if (!active && !win.isVisible()) win.showInactive();
   win.webContents.send(Channels.cameraBubble.recordingActiveChanged, active, contentProtected);
 }
 

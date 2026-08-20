@@ -140,7 +140,7 @@ export interface AutoTranscribeSettings {
   teamsContent: boolean;
 }
 
-export type EditProjectSourceKind = "video" | "file";
+export type EditProjectSourceKind = "video" | "file" | "recording";
 
 export interface EditProjectSource {
   kind: EditProjectSourceKind;
@@ -148,6 +148,12 @@ export interface EditProjectSource {
   videoId?: string;
   /** Absolute path to the picked file — set when kind === "file". */
   filePath?: string;
+  /** Absolute path to a raw recording's own directory (metadata/screen.mp4,
+   *  metadata/camera.webm, metadata/cursor.json, etc.) — set when kind === "recording".
+   *  Unlike "video"/"file", there's no single anchor file to derive this from (an
+   *  in-progress Advanced recording never gets a composited top-level video), so the
+   *  directory is stored directly instead. */
+  recDir?: string;
 }
 
 export type CameraEditShape = "square" | "round" | "rectangle" | "rectangle-vertical";
@@ -548,6 +554,43 @@ export interface Video {
    *  which bakes the real OS cursor into it — see EditProjectMedia.cursorBakedIn. */
   cursorBakedIn?: boolean;
 }
+
+export interface SaveRecordingSideClip {
+  bytes: ArrayBuffer;
+  hasVideo: boolean;
+  hasAudio: boolean;
+}
+
+export interface SaveRecordingInput {
+  webmBytes?: ArrayBuffer;
+  screenFilePath?: string;
+  screenBytes?: ArrayBuffer;
+  areaRect?: AreaRect | null;
+  sideClip?: SaveRecordingSideClip;
+  overlay: OverlayConfig;
+  durationSecs: number;
+  title: string;
+  source: "record" | "meeting";
+  /** Quick: composite everything into one video, same as today's default pipeline.
+   *  Advanced: keep the raw screen/camera tracks + metadata and open them as an Edit
+   *  Project instead of compositing. Absent/undefined behaves as "quick" — preserves
+   *  today's behavior for callers (e.g. meetings) that don't know about modes. */
+  mode?: "quick" | "advanced";
+}
+
+export interface SaveAudioInput {
+  audioBytes: ArrayBuffer;
+  durationSecs: number;
+  title: string;
+  transcript: Transcript | null;
+}
+
+/** What a completed `recording:save` produced — a Quick recording still yields a single
+ *  composited `Video`, but an Advanced recording now yields an Edit Project (raw tracks,
+ *  no composite, no library row) instead. */
+export type RecordingSaveResult =
+  | { kind: "video"; video: Video }
+  | { kind: "editProject"; recordingId: string; editProjectId: string; title: string };
 
 export interface TranscriptSegment {
   start: number;

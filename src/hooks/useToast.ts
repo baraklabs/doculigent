@@ -1,9 +1,11 @@
-import { DEFAULT_TOAST_DURATION, useToastStore, type ToastVariant } from "../store/toastStore";
+import { DEFAULT_TOAST_DURATION, useToastStore, type ToastAction, type ToastVariant } from "../store/toastStore";
 
 interface NotifyOptions {
   title?: string;
   /** ms before auto-dismiss; 0 disables auto-dismiss. Defaults to 5s. */
   duration?: number;
+  /** Optional inline call-to-action link rendered in the toast. */
+  action?: ToastAction;
 }
 
 /** The app-wide toast API — call `useToast().success("Saved")` etc. from any page.
@@ -19,6 +21,7 @@ export function useToast() {
       message,
       title: options?.title,
       duration: options?.duration ?? DEFAULT_TOAST_DURATION,
+      action: options?.action,
     });
   }
 

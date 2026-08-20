@@ -4,53 +4,30 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Channels } from "@shared/constants/channels";
-import type { AreaRect, CameraTrackMetadata, CursorMetadata, OverlayConfig, Transcript, Video } from "@shared/types/models";
-import { cameraBubbleRectForShape, OUTPUT_HEIGHT, OUTPUT_WIDTH } from "@shared/lib/cameraBubble";
-import { meetingsRoot, recordingsRoot } from "../native/paths";
+import type {
+  OverlayConfig,
+  RecordingSaveResult,
+  SaveAudioInput,
+  SaveRecordingInput,
+  Video,
+} from "@shared/types/models";
 import {
   convertToWav,
   copyToMp4,
   FfmpegCancelledError,
   muxScreenWithAudio,
   normalizeToCfr,
-  overlayCameraBubble,
-  probeDuration,
   remuxToMp4,
   transcodeScreenRecording,
-  type CameraBubbleTrack,
 } from "../native/ffmpeg";
+import { meetingsRoot, recordingsRoot } from "../native/paths";
 import { insertVideo } from "../native/libraryStore";
 import { writeCursorMetadata } from "../native/cursorTrack";
 import { writeCameraMetadata } from "../native/cameraTrack";
 import { writeTranscriptFile } from "../native/transcriptFile";
-import { frameDimensions, loadCursorIcons, overlayCursorTrack, toFrameCoords } from "../native/cursorOverlay";
+import { logNative } from "../native/nativeLog";
 import { vfFor } from "../native/screenCapture";
-import { getCameraBubbleConfig } from "../cameraBubbleWindow";
-
-interface SideClip {
-  bytes: ArrayBuffer;
-  hasVideo: boolean;
-  hasAudio: boolean;
-}
-
-interface SaveRecordingInput {
-  webmBytes?: ArrayBuffer;
-  screenFilePath?: string;
-  screenBytes?: ArrayBuffer;
-  areaRect?: AreaRect | null;
-  sideClip?: SideClip;
-  overlay: OverlayConfig;
-  durationSecs: number;
-  title: string;
-  source: "record" | "meeting";
-}
-
-interface SaveAudioInput {
-  audioBytes: ArrayBuffer;
-  durationSecs: number;
-  title: string;
-  transcript: Transcript | null;
-}
+import { createEditProject } from "../native/editProjectStore";
 
 const AUDIO_OVERLAY: OverlayConfig = {
   corner: "bottom-right",
@@ -78,60 +55,75 @@ async function moveFile(src: string, dest: string): Promise<void> {
   }
 }
 
-async function readJsonIfExists<T>(filePath: string): Promise<T | null> {
-  try {
-    return JSON.parse(await fs.readFile(filePath, "utf-8")) as T;
-  } catch {
-    return null;
+/** Resolves the final screen track from whichever of `screenFilePath`/`screenBytes` the
+ *  input carries (native capture vs. the non-native getUserMedia fallback), writing
+ *  straight to `outputPath` — shared by both the Quick (`buildFinalMp4`) and Advanced
+ *  (`buildEditProjectMaterials`) paths, since both need the same resolution logic before
+ *  branching on where the result needs to end up. */
+async function resolveScreenTrack(
+  id: string,
+  input: SaveRecordingInput,
+  outputPath: string,
+  onProgress: (secondsDone: number) => void,
+  signal: AbortSignal,
+  cleanupPaths: string[]
+): Promise<string> {
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+
+  if (input.screenFilePath) {
+    if (process.platform === "darwin") {
+      // macOS's native avfoundation capture is intentionally variable-frame-rate (see
+      // native/screenCapture.ts's -fps_mode vfr) — normalize to a real CFR 30fps file so
+      // anything downstream can keep assuming a predictable frame count, same as
+      // Windows' native gdigrab output already is.
+      const tempNativeScreen = path.join(os.tmpdir(), `${id}-screen-native.mp4`);
+      await moveFile(input.screenFilePath, tempNativeScreen);
+      cleanupPaths.push(tempNativeScreen);
+      console.log("[recording] normalizing mac native capture to CFR", { tempNativeScreen });
+      await normalizeToCfr(tempNativeScreen, outputPath, onProgress, signal);
+    } else {
+      // Native (gdigrab) — already an mp4, already cropped/scaled and CFR at capture time.
+      await moveFile(input.screenFilePath, outputPath);
+    }
+  } else {
+    // Non-native fallback — a raw, uncropped/unscaled getUserMedia recording of the
+    // *whole* display (there's no way to crop at the capture source itself), transcoded
+    // into the same shape a native capture already has: cropped to `areaRect` when given,
+    // otherwise scaled/padded like a display capture — see native/screenCapture.ts's
+    // `vfFor`, which the display/window branch here reuses so the two pipelines stay in
+    // sync with each other.
+    const tempScreenWebm = path.join(os.tmpdir(), `${id}-screen.webm`);
+    await fs.writeFile(tempScreenWebm, Buffer.from(input.screenBytes!));
+    cleanupPaths.push(tempScreenWebm);
+    const area = input.areaRect;
+    const vf = area
+      ? `crop=iw*${area.width}:ih*${area.height}:iw*${area.x}:ih*${area.y},${vfFor(true)}`
+      : vfFor(false);
+    console.log("[recording] transcoding fallback screen recording", { tempScreenWebm, vf });
+    try {
+      await transcodeScreenRecording(tempScreenWebm, outputPath, vf, onProgress, signal);
+    } catch (e) {
+      console.error("[recording] transcodeScreenRecording failed", e);
+      throw e;
+    }
   }
+
+  return outputPath;
 }
 
-async function resolveCameraBubbleTrack(recDir: string, overlay: OverlayConfig): Promise<CameraBubbleTrack> {
-  const shape = getCameraBubbleConfig().shape;
-  const fallback = cameraBubbleRectForShape(overlay, shape, OUTPUT_WIDTH, OUTPUT_HEIGHT);
-  const fallbackTrack: CameraBubbleTrack = {
-    width: fallback.width,
-    height: fallback.height,
-    points: [{ atSec: 0, x: fallback.x, y: fallback.y }],
-  };
-  try {
-    const cursorMeta = await readJsonIfExists<CursorMetadata>(path.join(recDir, "metadata", "cursor.json"));
-    const cameraMeta = await readJsonIfExists<CameraTrackMetadata>(path.join(recDir, "metadata", "camera.json"));
-    if (!cursorMeta || !cameraMeta || cameraMeta.points.length === 0) return fallbackTrack;
-
-    const { width: frameW, height: frameH } = frameDimensions(cursorMeta);
-
-    const lastRaw = cameraMeta.points[cameraMeta.points.length - 1];
-    const lastTopLeft = toFrameCoords(cursorMeta, lastRaw.x, lastRaw.y);
-    const lastBottomRight = toFrameCoords(cursorMeta, lastRaw.x + lastRaw.width, lastRaw.y + lastRaw.height);
-    const trackedWidth = lastTopLeft && lastBottomRight ? Math.round(lastBottomRight.x - lastTopLeft.x) : 0;
-    const trackedHeight = lastTopLeft && lastBottomRight ? Math.round(lastBottomRight.y - lastTopLeft.y) : 0;
-    const width = trackedWidth > 0 ? trackedWidth : fallback.width;
-    const height = trackedHeight > 0 ? trackedHeight : fallback.height;
-
-    const points = cameraMeta.points.flatMap((p) => {
-      const pos = toFrameCoords(cursorMeta, p.x, p.y);
-      if (!pos) return [];
-      return [
-        {
-          atSec: Math.max(0, p.t / 1000),
-          x: Math.round(Math.min(Math.max(pos.x, 0), frameW - width)),
-          y: Math.round(Math.min(Math.max(pos.y, 0), frameH - height)),
-        },
-      ];
-    });
-    if (points.length === 0) return fallbackTrack;
-    return { width, height, points };
-  } catch {
-    return fallbackTrack;
-  }
-}
-
+/** Quick Recording only (Advanced uses `buildEditProjectMaterials`) — the camera bubble
+ *  and cursor are already burnt into `screenFilePath`/`screenBytes` directly by the native
+ *  capture (see `RecordingService.start()`'s `setContentProtected(false)` and the capture
+ *  backend's own compositor-drawn cursor), so there's never a compositing pass to do here.
+ *  `finalMp4` is still always produced via an actual ffmpeg pass (a cheap `-c copy` stream
+ *  copy when there's no audio to mux in) rather than a raw file move/rename, to normalize
+ *  container quirks between backends (gdigrab/WGC/SCK) into one consistent, predictable
+ *  output shape. No `metadata/screen.mp4` intermediate either way — the screen track lands
+ *  in a temp file instead. */
 async function buildFinalMp4(
   id: string,
   input: SaveRecordingInput,
   finalMp4: string,
-  recDir: string,
   onProgress: (secondsDone: number) => void,
   signal: AbortSignal,
   cleanupPaths: string[]
@@ -142,95 +134,23 @@ async function buildFinalMp4(
     hasScreenBytes: !!input.screenBytes,
     screenBytesLength: input.screenBytes?.byteLength,
     areaRect: input.areaRect,
-    hasSideClip: !!input.sideClip,
-    sideClipHasVideo: input.sideClip?.hasVideo,
-    sideClipHasAudio: input.sideClip?.hasAudio,
+    hasSideClipAudio: input.sideClip?.hasAudio,
   });
 
   if (input.screenFilePath || input.screenBytes) {
-    const metaDir = path.join(recDir, "metadata");
-    await fs.mkdir(metaDir, { recursive: true });
-    const screenKeepPath = path.join(metaDir, "screen.mp4");
+    const tempScreenPath = path.join(os.tmpdir(), `${id}-screen-final.mp4`);
+    cleanupPaths.push(tempScreenPath);
+    await resolveScreenTrack(id, input, tempScreenPath, onProgress, signal, cleanupPaths);
 
-    if (input.screenFilePath) {
-      if (process.platform === "darwin") {
-        // macOS's native avfoundation capture is intentionally variable-frame-rate (see
-        // native/screenCapture.ts's -fps_mode vfr) — normalize to a real CFR 30fps file
-        // here so overlayCameraBubble/overlayCursorTrack downstream can keep assuming a
-        // predictable frame count, same as Windows' native gdigrab output already is.
-        const tempNativeScreen = path.join(os.tmpdir(), `${id}-screen-native.mp4`);
-        await moveFile(input.screenFilePath, tempNativeScreen);
-        cleanupPaths.push(tempNativeScreen);
-        console.log("[recording] normalizing mac native capture to CFR", { tempNativeScreen });
-        await normalizeToCfr(tempNativeScreen, screenKeepPath, onProgress, signal);
-      } else {
-        // Native (gdigrab) — already an mp4, already cropped/scaled and CFR at capture time.
-        await moveFile(input.screenFilePath, screenKeepPath);
-      }
-    } else {
-      // Non-native fallback — a raw, uncropped/unscaled getUserMedia recording of the
-      // *whole* display (there's no way to crop at the capture source itself), transcoded
-      // into the same shape a native capture already has: cropped to `areaRect` when given,
-      // otherwise scaled/padded like a display capture — see native/screenCapture.ts's
-      // `vfFor`, which the display/window branch here reuses so the two pipelines stay in
-      // sync with each other.
-      const tempScreenWebm = path.join(os.tmpdir(), `${id}-screen.webm`);
-      await fs.writeFile(tempScreenWebm, Buffer.from(input.screenBytes!));
-      cleanupPaths.push(tempScreenWebm);
-      const area = input.areaRect;
-      const vf = area
-        ? `crop=iw*${area.width}:ih*${area.height}:iw*${area.x}:ih*${area.y},${vfFor(true)}`
-        : vfFor(false);
-      console.log("[recording] transcoding fallback screen recording", { tempScreenWebm, vf });
-      try {
-        await transcodeScreenRecording(tempScreenWebm, screenKeepPath, vf, onProgress, signal);
-      } catch (e) {
-        console.error("[recording] transcodeScreenRecording failed", e);
-        throw e;
-      }
-    }
-
-    if (!input.sideClip) {
-      console.log("[recording] no side clip — copying screen straight to final mp4");
-      await copyToMp4(screenKeepPath, finalMp4, onProgress, signal);
+    if (!input.sideClip?.hasAudio) {
+      await copyToMp4(tempScreenPath, finalMp4, onProgress, signal);
       return;
     }
 
-    const sideClipPath = input.sideClip.hasVideo
-      ? path.join(metaDir, "camera.webm")
-      : path.join(os.tmpdir(), `${id}-side.webm`);
-    await fs.writeFile(sideClipPath, Buffer.from(input.sideClip.bytes));
-    if (!input.sideClip.hasVideo) cleanupPaths.push(sideClipPath);
-
-    if (input.sideClip.hasVideo) {
-      const track = await resolveCameraBubbleTrack(recDir, input.overlay);
-      const { shape, mirror } = getCameraBubbleConfig();
-      console.log("[recording] overlaying camera bubble", {
-        trackPoints: track.points.length,
-        trackWidth: track.width,
-        trackHeight: track.height,
-        shape,
-        mirror,
-      });
-      try {
-        await overlayCameraBubble(
-          screenKeepPath,
-          sideClipPath,
-          track,
-          shape,
-          mirror,
-          input.sideClip.hasAudio,
-          finalMp4,
-          onProgress,
-          signal
-        );
-      } catch (e) {
-        console.error("[recording] overlayCameraBubble failed", e);
-        throw e;
-      }
-    } else {
-      await muxScreenWithAudio(screenKeepPath, sideClipPath, finalMp4, onProgress, signal);
-    }
+    const audioPath = path.join(os.tmpdir(), `${id}-side.webm`);
+    cleanupPaths.push(audioPath);
+    await fs.writeFile(audioPath, Buffer.from(input.sideClip.bytes));
+    await muxScreenWithAudio(tempScreenPath, audioPath, finalMp4, onProgress, signal);
     return;
   }
 
@@ -240,46 +160,52 @@ async function buildFinalMp4(
   await remuxToMp4(tempWebm, finalMp4, onProgress, signal);
 }
 
-async function tryOverlayCursor(
+/** The Advanced-mode counterpart to `buildFinalMp4` — produces the same
+ *  `metadata/screen.mp4` (+ `metadata/camera.webm`, if a camera side clip was recorded)
+ *  but never composites them into a single video. `cursor.json`/`camera.json` are already
+ *  written unconditionally before this runs (see `registerRecordingIpc`'s `save`
+ *  handler) — they're simply left in place instead of being read here. Also writes
+ *  `metadata/recordMeta.json` so the editor can recover "as recorded" camera-bubble
+ *  sizing and whether the screen track already has a physically-baked-in OS cursor
+ *  (non-native fallback capture), the same fidelity a `Video`-sourced project gets from
+ *  its library row. */
+async function buildEditProjectMaterials(
+  id: string,
+  input: SaveRecordingInput,
   recDir: string,
-  finalMp4: string,
-  durationSecs: number,
   onProgress: (secondsDone: number) => void,
-  signal: AbortSignal
+  signal: AbortSignal,
+  cleanupPaths: string[]
 ): Promise<void> {
-  const metaPath = path.join(recDir, "metadata", "cursor.json");
-  const metadata = await readJsonIfExists<CursorMetadata>(metaPath);
-  console.log("[recording] tryOverlayCursor", {
-    found: !!metadata,
-    points: metadata?.points.length,
-    clicks: metadata?.clicks?.length,
-    captureKind: metadata?.capture.kind,
-    durationSecs,
-  });
-  if (!metadata || metadata.points.length === 0 || durationSecs <= 0) return;
+  const metaDir = path.join(recDir, "metadata");
+  await fs.mkdir(metaDir, { recursive: true });
 
-  // durationSecs is the renderer's wall-clock estimate (elapsed time between
-  // RecordingService.start()/stop() calls) — close, but not guaranteed to match finalMp4's
-  // actual frame count exactly (e.g. avfoundation's screen device has a startup lag before
-  // its first real frame arrives, systematically undershooting wall-clock time on macOS).
-  // overlayCursorTrack precomputes exactly durationSecs*30 raw frames to pipe into ffmpeg
-  // assuming that many exist in [0:v] — if there are fewer, ffmpeg finishes reading [0:v]
-  // and closes its stdin first, and every write after that faults with EPIPE (confirmed).
-  // Probing the file's real duration instead removes the guesswork entirely; a small
-  // safety margin keeps a rounding-error frame from re-triggering the same race.
-  const probedDurationSecs = await probeDuration(finalMp4);
-  const overlayDurationSecs = probedDurationSecs > 0 ? Math.max(0, probedDurationSecs - 0.1) : durationSecs;
+  if (input.screenFilePath || input.screenBytes) {
+    await resolveScreenTrack(id, input, path.join(metaDir, "screen.mp4"), onProgress, signal, cleanupPaths);
 
-  const composedPath = path.join(recDir, "recording-with-cursor.mp4.tmp");
-  try {
-    const icons = await loadCursorIcons(metadata, path.join(recDir, "metadata", "cursor-icons"));
-    await overlayCursorTrack(finalMp4, metadata, icons, overlayDurationSecs, composedPath, onProgress, signal);
-    await moveFile(composedPath, finalMp4);
-  } catch (e) {
-    await fs.rm(composedPath, { force: true });
-    if (signal.aborted) throw new FfmpegCancelledError();
-    console.error("Cursor overlay pass failed, keeping the plain composite:", e);
+    if (input.sideClip?.hasVideo) {
+      await fs.writeFile(path.join(metaDir, "camera.webm"), Buffer.from(input.sideClip.bytes));
+    } else if (input.sideClip) {
+      // Audio-only side clip (mic/system audio, no camera video) — kept for completeness,
+      // though full editor support for an audio-only Advanced project's sound track isn't
+      // wired up yet.
+      await fs.writeFile(path.join(metaDir, "audio.webm"), Buffer.from(input.sideClip.bytes));
+    }
+  } else {
+    // Camera-only capture — a single already-composited stream (see RecordingService's
+    // stopCameraOnly), not a separate screen+camera pair. Remux it straight into
+    // metadata/screen.mp4 so getEditProjectMedia's single-file fallback still finds
+    // something to edit, same as this mode's Quick-recording remuxToMp4 call does.
+    const tempWebm = path.join(os.tmpdir(), `${id}.webm`);
+    await fs.writeFile(tempWebm, Buffer.from(input.webmBytes!));
+    cleanupPaths.push(tempWebm);
+    await remuxToMp4(tempWebm, path.join(metaDir, "screen.mp4"), onProgress, signal);
   }
+
+  await fs.writeFile(
+    path.join(metaDir, "recordMeta.json"),
+    JSON.stringify({ overlay: input.overlay, cursorBakedIn: !!input.screenBytes })
+  );
 }
 
 async function finishRecordingSave(
@@ -288,62 +214,61 @@ async function finishRecordingSave(
   input: SaveRecordingInput,
   sender: IpcMainInvokeEvent["sender"]
 ): Promise<void> {
-  console.log("[recording] finishRecordingSave start", { id, finalMp4 });
+  console.log("[recording] finishRecordingSave start", { id, finalMp4, mode: input.mode });
   const abort = new AbortController();
   pendingSaves.set(id, abort);
   const cleanupPaths: string[] = [];
+  const recDir = path.dirname(finalMp4);
+  const onProgress = (secondsDone: number) => {
+    if (sender.isDestroyed() || input.durationSecs <= 0) return;
+    const percent = Math.max(0, Math.min(99, Math.round((secondsDone / input.durationSecs) * 100)));
+    sender.send(Channels.recording.saveProgress, { id, percent });
+  };
   try {
-    await buildFinalMp4(
-      id,
-      input,
-      finalMp4,
-      path.dirname(finalMp4),
-      (secondsDone) => {
-        if (sender.isDestroyed() || input.durationSecs <= 0) return;
-        const percent = Math.max(0, Math.min(99, Math.round((secondsDone / input.durationSecs) * 100)));
-        sender.send(Channels.recording.saveProgress, { id, percent });
-      },
-      abort.signal,
-      cleanupPaths
-    );
-    // screenBytes (the non-native fallback) already has a real, physically-captured OS
-    // cursor baked into it — see SaveRecordingInput.screenBytes and EditProjectMedia's
-    // cursorBakedIn. Burning the synthetic track on top of that would show two cursors, so
-    // this overlay pass only ever runs for a native (gdigrab) screenFilePath, which never
-    // has one baked in to begin with.
-    if (input.screenFilePath) {
-      await tryOverlayCursor(
-        path.dirname(finalMp4),
-        finalMp4,
-        input.durationSecs,
-        (secondsDone) => {
-          if (sender.isDestroyed() || input.durationSecs <= 0) return;
-          const percent = Math.max(0, Math.min(99, Math.round((secondsDone / input.durationSecs) * 100)));
-          sender.send(Channels.recording.saveProgress, { id, percent });
-        },
-        abort.signal
-      );
+    if (input.mode === "advanced") {
+      await buildEditProjectMaterials(id, input, recDir, onProgress, abort.signal, cleanupPaths);
+      const project = createEditProject(input.title, { kind: "recording", recDir });
+      console.log("[recording] finishRecordingSave done (advanced)", { id, editProjectId: project.id });
+      const result: RecordingSaveResult = {
+        kind: "editProject",
+        recordingId: id,
+        editProjectId: project.id,
+        title: input.title,
+      };
+      if (!sender.isDestroyed()) sender.send(Channels.recording.saveCompleted, result);
+    } else {
+      // Quick Recording's native capture already has the camera bubble AND the cursor
+      // burnt in directly — camera via RecordingService.start()'s
+      // setContentProtected(false), cursor via the capture backend's own compositor-drawn
+      // rendering (Windows.Graphics.Capture / ScreenCaptureKit, see native/screenCapture.ts)
+      // — so buildFinalMp4 here is at most a stream copy or an audio mux, never a
+      // compositing re-encode.
+      await buildFinalMp4(id, input, finalMp4, onProgress, abort.signal, cleanupPaths);
+      logNative(`finishRecordingSave (quick): hasScreenFilePath=${!!input.screenFilePath} durationSecs=${input.durationSecs}`);
+      const video: Video = {
+        id,
+        title: input.title,
+        filePath: finalMp4,
+        durationSecs: input.durationSecs,
+        overlay: input.overlay,
+        createdAt: new Date().toISOString(),
+        transcript: null,
+        summary: null,
+        source: input.source,
+        cursorBakedIn: true,
+      };
+      insertVideo(video);
+      // No Edit Project for a Quick recording to read metadata/ afterward (cursor.json
+      // isn't even written for Quick anymore — see the save handler below).
+      await fs.rm(path.join(recDir, "metadata"), { recursive: true, force: true });
+      console.log("[recording] finishRecordingSave done", { id, cursorBakedIn: video.cursorBakedIn });
+      const result: RecordingSaveResult = { kind: "video", video };
+      if (!sender.isDestroyed()) sender.send(Channels.recording.saveCompleted, result);
     }
-    const video: Video = {
-      id,
-      title: input.title,
-      filePath: finalMp4,
-      durationSecs: input.durationSecs,
-      overlay: input.overlay,
-      createdAt: new Date().toISOString(),
-      transcript: null,
-      summary: null,
-      source: input.source,
-      cameraBubbleConfig: input.sideClip?.hasVideo ? getCameraBubbleConfig() : undefined,
-      cursorBakedIn: !!input.screenBytes,
-    };
-    console.log("[recording] finishRecordingSave done", { id, cursorBakedIn: video.cursorBakedIn });
-    insertVideo(video);
-    if (!sender.isDestroyed()) sender.send(Channels.recording.saveCompleted, video);
   } catch (e) {
     console.error("[recording] finishRecordingSave failed", { id }, e);
     if (e instanceof FfmpegCancelledError) {
-      await fs.rm(path.dirname(finalMp4), { recursive: true, force: true });
+      await fs.rm(recDir, { recursive: true, force: true });
     } else if (!sender.isDestroyed()) {
       sender.send(Channels.recording.saveFailed, { id, message: String(e) });
     }
@@ -360,8 +285,14 @@ export function registerRecordingIpc(): void {
     const recDir = recordingDir(saveDir, id);
     await fs.mkdir(recDir, { recursive: true });
     const finalMp4 = path.join(recDir, "recording.mp4");
-    await writeCursorMetadata(id, recDir);
-    await writeCameraMetadata(id, recDir);
+    // Cursor and camera-position tracking are both Advanced-only now — Quick's native
+    // capture backend burns both directly into the pixels at capture time (see
+    // RecordingService.start()), nothing left to track for either.
+    logNative(`recording.save: id=${id} mode=${input.mode ?? "quick"} hasScreenFilePath=${!!input.screenFilePath}`);
+    if (input.mode === "advanced") {
+      await writeCursorMetadata(id, recDir);
+      await writeCameraMetadata(id, recDir);
+    }
     void finishRecordingSave(id, finalMp4, input, event.sender);
 
     return { id };

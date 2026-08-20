@@ -115,13 +115,16 @@ export function registerEditProjectsIpc(): void {
     async (_event, id: string): Promise<EditProjectMedia> => store.getEditProjectMedia(id)
   );
 
-  ipcMain.handle(Channels.editProjects.delete, async (_event, id: string): Promise<void> => {
-    store.deleteEditProject(id);
+  ipcMain.handle(Channels.editProjects.delete, async (_event, id: string, deleteSourceFiles?: boolean): Promise<void> => {
+    store.deleteEditProject(id, deleteSourceFiles);
   });
 
-  ipcMain.handle(Channels.editProjects.deleteMany, async (_event, ids: string[]): Promise<void> => {
-    store.deleteEditProjects(ids);
-  });
+  ipcMain.handle(
+    Channels.editProjects.deleteMany,
+    async (_event, ids: string[], deleteSourceFiles?: boolean): Promise<void> => {
+      store.deleteEditProjects(ids, deleteSourceFiles);
+    }
+  );
 
   ipcMain.handle(
     Channels.editProjects.export,

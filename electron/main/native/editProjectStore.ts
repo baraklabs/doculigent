@@ -19,7 +19,7 @@ import type {
 import { DEFAULT_CAMERA_EDIT_SETTINGS } from "@shared/types/models";
 import { frameDimensions, toFrameCoords } from "@shared/lib/cursorFrame";
 import { projectsRoot } from "./paths";
-import { getVideo } from "./libraryStore";
+import { deleteVideo as deleteLibraryVideo, getVideo } from "./libraryStore";
 
 function overlayToCameraSettings(overlay: OverlayConfig): CameraEditSettings {
   return {
@@ -300,14 +300,35 @@ export function updateEditProjectTimeline(id: string, timeline: TimelineEditSett
   return updated;
 }
 
-export function deleteEditProject(id: string): void {
+// Removes the project's own source media — the library video (and its file), the picked
+// file, or the raw recording folder it was built from — so "delete everything" actually
+// clears the disk instead of just the project's own metadata folder.
+function deleteProjectSourceFiles(source: EditProjectSource | undefined): void {
+  if (!source) return;
+  if (source.kind === "video" && source.videoId) {
+    const video = getVideo(source.videoId);
+    if (video?.filePath) {
+      fs.rmSync(path.dirname(video.filePath), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    }
+    deleteLibraryVideo(source.videoId);
+  } else if (source.kind === "file" && source.filePath) {
+    // Only the file itself — its containing directory is wherever the user picked it
+    // from, not app-managed storage, so it may hold unrelated files.
+    fs.rmSync(source.filePath, { force: true });
+  } else if (source.kind === "recording" && source.recDir) {
+    fs.rmSync(source.recDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
+}
+
+export function deleteEditProject(id: string, deleteSourceFiles?: boolean): void {
+  if (deleteSourceFiles) deleteProjectSourceFiles(readProject(id)?.source);
   const dir = dirForId(id);
   if (dir) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   removeFromIndex(id);
 }
 
-export function deleteEditProjects(ids: string[]): void {
-  for (const id of ids) deleteEditProject(id);
+export function deleteEditProjects(ids: string[], deleteSourceFiles?: boolean): void {
+  for (const id of ids) deleteEditProject(id, deleteSourceFiles);
 }
 
 const NO_MEDIA: EditProjectMedia = {
@@ -325,10 +346,15 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
   const project = readProject(id);
   if (!project?.source) return NO_MEDIA;
 
+  let recDir: string | null = null;
+  // The "video"/"file" anchor file itself, when this source kind has one — a "recording"
+  // source never does (an Advanced recording never gets composited into a single file),
+  // so it's used below only as the single-file fallback's candidate for those two kinds.
   let recordingFilePath: string | null = null;
   let recordedOverlay: OverlayConfig | null = null;
   let recordedBubbleConfig: CameraBubbleConfig | null = null;
   let cursorBakedIn = false;
+
   if (project.source.kind === "video" && project.source.videoId) {
     const video = getVideo(project.source.videoId);
     recordingFilePath = video?.filePath ?? null;
@@ -342,12 +368,33 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
       filePath: video?.filePath,
       cursorBakedIn: video?.cursorBakedIn,
     });
+    if (!recordingFilePath || !fs.existsSync(recordingFilePath)) return NO_MEDIA;
+    recDir = path.dirname(recordingFilePath);
   } else if (project.source.kind === "file" && project.source.filePath) {
     recordingFilePath = project.source.filePath;
+    if (!fs.existsSync(recordingFilePath)) return NO_MEDIA;
+    recDir = path.dirname(recordingFilePath);
+  } else if (project.source.kind === "recording" && project.source.recDir) {
+    // No anchor file to derive recDir from — use it directly, and recover "as recorded"
+    // fidelity from recordMeta.json (written alongside the raw tracks — see
+    // electron/main/ipc/recording.ts's buildEditProjectMaterials) instead of a library
+    // Video row, since an Advanced-mode recording never gets one.
+    if (!fs.existsSync(project.source.recDir)) return NO_MEDIA;
+    recDir = project.source.recDir;
+    try {
+      const meta = JSON.parse(fs.readFileSync(path.join(recDir, "metadata", "recordMeta.json"), "utf-8")) as {
+        overlay?: OverlayConfig;
+        cursorBakedIn?: boolean;
+      };
+      recordedOverlay = meta.overlay ?? null;
+      cursorBakedIn = !!meta.cursorBakedIn;
+    } catch {
+      // No recordMeta.json (or unreadable) — proceed with the defaults above.
+    }
   }
-  if (!recordingFilePath || !fs.existsSync(recordingFilePath)) return NO_MEDIA;
 
-  const recDir = path.dirname(recordingFilePath);
+  if (!recDir) return NO_MEDIA;
+
   const screenFilePath = path.join(recDir, "metadata", "screen.mp4");
   const cameraFilePath = path.join(recDir, "metadata", "camera.webm");
   if (fs.existsSync(screenFilePath) && fs.existsSync(cameraFilePath)) {
@@ -365,8 +412,12 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
     };
   }
 
+  // Single-file fallback — a composited/burned-in video ("video"/"file" sources), or, for
+  // a screen-only "recording" source (Advanced mode, no camera bubble), the raw screen
+  // track itself: there's no separate camera to combine, so nothing was ever composited.
+  const singleFileCandidate = recordingFilePath ?? (fs.existsSync(screenFilePath) ? screenFilePath : null);
   // Audio-only sources (meeting recordings, imported audio files) have no video at all.
-  const isVideoFile = /\.(mp4|mov|mkv|avi|webm|m4v|wmv|flv)$/i.test(recordingFilePath);
+  const isVideoFile = !!singleFileCandidate && /\.(mp4|mov|mkv|avi|webm|m4v|wmv|flv)$/i.test(singleFileCandidate);
   // Position tracking (cursor.json) runs regardless of platform, independent of whether
   // screen/camera were split into their own files — only icon *capture* is Windows-only,
   // and that already degrades to a synthetic fallback arrow (see native/cursorIcon.ts).
@@ -378,7 +429,7 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
     editable: false,
     screenFilePath: null,
     cameraFilePath: null,
-    singleFilePath: isVideoFile ? recordingFilePath : null,
+    singleFilePath: isVideoFile ? singleFileCandidate : null,
     cursorMetadataPath: hasCursor ? cursorMetaPath : null,
     cursorIconsDir: hasCursor ? path.join(recDir, "metadata", "cursor-icons") : null,
     cursorBakedIn,

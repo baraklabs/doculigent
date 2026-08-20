@@ -8,6 +8,7 @@ import {
   isCameraBubbleWindowOpen,
   openCameraBubbleWindow,
   setCameraBubbleBounds,
+  setCameraBubbleContentProtected,
   setCameraBubbleRecordingActive,
   setCameraBubbleShape,
   setCameraBubbleShapeRegion,
@@ -64,8 +65,12 @@ export function registerCameraBubbleIpc(): void {
 
   ipcMain.handle(
     Channels.cameraBubble.setRecordingActive,
-    async (_event, active: boolean, contentProtected: boolean): Promise<void> => {
-      setCameraBubbleRecordingActive(active, contentProtected);
+    async (_event, active: boolean, contentProtected: boolean, keepVisible: boolean): Promise<void> => {
+      setCameraBubbleRecordingActive(active, contentProtected, keepVisible);
     }
   );
+
+  ipcMain.handle(Channels.cameraBubble.setContentProtected, async (_event, protect: boolean): Promise<void> => {
+    setCameraBubbleContentProtected(protect);
+  });
 }

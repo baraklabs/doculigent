@@ -130,12 +130,15 @@ export function useUpdateEditProjectTimeline() {
 export function useDeleteEditProject() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => EditProjectService.delete(id),
-    onSuccess: (_data, id) => {
+    mutationFn: ({ id, deleteSourceFiles }: { id: string; deleteSourceFiles?: boolean }) =>
+      EditProjectService.delete(id, deleteSourceFiles),
+    onSuccess: (_data, { id }) => {
       queryClient.invalidateQueries({ queryKey: ["editProjects"] });
       // Otherwise the Edit page for this project (if open, or navigated back to via
       // history) keeps showing its last-cached title instead of noticing it's gone.
       queryClient.removeQueries({ queryKey: ["editProject", id] });
+      // Deleting source files may have removed a library video too.
+      queryClient.invalidateQueries({ queryKey: ["videos"] });
     },
   });
 }
@@ -143,10 +146,12 @@ export function useDeleteEditProject() {
 export function useDeleteEditProjects() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (ids: string[]) => EditProjectService.deleteMany(ids),
-    onSuccess: (_data, ids) => {
+    mutationFn: ({ ids, deleteSourceFiles }: { ids: string[]; deleteSourceFiles?: boolean }) =>
+      EditProjectService.deleteMany(ids, deleteSourceFiles),
+    onSuccess: (_data, { ids }) => {
       queryClient.invalidateQueries({ queryKey: ["editProjects"] });
       for (const id of ids) queryClient.removeQueries({ queryKey: ["editProject", id] });
+      queryClient.invalidateQueries({ queryKey: ["videos"] });
     },
   });
 }

@@ -1,5 +1,13 @@
 import { create } from "zustand";
-import type { AreaRect, CaptureMode, MicConfig, OverlayConfig, SystemAudioConfig, Video } from "@shared/types/models";
+import type {
+  AreaRect,
+  CaptureMode,
+  MicConfig,
+  OverlayConfig,
+  RecordingSaveResult,
+  SystemAudioConfig,
+  Video,
+} from "@shared/types/models";
 import { recordingService } from "../services/recording/RecordingService";
 import { SettingsService } from "../services/settings/SettingsService";
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
@@ -10,6 +18,9 @@ export interface RecordingSaveStatus {
   status: "processing" | "ready" | "failed" | "cancelled";
   percent: number;
   message?: string;
+  /** What the save actually produced — a `Video` for Quick, an Edit Project for
+   *  Advanced. Set once `status` flips to "ready". */
+  result?: RecordingSaveResult;
 }
 
 interface StartArgs {
@@ -21,6 +32,7 @@ interface StartArgs {
   source: "record" | "meeting";
   captureMode: CaptureMode;
   areaRect: AreaRect | null;
+  mode: "quick" | "advanced";
 }
 
 let lastStartArgs: StartArgs | null = null;
@@ -45,9 +57,10 @@ interface RecordingState {
     title: string,
     source?: "record" | "meeting",
     captureMode?: CaptureMode,
-    areaRect?: AreaRect | null
+    areaRect?: AreaRect | null,
+    mode?: "quick" | "advanced"
   ) => Promise<void>;
-  stop: () => Promise<{ id: string } | null>;
+  stop: (mode?: "quick" | "advanced") => Promise<{ id: string } | null>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
   restart: () => Promise<void>;
@@ -78,12 +91,22 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
     }
   },
 
-  async start(targetId, overlay, mic, systemAudio, title, source = "record", captureMode = "display", areaRect = null) {
+  async start(
+    targetId,
+    overlay,
+    mic,
+    systemAudio,
+    title,
+    source = "record",
+    captureMode = "display",
+    areaRect = null,
+    mode = "quick"
+  ) {
     if (get().busy || get().recording) return;
     set({ busy: true, error: null, warning: null, title, source });
     try {
-      await recordingService.start(targetId, overlay, mic, systemAudio, captureMode, areaRect);
-      lastStartArgs = { targetId, overlay, mic, systemAudio, title, source, captureMode, areaRect };
+      await recordingService.start(targetId, overlay, mic, systemAudio, captureMode, areaRect, mode);
+      lastStartArgs = { targetId, overlay, mic, systemAudio, title, source, captureMode, areaRect, mode };
       set({
         recording: true,
         paused: false,
@@ -98,11 +121,11 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
     }
   },
 
-  async stop() {
+  async stop(mode = "quick") {
     if (get().busy || !get().recording) return null;
     set({ busy: true, stopping: true });
     try {
-      const result = await recordingService.stop(get().title, get().source);
+      const result = await recordingService.stop(get().title, get().source, mode);
       lastStartArgs = null;
       set({
         recording: false,
@@ -137,7 +160,15 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
     try {
       await recordingService.discard();
       set({ recording: false, paused: false });
-      await recordingService.start(args.targetId, args.overlay, args.mic, args.systemAudio, args.captureMode, args.areaRect);
+      await recordingService.start(
+        args.targetId,
+        args.overlay,
+        args.mic,
+        args.systemAudio,
+        args.captureMode,
+        args.areaRect,
+        args.mode
+      );
       set({
         recording: true,
         paused: false,
@@ -197,11 +228,12 @@ export function watchRecordingSaves(): void {
     );
   });
 
-  window.api.recording.onSaveCompleted((video) => {
+  window.api.recording.onSaveCompleted((result) => {
+    const id = result.kind === "video" ? result.video.id : result.recordingId;
     useRecordingStore.setState((s) =>
-      s.saveStatus?.id === video.id ? { saveStatus: { id: video.id, status: "ready", percent: 100 } } : {}
+      s.saveStatus?.id === id ? { saveStatus: { id, status: "ready", percent: 100, result } } : {}
     );
-    if (!video.transcript) void autoTranscribeRecording(video);
+    if (result.kind === "video" && !result.video.transcript) void autoTranscribeRecording(result.video);
   });
 
   window.api.recording.onSaveFailed(({ id, message }) => {

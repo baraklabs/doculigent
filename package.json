@@ -12,7 +12,9 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build:mac-native": "node scripts/build-mac-screencapturekit-helper.mjs",
-    "build": "npm run build:mac-native && electron-vite build && electron-builder",
+    "build:windows-native": "node scripts/build-windows-capture-helper.mjs",
+    "build:linux-native": "node scripts/build-linux-capture-helper.mjs",
+    "build": "npm run build:mac-native && npm run build:windows-native && npm run build:linux-native && electron-vite build && electron-builder",
     "build:unpack": "electron-vite build && electron-builder --dir",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "postinstall": "electron-builder install-app-deps"
