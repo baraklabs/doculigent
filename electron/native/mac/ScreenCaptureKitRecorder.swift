@@ -88,8 +88,8 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
 		let displayBounds = CGDisplayBounds(display.displayID)
 		let scaleFactor = Self.scaleFactor(for: display.displayID)
-		let outputWidth: Int
-		let outputHeight: Int
+		var outputWidth: Int
+		var outputHeight: Int
 		if let ax = config.areaX, let ay = config.areaY, let aw = config.areaWidth, let ah = config.areaHeight {
 			let sourceRect = CGRect(
 				x: displayBounds.width * ax,
@@ -104,6 +104,19 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 			outputWidth = max(2, Int(displayBounds.width) * scaleFactor)
 			outputHeight = max(2, Int(displayBounds.height) * scaleFactor)
 		}
+
+		// Cap to 1080p — full native/retina resolution (see scaleFactor above) is often well
+		// past 4K on modern Macs (a 14"/16" MacBook Pro's own built-in display already
+		// exceeds it, before even counting 5K/6K external displays) and that pixel count
+		// dominates every later ffmpeg pass's cost (CFR normalization, cursor/camera overlay
+		// compositing, export) far more than encoder choice does. Setting
+		// streamConfig.width/height (not just the AVAssetWriter output settings below) makes
+		// ScreenCaptureKit itself deliver already-downscaled frames, so this is a real
+		// capture-time cost reduction, not a wasted decode of full-res frames that then just
+		// get resized.
+		let (cappedWidth, cappedHeight) = Self.capTo1080p(width: outputWidth, height: outputHeight)
+		outputWidth = cappedWidth
+		outputHeight = cappedHeight
 		streamConfig.width = outputWidth
 		streamConfig.height = outputHeight
 
@@ -274,6 +287,21 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 	private static func scaleFactor(for displayId: CGDirectDisplayID) -> Int {
 		guard let mode = CGDisplayCopyDisplayMode(displayId) else { return 1 }
 		return max(1, mode.pixelWidth / max(1, mode.width))
+	}
+
+	// Scales down to fit within a 1920x1080 box, preserving aspect ratio — never scales up
+	// (a display/area already at or under 1080p is left alone). H.264 needs even
+	// dimensions, so the result is floored to the nearest even number on each axis.
+	private static func capTo1080p(width: Int, height: Int) -> (Int, Int) {
+		let maxWidth: CGFloat = 1920
+		let maxHeight: CGFloat = 1080
+		let scale = min(1.0, maxWidth / CGFloat(width), maxHeight / CGFloat(height))
+		if scale >= 1.0 { return (width, height) }
+		var cappedWidth = Int((CGFloat(width) * scale).rounded(.down))
+		var cappedHeight = Int((CGFloat(height) * scale).rounded(.down))
+		if cappedWidth % 2 != 0 { cappedWidth -= 1 }
+		if cappedHeight % 2 != 0 { cappedHeight -= 1 }
+		return (max(2, cappedWidth), max(2, cappedHeight))
 	}
 }
 
