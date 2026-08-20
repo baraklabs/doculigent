@@ -12,7 +12,7 @@ name = "doculigent-pipewire-helper"
 path = "src/main.rs"
 
 [dependencies]
-ashpd = { version = "0.13", features = ["async-std"] }
+ashpd = { version = "0.13", features = ["async-io"] }
 pipewire = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

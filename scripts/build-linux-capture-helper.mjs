@@ -15,6 +15,15 @@ import { fileURLToPath } from "node:url";
 // it's never run, screenCapture.ts falls back to the existing getDisplayMedia pipeline
 // automatically (Linux's only capture path today), same graceful-degradation shape as the
 // other two helpers.
+//
+// Unlike the mac/windows helper scripts, failures here are NON-fatal (warn + exit 0, not
+// throw): this crate is still unverified/experimental (see capture-helper/src/main.rs's
+// header comment — hardcoded 0,0 frame dimensions, an unconfirmed pipewire-rs fd-connect
+// call, etc.) and the release workflow doesn't provision libpipewire-dev, so failing here
+// is the expected steady state for now, not a release blocker. `npm run build` chains this
+// script with `&&` ahead of `electron-builder`, so a hard failure would take down the whole
+// Linux release over an optional native-capture upgrade that already degrades gracefully at
+// runtime — exactly the outcome this graceful-degradation design is meant to avoid.
 
 const projectRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const crateDir = path.join(projectRoot, "electron", "native", "linux", "capture-helper");
@@ -26,10 +35,16 @@ if (process.platform !== "linux") {
   process.exit(0);
 }
 
+function skip(message) {
+  console.warn(`[build-linux-capture-helper] Skipping: ${message}`);
+  console.warn("[build-linux-capture-helper] screenCapture.ts will fall back to getDisplayMedia at runtime.");
+  process.exit(0);
+}
+
 const cargoCheck = spawnSync("cargo", ["--version"], { encoding: "utf8" });
 if (cargoCheck.status !== 0) {
   const details = [cargoCheck.stderr, cargoCheck.stdout].filter(Boolean).join("\n").trim();
-  throw new Error(details || "cargo is unavailable — install Rust (https://rustup.rs).");
+  skip(details || "cargo is unavailable — install Rust (https://rustup.rs).");
 }
 
 const result = spawnSync("cargo", ["build", "--release"], {
@@ -39,7 +54,7 @@ const result = spawnSync("cargo", ["build", "--release"], {
   timeout: 600000,
 });
 if (result.status !== 0) {
-  throw new Error(`Failed to build ${HELPER_NAME} (cargo exited ${result.status}) — see main.rs's header comment, this is expected to need fixes on first real build`);
+  skip(`Failed to build ${HELPER_NAME} (cargo exited ${result.status}) — see main.rs's header comment, this is expected to need fixes on first real build`);
 }
 
 await mkdir(binDir, { recursive: true });
