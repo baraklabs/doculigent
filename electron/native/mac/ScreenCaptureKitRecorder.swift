@@ -105,16 +105,18 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 			outputHeight = max(2, Int(displayBounds.height) * scaleFactor)
 		}
 
-		// Cap to 1080p — full native/retina resolution (see scaleFactor above) is often well
+		// Cap to 1440p — full native/retina resolution (see scaleFactor above) is often well
 		// past 4K on modern Macs (a 14"/16" MacBook Pro's own built-in display already
 		// exceeds it, before even counting 5K/6K external displays) and that pixel count
 		// dominates every later ffmpeg pass's cost (CFR normalization, cursor/camera overlay
-		// compositing, export) far more than encoder choice does. Setting
+		// compositing, export) far more than encoder choice does. A 1080p cap was tried
+		// first but visibly softened text/UI on a Retina source (confirmed) — 1440p is the
+		// compromise: still a real cut off native resolution, less blur. Setting
 		// streamConfig.width/height (not just the AVAssetWriter output settings below) makes
 		// ScreenCaptureKit itself deliver already-downscaled frames, so this is a real
 		// capture-time cost reduction, not a wasted decode of full-res frames that then just
 		// get resized.
-		let (cappedWidth, cappedHeight) = Self.capTo1080p(width: outputWidth, height: outputHeight)
+		let (cappedWidth, cappedHeight) = Self.capTo1440p(width: outputWidth, height: outputHeight)
 		outputWidth = cappedWidth
 		outputHeight = cappedHeight
 		streamConfig.width = outputWidth
@@ -289,12 +291,15 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		return max(1, mode.pixelWidth / max(1, mode.width))
 	}
 
-	// Scales down to fit within a 1920x1080 box, preserving aspect ratio — never scales up
-	// (a display/area already at or under 1080p is left alone). H.264 needs even
-	// dimensions, so the result is floored to the nearest even number on each axis.
-	private static func capTo1080p(width: Int, height: Int) -> (Int, Int) {
-		let maxWidth: CGFloat = 1920
-		let maxHeight: CGFloat = 1080
+	// Scales down to fit within a 2560x1440 box, preserving aspect ratio — never scales up
+	// (a display/area already at or under 1440p is left alone). 1440p over 1080p: on a
+	// Retina source, 1080p visibly softened text/UI (confirmed) — 1440p still meaningfully
+	// cuts a native 4-6K pixel count (and therefore normalizeToCfr's decode/encode cost)
+	// while staying noticeably sharper. H.264 needs even dimensions, so the result is
+	// floored to the nearest even number on each axis.
+	private static func capTo1440p(width: Int, height: Int) -> (Int, Int) {
+		let maxWidth: CGFloat = 2560
+		let maxHeight: CGFloat = 1440
 		let scale = min(1.0, maxWidth / CGFloat(width), maxHeight / CGFloat(height))
 		if scale >= 1.0 { return (width, height) }
 		var cappedWidth = Int((CGFloat(width) * scale).rounded(.down))
