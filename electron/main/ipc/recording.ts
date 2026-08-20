@@ -59,30 +59,45 @@ async function moveFile(src: string, dest: string): Promise<void> {
  *  input carries (native capture vs. the non-native getUserMedia fallback), writing
  *  straight to `outputPath` — shared by both the Quick (`buildFinalMp4`) and Advanced
  *  (`buildEditProjectMaterials`) paths, since both need the same resolution logic before
- *  branching on where the result needs to end up. */
+ *  branching on where the result needs to end up.
+ *
+ *  `needsCfr` gates the mac CFR-normalization re-encode below — only Advanced actually
+ *  needs it (see that branch's comment), but this function used to run it unconditionally
+ *  for *both* callers, silently turning Quick Recording's documented "at most a stream
+ *  copy or an audio mux, never a compositing re-encode" (see buildFinalMp4's Quick-branch
+ *  comment in finishRecordingSave) into a real ~1x-realtime libx264 pass on every mac Quick
+ *  Recording — the dominant cost in a 10-minute recording taking another minute to save,
+ *  and a second, separate ffmpeg progress run the save UI had no way to distinguish from
+ *  the actual (fast) finishing pass. */
 async function resolveScreenTrack(
   id: string,
   input: SaveRecordingInput,
   outputPath: string,
   onProgress: (secondsDone: number) => void,
   signal: AbortSignal,
-  cleanupPaths: string[]
+  cleanupPaths: string[],
+  needsCfr: boolean
 ): Promise<string> {
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
   if (input.screenFilePath) {
-    if (process.platform === "darwin") {
+    if (process.platform === "darwin" && needsCfr) {
       // macOS's native avfoundation capture is intentionally variable-frame-rate (see
       // native/screenCapture.ts's -fps_mode vfr) — normalize to a real CFR 30fps file so
       // anything downstream can keep assuming a predictable frame count, same as
-      // Windows' native gdigrab output already is.
+      // Windows' native gdigrab output already is. Only Advanced needs this: its cursor/
+      // camera overlay compositing (overlayCursorTrack) precomputes frame counts from
+      // duration * 30 and faults on a VFR mismatch. Quick never runs that compositing (see
+      // buildFinalMp4), so a VFR screen track is fine for it — playback and stream-copy/
+      // mux both work fine straight off PTS timestamps, no fixed frame count assumed.
       const tempNativeScreen = path.join(os.tmpdir(), `${id}-screen-native.mp4`);
       await moveFile(input.screenFilePath, tempNativeScreen);
       cleanupPaths.push(tempNativeScreen);
       console.log("[recording] normalizing mac native capture to CFR", { tempNativeScreen });
       await normalizeToCfr(tempNativeScreen, outputPath, onProgress, signal);
     } else {
-      // Native (gdigrab) — already an mp4, already cropped/scaled and CFR at capture time.
+      // Native (gdigrab, or mac ScreenCaptureKit when the caller doesn't need CFR) —
+      // already an mp4, no re-encode needed.
       await moveFile(input.screenFilePath, outputPath);
     }
   } else {
@@ -140,7 +155,9 @@ async function buildFinalMp4(
   if (input.screenFilePath || input.screenBytes) {
     const tempScreenPath = path.join(os.tmpdir(), `${id}-screen-final.mp4`);
     cleanupPaths.push(tempScreenPath);
-    await resolveScreenTrack(id, input, tempScreenPath, onProgress, signal, cleanupPaths);
+    // Quick never runs cursor/camera overlay compositing (see this function's Quick
+    // branch below) — no need for a CFR screen track, see resolveScreenTrack's needsCfr.
+    await resolveScreenTrack(id, input, tempScreenPath, onProgress, signal, cleanupPaths, false);
 
     if (!input.sideClip?.hasAudio) {
       await copyToMp4(tempScreenPath, finalMp4, onProgress, signal);
@@ -181,7 +198,9 @@ async function buildEditProjectMaterials(
   await fs.mkdir(metaDir, { recursive: true });
 
   if (input.screenFilePath || input.screenBytes) {
-    await resolveScreenTrack(id, input, path.join(metaDir, "screen.mp4"), onProgress, signal, cleanupPaths);
+    // Advanced's editor overlays run against this track later (cursor/camera compositing
+    // assumes a fixed frame count — see resolveScreenTrack's needsCfr) — must be CFR.
+    await resolveScreenTrack(id, input, path.join(metaDir, "screen.mp4"), onProgress, signal, cleanupPaths, true);
 
     if (input.sideClip?.hasVideo) {
       await fs.writeFile(path.join(metaDir, "camera.webm"), Buffer.from(input.sideClip.bytes));
