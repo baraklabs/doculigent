@@ -204,10 +204,19 @@ function hasVideotoolboxEncoder(): Promise<boolean> {
  *  This is the one re-encode pass Advanced Recording can't skip on mac (Quick doesn't run
  *  it at all — see resolveScreenTrack's needsCfr), so it's worth paying for hardware
  *  encoding when it's actually there: VideoToolbox runs on the Mac's media engine instead
- *  of the CPU, cutting a ~1-minute software libx264 -preset ultrafast pass (for a
- *  10-minute recording) down dramatically. Falls back to the software encoder if
- *  VideoToolbox isn't available (see hasVideotoolboxEncoder) or errors at runtime, rather
- *  than failing the whole save either way. */
+ *  of the CPU. Measured on a 3-minute clip, encode-only hardware acceleration (`-c:v
+ *  h264_videotoolbox` with no `-hwaccel` on the input) still took ~92s — a ~2x-realtime
+ *  ratio that held from a 30s clip too, so it's a real throughput ceiling, not fixed
+ *  per-call startup cost. The likely reason: without `-hwaccel videotoolbox` on the input
+ *  side, ffmpeg decodes the source VFR mp4 and does the pixel-format conversion for `-vf
+ *  fps=30`/`-pix_fmt yuv420p` entirely in software on the CPU before frames ever reach the
+ *  hardware encoder — for a high-resolution (e.g. native retina) capture, that CPU-bound
+ *  decode/convert step is plausibly the actual bottleneck, with the hardware encoder idle
+ *  waiting on frames. `-hwaccel videotoolbox` moves decode to hardware too (frames still
+ *  auto-download to system memory afterward, so the `fps` software filter downstream is
+ *  unaffected). Falls back to the software encoder if VideoToolbox isn't available (see
+ *  hasVideotoolboxEncoder) or errors at runtime, rather than failing the whole save either
+ *  way. */
 export async function normalizeToCfr(
   inputPath: string,
   outputMp4Path: string,
@@ -219,8 +228,14 @@ export async function normalizeToCfr(
     try {
       await run(
         [
-          "-y", "-i", inputPath, "-vf", "fps=30",
+          "-y", "-hwaccel", "videotoolbox", "-i", inputPath, "-vf", "fps=30",
           "-c:v", "h264_videotoolbox", "-b:v", "20M", "-pix_fmt", "yuv420p",
+          // h264_videotoolbox can leave color-range/colorspace unset in the output SPS —
+          // seen paired with Chromium's own player logging "Unsupported pixel format: -1"
+          // right after a videotoolbox-encoded screen.mp4 got previewed in the editor.
+          // Tagging standard SDR values explicitly removes the ambiguity a decoder would
+          // otherwise have to guess at.
+          "-color_range", "tv", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
           "-an", outputMp4Path,
         ],
         onProgress,
