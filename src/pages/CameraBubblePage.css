@@ -13,7 +13,15 @@ html, body, #root { background: transparent; }
   overflow: hidden;
   background: #000;
   border: 2px solid #fff;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, .4);
+  /* Inset, not a regular outer box-shadow: an outer shadow paints outside the border box
+     following the shape's curve, and this window has zero margin around the shape (bounds
+     == shape size). On Windows/Linux that overflow gets hard-clipped away by the native
+     window-region mask (see setCameraBubbleShapeRegion), but Electron's setShape isn't
+     supported on macOS, so nothing clips it there — it shows up as a shadow smudge in the
+     square window's corners beside the circle, most visible for the round shape (where the
+     gap between the circle and its bounding square is largest). An inset shadow can never
+     escape the border box, so it can't leak on any platform. */
+  box-shadow: inset 0 -10px 16px -6px rgba(0, 0, 0, .4);
   cursor: move;
 }
 .camera-bubble-circle { border-radius: 50%; }
