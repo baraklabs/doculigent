@@ -16,7 +16,6 @@ import {
   copyToMp4,
   FfmpegCancelledError,
   muxScreenWithAudio,
-  normalizeToCfr,
   remuxToMp4,
   transcodeScreenRecording,
 } from "../native/ffmpeg";
@@ -61,46 +60,33 @@ async function moveFile(src: string, dest: string): Promise<void> {
  *  (`buildEditProjectMaterials`) paths, since both need the same resolution logic before
  *  branching on where the result needs to end up.
  *
- *  `needsCfr` gates the mac CFR-normalization re-encode below — only Advanced actually
- *  needs it (see that branch's comment), but this function used to run it unconditionally
- *  for *both* callers, silently turning Quick Recording's documented "at most a stream
- *  copy or an audio mux, never a compositing re-encode" (see buildFinalMp4's Quick-branch
- *  comment in finishRecordingSave) into a real ~1x-realtime libx264 pass on every mac Quick
- *  Recording — the dominant cost in a 10-minute recording taking another minute to save,
- *  and a second, separate ffmpeg progress run the save UI had no way to distinguish from
- *  the actual (fast) finishing pass. */
+ *  A native capture is never re-encoded here on any platform — the file is just moved into
+ *  place. macOS used to additionally run a full CFR-normalization re-encode
+ *  (`normalizeToCfr`, since deleted) because its captures are variable-frame-rate, which
+ *  cost ~90s on a 10-minute recording and was the single dominant cost of saving. That pass
+ *  existed for `overlayCursorTrack`, an ffmpeg compositing step that precomputed its frame
+ *  count as `durationSecs * 30` and so faulted on VFR input — but that step was deleted
+ *  when native compositor-drawn cursor capture replaced it (see native/cursorOverlay.ts),
+ *  leaving the expensive workaround behind with nothing left to protect. Nothing downstream
+ *  needs CFR now: the editor composites on a canvas driven by `video.currentTime`
+ *  (PreviewCompositor.tsx) and exports via `canvas.captureStream()`, both of which seek by
+ *  timestamp and never assume a fixed frame count. `overlayCameraBubble` is likewise
+ *  time-based (`stepExpr` keys off `t`) and currently uncalled. */
 async function resolveScreenTrack(
   id: string,
   input: SaveRecordingInput,
   outputPath: string,
   onProgress: (secondsDone: number) => void,
   signal: AbortSignal,
-  cleanupPaths: string[],
-  needsCfr: boolean
+  cleanupPaths: string[]
 ): Promise<string> {
   const startedAt = Date.now();
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
   if (input.screenFilePath) {
-    if (process.platform === "darwin" && needsCfr) {
-      // macOS's native avfoundation capture is intentionally variable-frame-rate (see
-      // native/screenCapture.ts's -fps_mode vfr) — normalize to a real CFR 30fps file so
-      // anything downstream can keep assuming a predictable frame count, same as
-      // Windows' native gdigrab output already is. Only Advanced needs this: its cursor/
-      // camera overlay compositing (overlayCursorTrack) precomputes frame counts from
-      // duration * 30 and faults on a VFR mismatch. Quick never runs that compositing (see
-      // buildFinalMp4), so a VFR screen track is fine for it — playback and stream-copy/
-      // mux both work fine straight off PTS timestamps, no fixed frame count assumed.
-      const tempNativeScreen = path.join(os.tmpdir(), `${id}-screen-native.mp4`);
-      await moveFile(input.screenFilePath, tempNativeScreen);
-      cleanupPaths.push(tempNativeScreen);
-      console.log("[recording] normalizing mac native capture to CFR", { tempNativeScreen });
-      await normalizeToCfr(tempNativeScreen, outputPath, onProgress, signal);
-    } else {
-      // Native (gdigrab, or mac ScreenCaptureKit when the caller doesn't need CFR) —
-      // already an mp4, no re-encode needed.
-      await moveFile(input.screenFilePath, outputPath);
-    }
+    // Native capture (gdigrab/WGC on Windows, ScreenCaptureKit on mac) — already a
+    // finished mp4 at its final size, so this is a move, never a re-encode.
+    await moveFile(input.screenFilePath, outputPath);
   } else {
     // Non-native fallback — a raw, uncropped/unscaled getUserMedia recording of the
     // *whole* display (there's no way to crop at the capture source itself), transcoded
@@ -127,13 +113,8 @@ async function resolveScreenTrack(
   console.log("[recording] resolveScreenTrack (screen.mp4 prepared)", {
     id,
     outputPath,
-    needsCfr,
     platform: process.platform,
-    branch: input.screenFilePath
-      ? process.platform === "darwin" && needsCfr
-        ? "mac-normalize-cfr"
-        : "move-file"
-      : "non-native-transcode",
+    branch: input.screenFilePath ? "move-file" : "non-native-transcode",
     elapsedMs: Date.now() - startedAt,
   });
   return outputPath;
@@ -168,9 +149,7 @@ async function buildFinalMp4(
   if (input.screenFilePath || input.screenBytes) {
     const tempScreenPath = path.join(os.tmpdir(), `${id}-screen-final.mp4`);
     cleanupPaths.push(tempScreenPath);
-    // Quick never runs cursor/camera overlay compositing (see this function's Quick
-    // branch below) — no need for a CFR screen track, see resolveScreenTrack's needsCfr.
-    await resolveScreenTrack(id, input, tempScreenPath, onProgress, signal, cleanupPaths, false);
+    await resolveScreenTrack(id, input, tempScreenPath, onProgress, signal, cleanupPaths);
 
     if (!input.sideClip?.hasAudio) {
       await copyToMp4(tempScreenPath, finalMp4, onProgress, signal);
@@ -211,9 +190,7 @@ async function buildEditProjectMaterials(
   await fs.mkdir(metaDir, { recursive: true });
 
   if (input.screenFilePath || input.screenBytes) {
-    // Advanced's editor overlays run against this track later (cursor/camera compositing
-    // assumes a fixed frame count — see resolveScreenTrack's needsCfr) — must be CFR.
-    await resolveScreenTrack(id, input, path.join(metaDir, "screen.mp4"), onProgress, signal, cleanupPaths, true);
+    await resolveScreenTrack(id, input, path.join(metaDir, "screen.mp4"), onProgress, signal, cleanupPaths);
 
     if (input.sideClip?.hasVideo) {
       await fs.writeFile(path.join(metaDir, "camera.webm"), Buffer.from(input.sideClip.bytes));
