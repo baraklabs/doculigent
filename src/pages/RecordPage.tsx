@@ -24,6 +24,7 @@ import type {
   SystemAudioConfig,
 } from "@shared/types/models";
 import { useRecordingStore, useSavingRecording } from "../store/recordingStore";
+import { useAuthStore } from "../store/authStore";
 import { recordingService } from "../services/recording/RecordingService";
 import { applyCameraBlur, preloadCameraBlurModel, type CameraBlurHandle } from "../services/camera/cameraBlur";
 import { getSystemAudioStream } from "../services/recording/AudioRecordingService";
@@ -31,7 +32,7 @@ import { SettingsService } from "../services/settings/SettingsService";
 import { AnnotationToolbar } from "../components/AnnotationToolbar";
 import { useToast } from "../hooks/useToast";
 import { useStoragePreference } from "../hooks/useStorage";
-import { showStorageSetupToast } from "../lib/storageSetupToast";
+import { isStorageNotSetUp, showStorageSetupToast } from "../lib/storageSetupToast";
 import "./RecordPage.css";
 
 const RECORDING_MODE_LABEL: Record<"quick" | "advanced", string> = {
@@ -175,7 +176,9 @@ export function RecordPage() {
   const toast = useToast();
   const navigate = useNavigate();
   const { data: storagePreference } = useStoragePreference();
-  const storageNotSetUp = storagePreference?.provider === "s3" && !storagePreference.s3;
+  const session = useAuthStore((s) => s.session);
+  const authReady = useAuthStore((s) => s.ready);
+  const storageNotSetUp = isStorageNotSetUp(storagePreference, session, authReady);
 
   const { data: targets = [], refetch: refetchTargets } = useQuery<CaptureTarget[]>({
     queryKey: ["captureTargets"],

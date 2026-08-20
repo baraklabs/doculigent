@@ -2,10 +2,11 @@ import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRecordingStore } from "../store/recordingStore";
+import { useAuthStore } from "../store/authStore";
 import { DEFAULT_TOAST_DURATION } from "../store/toastStore";
 import { useToast } from "../hooks/useToast";
 import { useStoragePreference } from "../hooks/useStorage";
-import { showStorageSetupToast } from "../lib/storageSetupToast";
+import { isStorageNotSetUp, showStorageSetupToast } from "../lib/storageSetupToast";
 import "./RecordingSaveToast.css";
 
 export function RecordingSaveToast() {
@@ -15,7 +16,9 @@ export function RecordingSaveToast() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const { data: storagePreference } = useStoragePreference();
-  const storageNotSetUp = storagePreference?.provider === "s3" && !storagePreference.s3;
+  const session = useAuthStore((s) => s.session);
+  const authReady = useAuthStore((s) => s.ready);
+  const storageNotSetUp = isStorageNotSetUp(storagePreference, session, authReady);
 
   const status = saveStatus?.status;
   const id = saveStatus?.id;
