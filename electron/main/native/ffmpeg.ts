@@ -165,6 +165,31 @@ export function copyToMp4(
   return run(["-y", "-i", inputPath, "-c", "copy", outputMp4Path], onProgress, signal);
 }
 
+// Whether this bundled ffmpeg binary has h264_videotoolbox at all — probed once (an
+// `-encoders` listing is near-instant, no file I/O) and cached, instead of discovering it
+// by attempting a full real-time hardware encode and catching the failure. That "try it
+// and catch" approach used to sit here, but if the encoder is *listed* yet errors out only
+// partway through a long file (rather than failing instantly), it pays for a wasted
+// partial hardware attempt AND the full software fallback — measured worse than software
+// alone, not better. A cheap up-front probe avoids that stacked-failure case entirely for
+// the common "not compiled in" reason; a runtime failure after the probe passes still
+// falls back below, just no longer the expected path.
+let videotoolboxAvailable: Promise<boolean> | null = null;
+function hasVideotoolboxEncoder(): Promise<boolean> {
+  if (!videotoolboxAvailable) {
+    videotoolboxAvailable = new Promise((resolve) => {
+      const proc = spawn(ffmpegPath, ["-hide_banner", "-encoders"]);
+      let out = "";
+      proc.stdout?.on("data", (d: Buffer) => {
+        out += d.toString();
+      });
+      proc.on("error", () => resolve(false));
+      proc.on("close", () => resolve(out.includes("h264_videotoolbox")));
+    });
+  }
+  return videotoolboxAvailable;
+}
+
 /** macOS-only normalization pass — native/screenCapture.ts's avfoundation capture uses
  *  -fps_mode vfr at capture time to avoid a runaway frame-duplication bug (real-time
  *  encoding pressure against avfoundation's irregular, damage-driven frame delivery), but
@@ -174,39 +199,46 @@ export function copyToMp4(
  *  faults with EPIPE the moment the primary (VFR, frame-count-mismatched) video input
  *  runs out of frames first (confirmed). This is a cheap, non-realtime, bounded-by-file-
  *  length pass — unlike the live capture, there's no risk of the same runaway
- *  duplication here, since it's just re-encoding an already-finished file. */
+ *  duplication here, since it's just re-encoding an already-finished file.
+ *
+ *  This is the one re-encode pass Advanced Recording can't skip on mac (Quick doesn't run
+ *  it at all — see resolveScreenTrack's needsCfr), so it's worth paying for hardware
+ *  encoding when it's actually there: VideoToolbox runs on the Mac's media engine instead
+ *  of the CPU, cutting a ~1-minute software libx264 -preset ultrafast pass (for a
+ *  10-minute recording) down dramatically. Falls back to the software encoder if
+ *  VideoToolbox isn't available (see hasVideotoolboxEncoder) or errors at runtime, rather
+ *  than failing the whole save either way. */
 export async function normalizeToCfr(
   inputPath: string,
   outputMp4Path: string,
   onProgress?: ProgressHandler,
   signal?: AbortSignal
 ): Promise<void> {
-  // This is the one re-encode pass Advanced Recording can't skip on mac (Quick doesn't
-  // run it at all — see resolveScreenTrack's needsCfr), so it's worth paying for
-  // hardware encoding here: VideoToolbox runs on the Mac's media engine instead of the
-  // CPU, cutting a ~1-minute software libx264 -preset ultrafast pass (for a 10-minute
-  // recording) down dramatically. Falls back to the software encoder if VideoToolbox
-  // isn't available for some reason (e.g. an ffmpeg-static build without it) rather than
-  // failing the whole save.
-  try {
-    await run(
-      [
-        "-y", "-i", inputPath, "-vf", "fps=30",
-        "-c:v", "h264_videotoolbox", "-b:v", "20M", "-pix_fmt", "yuv420p",
-        "-an", outputMp4Path,
-      ],
-      onProgress,
-      signal
-    );
-  } catch (e) {
-    if (e instanceof FfmpegCancelledError || (signal?.aborted ?? false)) throw e;
-    console.warn("[ffmpeg] h264_videotoolbox normalizeToCfr failed, falling back to libx264", e);
-    await run(
-      ["-y", "-i", inputPath, "-vf", "fps=30", "-c:v", "libx264", "-preset", "ultrafast", "-an", outputMp4Path],
-      onProgress,
-      signal
-    );
+  const started = Date.now();
+  if (await hasVideotoolboxEncoder()) {
+    try {
+      await run(
+        [
+          "-y", "-i", inputPath, "-vf", "fps=30",
+          "-c:v", "h264_videotoolbox", "-b:v", "20M", "-pix_fmt", "yuv420p",
+          "-an", outputMp4Path,
+        ],
+        onProgress,
+        signal
+      );
+      console.log(`[ffmpeg] normalizeToCfr (videotoolbox) took ${Date.now() - started}ms`);
+      return;
+    } catch (e) {
+      if (e instanceof FfmpegCancelledError || (signal?.aborted ?? false)) throw e;
+      console.warn("[ffmpeg] h264_videotoolbox normalizeToCfr failed at runtime, falling back to libx264", e);
+    }
   }
+  await run(
+    ["-y", "-i", inputPath, "-vf", "fps=30", "-c:v", "libx264", "-preset", "ultrafast", "-an", outputMp4Path],
+    onProgress,
+    signal
+  );
+  console.log(`[ffmpeg] normalizeToCfr (libx264 fallback) took ${Date.now() - started}ms`);
 }
 
 export function muxScreenWithAudio(

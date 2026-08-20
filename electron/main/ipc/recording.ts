@@ -78,6 +78,7 @@ async function resolveScreenTrack(
   cleanupPaths: string[],
   needsCfr: boolean
 ): Promise<string> {
+  const startedAt = Date.now();
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
   if (input.screenFilePath) {
@@ -123,6 +124,18 @@ async function resolveScreenTrack(
     }
   }
 
+  console.log("[recording] resolveScreenTrack (screen.mp4 prepared)", {
+    id,
+    outputPath,
+    needsCfr,
+    platform: process.platform,
+    branch: input.screenFilePath
+      ? process.platform === "darwin" && needsCfr
+        ? "mac-normalize-cfr"
+        : "move-file"
+      : "non-native-transcode",
+    elapsedMs: Date.now() - startedAt,
+  });
   return outputPath;
 }
 
@@ -234,6 +247,7 @@ async function finishRecordingSave(
   sender: IpcMainInvokeEvent["sender"]
 ): Promise<void> {
   console.log("[recording] finishRecordingSave start", { id, finalMp4, mode: input.mode });
+  const startedAt = Date.now();
   const abort = new AbortController();
   pendingSaves.set(id, abort);
   const cleanupPaths: string[] = [];
@@ -247,7 +261,11 @@ async function finishRecordingSave(
     if (input.mode === "advanced") {
       await buildEditProjectMaterials(id, input, recDir, onProgress, abort.signal, cleanupPaths);
       const project = createEditProject(input.title, { kind: "recording", recDir });
-      console.log("[recording] finishRecordingSave done (advanced)", { id, editProjectId: project.id });
+      console.log("[recording] finishRecordingSave done (advanced)", {
+        id,
+        editProjectId: project.id,
+        elapsedMs: Date.now() - startedAt,
+      });
       const result: RecordingSaveResult = {
         kind: "editProject",
         recordingId: id,
@@ -280,7 +298,11 @@ async function finishRecordingSave(
       // No Edit Project for a Quick recording to read metadata/ afterward (cursor.json
       // isn't even written for Quick anymore — see the save handler below).
       await fs.rm(path.join(recDir, "metadata"), { recursive: true, force: true });
-      console.log("[recording] finishRecordingSave done", { id, cursorBakedIn: video.cursorBakedIn });
+      console.log("[recording] finishRecordingSave done", {
+        id,
+        cursorBakedIn: video.cursorBakedIn,
+        elapsedMs: Date.now() - startedAt,
+      });
       const result: RecordingSaveResult = { kind: "video", video };
       if (!sender.isDestroyed()) sender.send(Channels.recording.saveCompleted, result);
     }
