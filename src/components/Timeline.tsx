@@ -313,7 +313,7 @@ export function Timeline({
     onChange({ ...timeline, clips: next });
   }
   function clipsList(): TimelineClip[] {
-    return effectiveClips(timeline.clips, durationMs);
+    return effectiveClips(timeline.clips, sourceDurationMs);
   }
   // A track's own pieces' edges (start and end) — what the *other* track's cut tool snaps
   // a new cut onto, so a Camera cut can land exactly where a Clips piece begins/ends (or
