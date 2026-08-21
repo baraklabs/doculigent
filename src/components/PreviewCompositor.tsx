@@ -885,8 +885,19 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     screenVideo.addEventListener("ended", onEnded);
 
     return () => {
+      // pause() alone leaves the element's in-flight `media://` request (an open file
+      // handle on the main-process side, see mediaProtocol.ts) alive — these elements are
+      // never inserted into the DOM, so nothing forces Chromium to abort that request
+      // until GC eventually collects the element, on its own unpredictable schedule.
+      // Clearing `src` (then `load()`, which is what actually makes the clear take effect)
+      // aborts it immediately instead, so navigating away from a project promptly releases
+      // its files — otherwise a delete landing in that gap can fail with EBUSY on Windows.
       screenVideo.pause();
+      screenVideo.removeAttribute("src");
+      screenVideo.load();
       cameraVideo?.pause();
+      cameraVideo?.removeAttribute("src");
+      cameraVideo?.load();
       screenVideo.removeEventListener("ended", onEnded);
       screenVideoRef.current = null;
       cameraVideoRef.current = null;

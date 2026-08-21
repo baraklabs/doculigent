@@ -103,6 +103,22 @@ export function EditPage() {
   const navigate = useNavigate();
   const { data: project, isLoading: projectLoading } = useEditProject(id);
   const { data: media, isLoading: mediaLoading } = useEditProjectMedia(id);
+
+  // Set when the main process is about to delete this exact project's files — a delete
+  // triggered from Library while this Edit page still has it open can otherwise race a
+  // `<video>` element that's actively holding the file open (see onReleaseMedia's own
+  // comment in api.ts). Forces the preview below to unmount immediately instead of
+  // waiting for a route change, so the delete's retry-and-unlink isn't fighting a still-
+  // live media element. Reset whenever the route's own project changes.
+  const [mediaReleased, setMediaReleased] = useState(false);
+  useEffect(() => {
+    setMediaReleased(false);
+  }, [id]);
+  useEffect(() => {
+    return window.api.editProjects.onReleaseMedia((ids) => {
+      if (id && ids.includes(id)) setMediaReleased(true);
+    });
+  }, [id]);
   const createProject = useCreateEditProject();
   const renameProject = useRenameEditProject();
   const updateCamera = useUpdateEditProjectCamera();
@@ -689,7 +705,7 @@ export function EditPage() {
     return () => document.removeEventListener("mousedown", onOutside);
   }, [showMediaPaths]);
 
-  const hasMedia = !!(media?.screenFilePath || media?.singleFilePath);
+  const hasMedia = !mediaReleased && !!(media?.screenFilePath || media?.singleFilePath);
 
   const mediaFiles = [
     { label: "Screen", path: media?.screenFilePath },

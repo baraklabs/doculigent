@@ -393,7 +393,10 @@ export function LibraryPage() {
       setBulkDeleteScope(null);
       return;
     }
-    deleteVideos.mutate({ ids: bulkDeleteTargetIds, keepFile });
+    deleteVideos.mutate(
+      { ids: bulkDeleteTargetIds, keepFile },
+      { onError: (e) => toast.error(friendlyErrorMessage(e), { title: "Delete failed" }) }
+    );
     setSelectedIds(new Set());
     setBulkDeleteScope(null);
   }
@@ -410,7 +413,10 @@ export function LibraryPage() {
       setProjectBulkDeleteScope(null);
       return;
     }
-    deleteEditProjectsMut.mutate({ ids: projectBulkDeleteTargetIds, deleteSourceFiles });
+    deleteEditProjectsMut.mutate(
+      { ids: projectBulkDeleteTargetIds, deleteSourceFiles },
+      { onError: (e) => toast.error(friendlyErrorMessage(e), { title: "Delete failed" }) }
+    );
     setSelectedIds(new Set());
     setProjectBulkDeleteScope(null);
   }

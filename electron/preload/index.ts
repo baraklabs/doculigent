@@ -212,6 +212,11 @@ const api: DoculigentApi = {
     getMedia: (id) => ipcRenderer.invoke(Channels.editProjects.getMedia, id),
     delete: (id, deleteSourceFiles) => ipcRenderer.invoke(Channels.editProjects.delete, id, deleteSourceFiles),
     deleteMany: (ids, deleteSourceFiles) => ipcRenderer.invoke(Channels.editProjects.deleteMany, ids, deleteSourceFiles),
+    onReleaseMedia: (callback) => {
+      const listener = (_event: unknown, ids: string[]) => callback(ids);
+      ipcRenderer.on(Channels.editProjects.releaseMedia, listener);
+      return () => ipcRenderer.removeListener(Channels.editProjects.releaseMedia, listener);
+    },
     export: (exportId, input) => ipcRenderer.invoke(Channels.editProjects.export, exportId, input),
     exportCancel: (exportId) => ipcRenderer.invoke(Channels.editProjects.exportCancel, exportId),
     onExportProgress: (callback) => {

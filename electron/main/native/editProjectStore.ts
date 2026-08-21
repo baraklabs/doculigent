@@ -313,8 +313,11 @@ function deleteProjectSourceFiles(source: EditProjectSource | undefined): void {
     deleteLibraryVideo(source.videoId);
   } else if (source.kind === "file" && source.filePath) {
     // Only the file itself — its containing directory is wherever the user picked it
-    // from, not app-managed storage, so it may hold unrelated files.
-    fs.rmSync(source.filePath, { force: true });
+    // from, not app-managed storage, so it may hold unrelated files. Same retry budget
+    // as the other two kinds below — without it, a file still momentarily held open
+    // (e.g. an Edit page preview that had it loaded) throws immediately on Windows
+    // instead of getting a moment to release the lock.
+    fs.rmSync(source.filePath, { force: true, maxRetries: 5, retryDelay: 200 });
   } else if (source.kind === "recording" && source.recDir) {
     fs.rmSync(source.recDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
@@ -327,8 +330,27 @@ export function deleteEditProject(id: string, deleteSourceFiles?: boolean): void
   removeFromIndex(id);
 }
 
+/** Deletes every project in the batch even if one of them fails partway (a locked source
+ *  file, a missing dir, etc.) — a plain loop that let the first error throw would abort
+ *  the whole batch, and since the caller only finds out via the IPC call rejecting, every
+ *  project *before* the failed one would have already been removed from disk/the index
+ *  without the renderer ever hearing about it (no `onSuccess`, so it never refetches) —
+ *  "Delete All" would look like it silently did nothing while actually leaving the
+ *  library in a half-deleted state. Failures are collected and re-thrown together at the
+ *  end instead, once every deletable project has actually been deleted. */
 export function deleteEditProjects(ids: string[], deleteSourceFiles?: boolean): void {
-  for (const id of ids) deleteEditProject(id, deleteSourceFiles);
+  const failures: { id: string; error: unknown }[] = [];
+  for (const id of ids) {
+    try {
+      deleteEditProject(id, deleteSourceFiles);
+    } catch (error) {
+      failures.push({ id, error });
+    }
+  }
+  if (failures.length > 0) {
+    const detail = failures.map(({ id, error }) => `${id}: ${error instanceof Error ? error.message : String(error)}`).join("; ");
+    throw new Error(`Failed to delete ${failures.length} of ${ids.length} project(s): ${detail}`);
+  }
 }
 
 const NO_MEDIA: EditProjectMedia = {

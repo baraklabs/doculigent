@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -28,6 +28,21 @@ interface ExportVideoInput {
 }
 
 const pendingExports = new Map<string, AbortController>();
+
+// Deleting a project's source files can race an Edit page that still has that exact
+// project open — its `<video>` elements hold the file open via an active `media://`
+// request (see mediaProtocol.ts), which Windows won't let `unlink` through regardless of
+// how many times deleteEditProject(s) retries. Broadcasting a release request first lets
+// any window with that project open drop its video elements *before* the delete is
+// attempted, rather than relying on the retry budget alone to outlast a stream that,
+// while the tab stays open, never actually goes away on its own. The wait below is a
+// fixed grace period, not an ack — good enough in practice (dropping `src` aborts near-
+// instantly), and deleteEditProject's own retries are still the real safety net if a
+// window doesn't respond in time.
+function releaseMediaAndWait(ids: string[]): Promise<void> {
+  for (const win of BrowserWindow.getAllWindows()) win.webContents.send(Channels.editProjects.releaseMedia, ids);
+  return new Promise((resolve) => setTimeout(resolve, 250));
+}
 
 export function registerEditProjectsIpc(): void {
   ipcMain.handle(Channels.editProjects.list, async (): Promise<EditProject[]> => store.listEditProjects());
@@ -116,12 +131,14 @@ export function registerEditProjectsIpc(): void {
   );
 
   ipcMain.handle(Channels.editProjects.delete, async (_event, id: string, deleteSourceFiles?: boolean): Promise<void> => {
+    await releaseMediaAndWait([id]);
     store.deleteEditProject(id, deleteSourceFiles);
   });
 
   ipcMain.handle(
     Channels.editProjects.deleteMany,
     async (_event, ids: string[], deleteSourceFiles?: boolean): Promise<void> => {
+      await releaseMediaAndWait(ids);
       store.deleteEditProjects(ids, deleteSourceFiles);
     }
   );

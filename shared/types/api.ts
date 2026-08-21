@@ -200,6 +200,11 @@ export interface DoculigentApi {
     getMedia(id: string): Promise<EditProjectMedia>;
     delete(id: string, deleteSourceFiles?: boolean): Promise<void>;
     deleteMany(ids: string[], deleteSourceFiles?: boolean): Promise<void>;
+    // Broadcast right before a delete touches these projects' files, so an Edit page that
+    // still has one of them open (its own video elements actively holding the file, even
+    // if the tab isn't the active route yet) can drop it immediately instead of leaving
+    // the delete to fail with EBUSY on Windows.
+    onReleaseMedia(callback: (ids: string[]) => void): () => void;
     export(
       exportId: string,
       input: {
