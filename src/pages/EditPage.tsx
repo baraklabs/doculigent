@@ -133,11 +133,14 @@ export function EditPage() {
 
   const [camera, setCamera] = useState<CameraEditSettings>(DEFAULT_CAMERA_EDIT_SETTINGS);
   const cameraLoadedForIdRef = useRef<string | undefined>(undefined);
-  // Waits on `media` too — an untouched project's starting point is how the camera was
-  // actually configured at record time (media.recordedCamera), not a generic preset.
+  // A fresh recording's starting point is the same DEFAULT_CAMERA_EDIT_SETTINGS every other
+  // untouched project starts from, not how the camera happened to be configured live at
+  // record time — that as-recorded config (media.recordedCamera) is still what "Reset to
+  // original" restores (see originalCamera/resetAllToOriginal below), just not the opening
+  // default anymore. Still waits on `media` purely so this doesn't race the media fetch.
   useEffect(() => {
     if (id && project && media && cameraLoadedForIdRef.current !== id) {
-      setCamera(project.camera ?? media.recordedCamera ?? DEFAULT_CAMERA_EDIT_SETTINGS);
+      setCamera(project.camera ?? DEFAULT_CAMERA_EDIT_SETTINGS);
       cameraLoadedForIdRef.current = id;
     }
   }, [id, project, media]);
@@ -949,6 +952,7 @@ export function EditPage() {
                 onToolChange={setTool}
                 cameraHidden={camera.hidden}
                 cursorMetadataPath={media!.cursorMetadataPath}
+                autoZoomOnLoad={project ? project.timeline === undefined : false}
               />
             </div>
           </>

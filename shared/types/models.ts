@@ -357,20 +357,20 @@ export interface TimelineEditSettings {
 
 export const DEFAULT_CAMERA_EDIT_SETTINGS: CameraEditSettings = {
   hidden: false,
-  sizePct: 22,
+  sizePct: 25,
   shape: "round",
   cornerRadiusPct: 20,
-  zoomPct: 100,
+  zoomPct: 100, // 100 = the slider's own "no zoom" floor (its range is 100-300)
   blur: "none",
 };
 
 export const DEFAULT_CURSOR_EDIT_SETTINGS: CursorEditSettings = {
   style: "hand",
-  sizePct: 250,
-  color: "#ffffff",
+  sizePct: 500,
+  color: "#f59e0b",
   filled: true,
   clickEffect: true,
-  clickAnimationStyle: "ripple",
+  clickAnimationStyle: "burst",
   clickSound: true,
   clickSoundStyle: "tick",
 };
@@ -391,29 +391,35 @@ export const ORIGINAL_CURSOR_EDIT_SETTINGS: CursorEditSettings = {
 };
 
 export const DEFAULT_BACKGROUND_EDIT_SETTINGS: BackgroundEditSettings = {
-  fill: "none",
+  fill: "texture",
   colorId: "white",
   gradientId: "dusk",
-  textureId: "mesh-violet",
+  textureId: "blur-teal",
   imageId: "aurora",
   customColor: null,
   customGradient: null,
   customImagePath: null,
-  paddingPct: 0,
-  cornerRadiusPct: 0,
+  paddingPct: 5,
+  cornerRadiusPct: 10,
   blurPct: 0,
   zoomPct: 100,
 };
 
 export const DEFAULT_LAYOUT_EDIT_SETTINGS: LayoutEditSettings = {
   format: "landscape",
-  landscapeMode: "overlay",
+  landscapeMode: "split",
   // Full-bleed by default (matches "overlay": the camera just floats over it) — only
-  // overridden once the user actually drag-resizes the screen box themselves.
+  // overridden once the user actually drag-resizes the screen box themselves. Landscape's
+  // own default is "split" (above) rather than "overlay", but this stays the shared
+  // starting point for either — "split" ignores freeScreenPos/Size/Height anyway (its
+  // screen box is auto-derived around the camera — see LayoutEditPanel's buildSplitSlots)
+  // until the user drags the screen themselves.
   freeScreenSizePct: 100,
   freeScreenHeightPct: 100,
   freeScreenPos: null,
-  freeCameraPos: null,
+  // "Camera right" — split's own default camera slot (LayoutEditPanel's CAMERA_POSITIONS,
+  // "middle-right").
+  freeCameraPos: { xPct: 100, yPct: 50 },
   reelScreenFull: false,
 };
 

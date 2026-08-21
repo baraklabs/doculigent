@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { MousePointer2, Scissors, Trash2, X } from "lucide-react";
+import { MousePointer2, RotateCcw, RotateCw, Scissors, Trash2, X } from "lucide-react";
 import { MagicWand } from "@phosphor-icons/react";
 import {
+  DEFAULT_TIMELINE_EDIT_SETTINGS,
   ZOOM_DEFAULT_DURATION_MS,
   ZOOM_DEFAULT_PCT,
   ZOOM_LEAD_MS,
@@ -17,6 +18,11 @@ import { mediaUrl } from "@shared/constants/media";
 import "./Timeline.css";
 
 export type TimelineTool = "default" | "cut";
+
+// Any piece across the three tracks — Clips/Camera pieces and Zoom blocks all share one
+// selection set, keyed as `${track}:${id}` (see keyOf below) so a single Set<string> can
+// hold a mixed multi-selection spanning tracks.
+type TrackKind = "clips" | "camera" | "zoom";
 
 // Every .tl-row's header column (72px) plus the gap Timeline.css puts between it and the
 // track (10px) — where the playhead's own left offset below has to start too, so it lines
@@ -42,6 +48,13 @@ interface TimelineProps {
    *  fetched independently here just for its `clicks` timestamps, to drive the "auto zoom
    *  on clicks" magic button below. */
   cursorMetadataPath?: string | null;
+  /** True only for a project that's never had a Timeline edit saved (see EditPage's
+   *  `timelineLoadedForIdRef`/`project.timeline`) — runs the same "auto zoom on clicks"
+   *  logic the magic-wand button does, once, as soon as click data finishes loading, so a
+   *  freshly recorded project opens with its zoom track already populated instead of empty.
+   *  Never fires again after that (see autoZoomAppliedRef below), so it can't clobber edits
+   *  on a later reopen. */
+  autoZoomOnLoad?: boolean;
 }
 
 function clamp01(n: number): number {
@@ -158,15 +171,70 @@ export function Timeline({
   timeline,
   onChange,
   currentMs,
-  durationMs,
+  durationMs: durationMsProp,
   sourceDurationMs,
   onSeek,
   tool,
   onToolChange,
   cameraHidden,
   cursorMetadataPath,
+  autoZoomOnLoad,
 }: TimelineProps) {
-  const [selectedZoomId, setSelectedZoomId] = useState<string | null>(null);
+  // The edited timeline's own extent (durationMsProp) is derived from clips/cameraClips —
+  // it legitimately drops to 0 when every piece on both tracks has been deleted (e.g. via
+  // select-all + Delete), even though a recording is still loaded. Falling back to the raw
+  // recording's own length in that case keeps the toolbar/ruler/tracks on screen (as an
+  // empty, fully-gapped timeline the source's full length) instead of the whole editor UI
+  // collapsing to the "no recording loaded" placeholder below.
+  const durationMs = durationMsProp > 0 ? durationMsProp : sourceDurationMs;
+  // Every currently-selected piece across all three tracks, as `${track}:${id}` keys — see
+  // keyOf/isSelected/selectOnly/toggleSelect/clearSelection below. A plain click replaces
+  // the selection with just that piece; Ctrl/Cmd+click toggles one piece in/out of it;
+  // marquee-dragging over empty track space (see startMarquee) selects everything the box
+  // touches, across tracks. Delete/Backspace (handleDeleteShortcutRef below) removes
+  // whatever's in here; dragging any selected piece's body while others are also selected
+  // (see startGroupDrag) moves the whole set together.
+  const [selection, setSelection] = useState<Set<string>>(new Set());
+  function keyOf(track: TrackKind, id: string): string {
+    return `${track}:${id}`;
+  }
+  function isSelected(track: TrackKind, id: string): boolean {
+    return selection.has(keyOf(track, id));
+  }
+  function selectOnly(track: TrackKind, id: string) {
+    setSelection(new Set([keyOf(track, id)]));
+  }
+  function toggleSelect(track: TrackKind, id: string) {
+    setSelection((prev) => {
+      const k = keyOf(track, id);
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  }
+  function clearSelection() {
+    setSelection(new Set());
+  }
+  // Called wherever a piece is removed via its own delete button, so a stale key for it
+  // never lingers in the selection set.
+  function discardFromSelection(track: TrackKind, id: string) {
+    const k = keyOf(track, id);
+    setSelection((prev) => {
+      if (!prev.has(k)) return prev;
+      const next = new Set(prev);
+      next.delete(k);
+      return next;
+    });
+  }
+  // The single selected piece, if the selection is exactly one — used to gate the Zoom
+  // toolbar (pct presets + remove button), which only makes sense for one piece at a time.
+  function soleSelection(): { track: TrackKind; id: string } | null {
+    if (selection.size !== 1) return null;
+    const [k] = selection;
+    const idx = k.indexOf(":");
+    return { track: k.slice(0, idx) as TrackKind, id: k.slice(idx + 1) };
+  }
   // Recorded click timestamps (raw source ms) for the "auto zoom on clicks" magic button —
   // null while unloaded/unavailable, distinct from an empty array (loaded, but the
   // recording genuinely has no clicks), so the button can tell "still loading" from
@@ -188,6 +256,28 @@ export function Timeline({
       cancelled = true;
     };
   }, [cursorMetadataPath]);
+  // Fires autoZoomFromClicks (below) exactly once, as soon as both click data *and* the
+  // video's own duration have finished loading, for a project that's opening with no saved
+  // Timeline edits at all — see autoZoomOnLoad's own doc comment. Click data (a small local
+  // JSON fetch) routinely resolves well before durationMs does (the <video> element's own
+  // metadata load) — marking this "done" as soon as clicks loaded, without waiting on
+  // durationMs too, let autoZoomFromClicks's own `durationMs <= 0` guard silently no-op the
+  // very first (only) attempt, permanently skipping it for the rest of the session. Guarded
+  // on `timeline.zooms.length === 0` too, purely defensively, so this can never clobber
+  // zoom blocks that (somehow) already exist by the time both are ready.
+  const autoZoomAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!autoZoomOnLoad || autoZoomAppliedRef.current || clicksSourceMs === null) return;
+    if (clicksSourceMs.length === 0) {
+      autoZoomAppliedRef.current = true; // nothing to zoom to — give up for good
+      return;
+    }
+    if (durationMs <= 0) return; // clicks are in, but the video's own duration isn't yet — wait
+    autoZoomAppliedRef.current = true;
+    if (timeline.zooms.length > 0) return;
+    autoZoomFromClicks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoZoomOnLoad, clicksSourceMs, durationMs]);
   // Which Clips/Camera piece the pointer is currently over — neither track has a
   // persistent selection (hovering already surfaces its own Delete button), but
   // Delete/Backspace still needs *something* to target, so it acts on whichever piece is
@@ -208,23 +298,58 @@ export function Timeline({
   const clipsTrackRef = useRef<HTMLDivElement>(null);
   const zoomTrackRef = useRef<HTMLDivElement>(null);
   const cameraTrackRef = useRef<HTMLDivElement>(null);
-  // Whichever zoom block is currently selected (its pct/remove toolbar showing) — set as
-  // that block's own ref below, purely so the outside-click effect can tell a click on the
-  // block or its toolbar (still a descendant of this node) apart from a click anywhere else
-  // in the app, which should close the toolbar.
-  const selectedZoomBlockRef = useRef<HTMLDivElement>(null);
+  // Wraps the ruler + Clips/Zoom/Camera rows — the coordinate frame the marquee
+  // selection box (see startMarquee) is positioned relative to, and the boundary the
+  // outside-click effect below uses to tell "clicked elsewhere in the timeline" (never
+  // clears selection) from "clicked elsewhere in the app entirely" (does).
+  const tlInnerRef = useRef<HTMLDivElement>(null);
   const scrubbingRef = useRef(false);
-  const zoomDragRef = useRef<{ id: string; grabOffsetMs: number } | null>(null);
+  // A drag is only really a drag once the pointer has moved this far from where it went
+  // down — short of that, pointerup is treated as a plain click (select/toggle) instead of
+  // whatever the drag would have done (move a piece, marquee-select).
+  const DRAG_THRESHOLD_PX = 4;
+  const zoomDragRef = useRef<{
+    id: string; grabOffsetMs: number; moved: boolean; downX: number; downY: number; wasSoleSelected: boolean;
+  } | null>(null);
   const zoomTrimDragRef = useRef<{ id: string; edge: "left" | "right" } | null>(null);
   // Dragging a Clips piece by its body moves it (its own timelineStart) freely; grabbing
   // an edge instead trims that side, revealing (or hiding) source footage — see
   // handleClipEdgePointerMove. The Camera track's pieces work identically, just backed by
   // `timeline.cameraClips` instead of `timeline.clips` — see handleCameraClipBodyPointerDown
-  // et al below.
-  const clipDragRef = useRef<{ id: string; grabOffsetMs: number } | null>(null);
+  // et al below. `moved`/`downX`/`downY` distinguish a plain click (toggles selection) from
+  // a real drag (moves the piece, leaves selection alone); `wasSoleSelected` records whether
+  // this piece was already the only thing selected *before* this pointerdown, so a
+  // no-movement pointerup on it can tell "just became sole-selected" from "already was,
+  // toggle it back off" — see handleClipBodyPointerUp.
+  const clipDragRef = useRef<{
+    id: string; grabOffsetMs: number; moved: boolean; downX: number; downY: number; wasSoleSelected: boolean;
+  } | null>(null);
   const clipTrimDragRef = useRef<{ id: string; edge: "left" | "right" } | null>(null);
-  const cameraClipDragRef = useRef<{ id: string; grabOffsetMs: number } | null>(null);
+  const cameraClipDragRef = useRef<{
+    id: string; grabOffsetMs: number; moved: boolean; downX: number; downY: number; wasSoleSelected: boolean;
+  } | null>(null);
   const cameraClipTrimDragRef = useRef<{ id: string; edge: "left" | "right" } | null>(null);
+  // Moving every selected piece together — set up on pointerdown when the piece grabbed is
+  // already part of a multi-selection (see startGroupDrag), instead of the single-piece drag
+  // refs above. `items` snapshots each selected piece's own startMs at drag start so the
+  // whole group can be shifted by one shared delta without drift; `maxStartMs` (Zoom items
+  // only) keeps a block from being dragged past the end of the timeline, since unlike
+  // Clips/Camera pieces a Zoom block can't extend the timeline itself.
+  const groupDragRef = useRef<{
+    originMs: number;
+    downX: number;
+    downY: number;
+    moved: boolean;
+    clickedTrack: TrackKind;
+    clickedId: string;
+    items: { track: TrackKind; id: string; startMs: number; maxStartMs?: number }[];
+  } | null>(null);
+  // The in-progress marquee-select drag, if any — see startMarquee/handleMarqueeMove/
+  // handleMarqueeUp. `active` flips true once the pointer clears DRAG_THRESHOLD_PX, same
+  // click-vs-drag distinction as the piece drags above; `addMode` (Ctrl/Cmd/Shift held at
+  // drag start) adds the box's contents to the existing selection instead of replacing it.
+  const marqueeRef = useRef<{ downX: number; downY: number; curX: number; curY: number; active: boolean; addMode: boolean } | null>(null);
+  const [marqueeBox, setMarqueeBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   // Frozen at the start of a Clips/Camera piece drag (move or edge-trim) — `durationMs`
   // isn't a fixed value, it's recomputed every animation frame from the live clip data
   // (see PreviewCompositor's draw loop), including whatever's mid-drag. Without freezing
@@ -239,16 +364,33 @@ export function Timeline({
   // so the one, never-resubscribed keydown listener below always acts on whatever's
   // currently selected, without re-subscribing on every timeline edit.
   const handleDeleteShortcutRef = useRef<() => boolean>(() => false);
+  // Same pattern, for Ctrl/Cmd+A — see selectAll below.
+  const handleSelectAllRef = useRef<() => void>(() => {});
+  // Whether the pointer's last mousedown anywhere in the app landed inside the timeline
+  // widget — mirrored by the outside-click effect further down, which already does this
+  // exact containment check for clearing the selection. Ctrl/Cmd+A only selects everything
+  // when this is true, so it doesn't hijack "select all" in some other focused input/panel.
+  const timelineFocusedRef = useRef(false);
 
-  // Delete/Backspace — removes the selected Camera piece, if any. Only preventDefault when
-  // something was actually selected, so Backspace still falls through to its usual
-  // behavior otherwise.
+  // Delete/Backspace — removes every selected piece (see `selection`), falling back to
+  // whatever Clips/Camera piece is hovered if nothing's selected. Ctrl/Cmd+A selects every
+  // piece across all three tracks, but only while the timeline is the last thing clicked
+  // (see timelineFocusedRef) — otherwise it's left alone to do whatever it normally does
+  // elsewhere (e.g. select all text in a focused field). Both only preventDefault when they
+  // actually did something, so Backspace still falls through to its usual behavior
+  // otherwise, and Ctrl+A still selects page text when the timeline isn't focused.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key !== "Delete" && e.key !== "Backspace") return;
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
+      if ((e.key === "a" || e.key === "A") && (e.ctrlKey || e.metaKey)) {
+        if (!timelineFocusedRef.current) return;
+        e.preventDefault();
+        handleSelectAllRef.current();
+        return;
+      }
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
       if (handleDeleteShortcutRef.current()) e.preventDefault();
     }
     window.addEventListener("keydown", onKeyDown);
@@ -279,28 +421,45 @@ export function Timeline({
     if (tool !== "cut") setCutGuide(null);
   }, [tool]);
 
-  // A selected zoom block's pct/remove toolbar closes on a click anywhere outside it —
-  // the block itself already toggles selection off via its own onClick (see
-  // handleZoomBlockClick), so this only needs to handle everywhere else: the rest of the
-  // timeline, the preview canvas, other tabs, and so on.
+  // Tracks timelineFocusedRef (for Ctrl/Cmd+A above) on every mousedown in the app, and —
+  // when that mousedown landed outside the whole timeline widget (the preview canvas, other
+  // tabs, and so on) — clears the selection too, including closing a sole-selected Zoom
+  // block's pct/remove toolbar. Clicks *inside* the timeline (tracks, pieces, the toolbar
+  // itself) are left entirely to the track-level handlers below, which already manage
+  // selection correctly there (including Ctrl/Cmd-drag adding to it) — this only needs to
+  // catch the rest. A ref (mirrored every render) rather than a `selection`-keyed effect so
+  // this subscribes once instead of on every selection change.
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
   useEffect(() => {
-    if (!selectedZoomId) return;
-    function onOutside(e: MouseEvent) {
-      if (selectedZoomBlockRef.current && !selectedZoomBlockRef.current.contains(e.target as Node)) {
-        setSelectedZoomId(null);
-      }
+    function onDocMouseDown(e: MouseEvent) {
+      const inside = !!(tlInnerRef.current && tlInnerRef.current.contains(e.target as Node));
+      timelineFocusedRef.current = inside;
+      if (!inside && selectionRef.current.size > 0) clearSelection();
     }
-    document.addEventListener("mousedown", onOutside);
-    return () => document.removeEventListener("mousedown", onOutside);
-  }, [selectedZoomId]);
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, []);
 
-  if (durationMs <= 0) {
+  if (sourceDurationMs <= 0) {
     return (
       <div className="tl-empty">
         <span className="tl-empty-icon">🎬</span>
         <span>Load a clip to start cutting and adding zooms.</span>
       </div>
     );
+  }
+
+  // `effectiveClips` treats an empty clips/cameraClips array as "not edited yet" and
+  // fabricates one clip spanning the whole recording (see its own doc comment) — so writing
+  // `[]` back after deleting the *last* piece on a track would silently undo the deletion,
+  // reviving that full clip next render instead of leaving the track empty. Wrap every
+  // deletion's result through this first: a zero-width placeholder keeps the array
+  // non-empty (skipping the fabrication) while behaving exactly like a real gap everywhere
+  // else — resolveClipAt never matches it, it draws as nothing, and it contributes 0 to the
+  // track's own extent (totalClipsExtentMs).
+  function emptiedTrack(next: TimelineClip[]): TimelineClip[] {
+    return next.length > 0 ? next : [{ id: newId(), sourceStart: 0, sourceEnd: 0, timelineStart: 0 }];
   }
 
   // Clips track — each piece has its own independent `timelineStart` (shared/lib/
@@ -352,9 +511,14 @@ export function Timeline({
 
   // Cut tool — splits whichever piece is on top at the click point (converting the click's
   // edited-ms position to a source position first) into two, in place. Snaps onto a Camera
-  // piece boundary it's hovering near, so the two actually land on the same ms.
+  // piece boundary it's hovering near, so the two actually land on the same ms. Outside cut
+  // mode, a pointerdown on empty track space instead starts a marquee-select drag (see
+  // startMarquee) — the two are mutually exclusive by tool, so there's no conflict.
   function handleClipsTrackPointerDown(e: React.PointerEvent<HTMLDivElement>) {
-    if (tool !== "cut") return;
+    if (tool !== "cut") {
+      startMarquee(e);
+      return;
+    }
     const track = clipsTrackRef.current;
     if (!track) return;
     const rawMs = pctToMs(e.clientX, track, durationMs);
@@ -366,6 +530,7 @@ export function Timeline({
     setCutGuide(null);
   }
   function handleClipsTrackPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (handleMarqueeMove(e)) return;
     if (tool !== "cut") return;
     const track = clipsTrackRef.current;
     if (!track) return;
@@ -379,19 +544,40 @@ export function Timeline({
   function handleClipBodyPointerDown(e: React.PointerEvent<HTMLDivElement>, clip: TimelineClip) {
     if (tool === "cut") return; // let it bubble to the track's cut-mode split handler above
     e.stopPropagation();
+    if (e.ctrlKey || e.metaKey) {
+      toggleSelect("clips", clip.id);
+      return;
+    }
     const track = clipsTrackRef.current;
     if (!track) return;
+    if (selection.size > 1 && isSelected("clips", clip.id)) {
+      startGroupDrag(e, "clips", clip.id);
+      return;
+    }
+    const wasSoleSelected = selection.size === 1 && isSelected("clips", clip.id);
+    if (!wasSoleSelected) selectOnly("clips", clip.id);
     dragDurationMsRef.current = durationMs;
     const pointerMs = pctToMs(e.clientX, track, durationMs);
-    clipDragRef.current = { id: clip.id, grabOffsetMs: pointerMs - clip.timelineStart };
+    clipDragRef.current = {
+      id: clip.id, grabOffsetMs: pointerMs - clip.timelineStart,
+      moved: false, downX: e.clientX, downY: e.clientY, wasSoleSelected,
+    };
     setDragCursor("grabbing");
     updateClips(bringClipToFront(clipsList(), clip.id));
     e.currentTarget.setPointerCapture(e.pointerId);
   }
   function handleClipBodyPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (groupDragRef.current) {
+      handleGroupDragMove(e);
+      return;
+    }
     const drag = clipDragRef.current;
     const track = clipsTrackRef.current;
     if (!drag || !track) return;
+    if (!drag.moved) {
+      if (Math.hypot(e.clientX - drag.downX, e.clientY - drag.downY) < DRAG_THRESHOLD_PX) return;
+      drag.moved = true;
+    }
     const clips = clipsList();
     const clip = clips.find((c) => c.id === drag.id);
     if (!clip) return;
@@ -404,6 +590,12 @@ export function Timeline({
     updateClips(clips.map((c) => (c.id === drag.id ? { ...c, timelineStart: newStart } : c)));
   }
   function handleClipBodyPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (groupDragRef.current) {
+      handleGroupDragUp(e);
+      return;
+    }
+    const drag = clipDragRef.current;
+    if (drag && !drag.moved && drag.wasSoleSelected) clearSelection();
     clipDragRef.current = null;
     setDragCursor("");
     setClipSnapPair(null);
@@ -471,18 +663,20 @@ export function Timeline({
   function renderClipsPieces() {
     return clipsList().map((clip) => {
       const dur = clip.sourceEnd - clip.sourceStart;
+      if (dur <= 0) return null; // emptiedTrack's zero-width "whole track deleted" placeholder
       const touching = clipSnapPair !== null && (clipSnapPair.dragged === clip.id || clipSnapPair.touching === clip.id);
+      const selected = isSelected("clips", clip.id);
       return (
         <div
           key={clip.id}
-          className={`tl-clip-base${touching ? " tl-piece-touching" : ""}`}
+          className={`tl-clip-base${touching ? " tl-piece-touching" : ""}${selected ? " selected" : ""}`}
           style={{ left: `${msToPct(clip.timelineStart, durationMs)}%`, width: `${msToPct(dur, durationMs)}%` }}
           onPointerDown={(e) => handleClipBodyPointerDown(e, clip)}
           onPointerMove={handleClipBodyPointerMove}
           onPointerUp={handleClipBodyPointerUp}
           onPointerEnter={() => setHoveredClipId(clip.id)}
           onPointerLeave={() => setHoveredClipId((id) => (id === clip.id ? null : id))}
-          title={`${formatTime(clip.timelineStart)} – ${formatTime(clip.timelineStart + dur)} — drag anywhere, even over another piece; drag an edge to trim`}
+          title={`${formatTime(clip.timelineStart)} – ${formatTime(clip.timelineStart + dur)} — click to select (Ctrl/Cmd+click to add), drag anywhere, even over another piece; drag an edge to trim`}
         >
           <div className="tl-piece-edge tl-piece-edge-left" onPointerDown={(e) => handleClipEdgePointerDown(e, clip, "left")} onPointerMove={handleClipEdgePointerMove} onPointerUp={handleClipEdgePointerUp} />
           <div className="tl-piece-edge tl-piece-edge-right" onPointerDown={(e) => handleClipEdgePointerDown(e, clip, "right")} onPointerMove={handleClipEdgePointerMove} onPointerUp={handleClipEdgePointerUp} />
@@ -493,7 +687,8 @@ export function Timeline({
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
-              updateClips(deleteClip(clipsList(), clip.id));
+              updateClips(emptiedTrack(deleteClip(clipsList(), clip.id)));
+              discardFromSelection("clips", clip.id);
             }}
             title="Delete this part"
           >
@@ -517,19 +712,40 @@ export function Timeline({
   function handleCameraClipBodyPointerDown(e: React.PointerEvent<HTMLDivElement>, clip: TimelineClip) {
     if (tool === "cut") return; // let it bubble to the track's cut-mode split handler below
     e.stopPropagation();
+    if (e.ctrlKey || e.metaKey) {
+      toggleSelect("camera", clip.id);
+      return;
+    }
     const track = cameraTrackRef.current;
     if (!track) return;
+    if (selection.size > 1 && isSelected("camera", clip.id)) {
+      startGroupDrag(e, "camera", clip.id);
+      return;
+    }
+    const wasSoleSelected = selection.size === 1 && isSelected("camera", clip.id);
+    if (!wasSoleSelected) selectOnly("camera", clip.id);
     dragDurationMsRef.current = durationMs;
     const pointerMs = pctToMs(e.clientX, track, durationMs);
-    cameraClipDragRef.current = { id: clip.id, grabOffsetMs: pointerMs - clip.timelineStart };
+    cameraClipDragRef.current = {
+      id: clip.id, grabOffsetMs: pointerMs - clip.timelineStart,
+      moved: false, downX: e.clientX, downY: e.clientY, wasSoleSelected,
+    };
     setDragCursor("grabbing");
     updateCameraClips(bringClipToFront(cameraClipsList(), clip.id));
     e.currentTarget.setPointerCapture(e.pointerId);
   }
   function handleCameraClipBodyPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (groupDragRef.current) {
+      handleGroupDragMove(e);
+      return;
+    }
     const drag = cameraClipDragRef.current;
     const track = cameraTrackRef.current;
     if (!drag || !track) return;
+    if (!drag.moved) {
+      if (Math.hypot(e.clientX - drag.downX, e.clientY - drag.downY) < DRAG_THRESHOLD_PX) return;
+      drag.moved = true;
+    }
     const clips = cameraClipsList();
     const clip = clips.find((c) => c.id === drag.id);
     if (!clip) return;
@@ -542,6 +758,12 @@ export function Timeline({
     updateCameraClips(clips.map((c) => (c.id === drag.id ? { ...c, timelineStart: newStart } : c)));
   }
   function handleCameraClipBodyPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (groupDragRef.current) {
+      handleGroupDragUp(e);
+      return;
+    }
+    const drag = cameraClipDragRef.current;
+    if (drag && !drag.moved && drag.wasSoleSelected) clearSelection();
     cameraClipDragRef.current = null;
     setDragCursor("");
     setCameraSnapPair(null);
@@ -590,15 +812,200 @@ export function Timeline({
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   }
 
+  function trackElFor(t: TrackKind): HTMLDivElement | null {
+    return t === "clips" ? clipsTrackRef.current : t === "camera" ? cameraTrackRef.current : zoomTrackRef.current;
+  }
+
+  // Moving the whole multi-selection together — started (from handleClipBodyPointerDown/
+  // handleCameraClipBodyPointerDown/handleZoomBlockPointerDown) when the piece grabbed is
+  // already part of a selection of more than one. Snapshots every selected piece's own
+  // startMs up front so the group can be shifted by one shared delta without drift, then
+  // applies that same delta to all three tracks at once on every move.
+  function startGroupDrag(e: React.PointerEvent<HTMLDivElement>, track: TrackKind, id: string) {
+    const trackEl = trackElFor(track);
+    if (!trackEl) return;
+    dragDurationMsRef.current = durationMs;
+    const pointerMs = pctToMs(e.clientX, trackEl, durationMs);
+    const clips = clipsList();
+    const cameraClips = cameraClipsList();
+    const items: { track: TrackKind; id: string; startMs: number; maxStartMs?: number }[] = [];
+    for (const key of selection) {
+      const idx = key.indexOf(":");
+      const t = key.slice(0, idx) as TrackKind;
+      const pid = key.slice(idx + 1);
+      if (t === "clips") {
+        const c = clips.find((x) => x.id === pid);
+        if (c) items.push({ track: t, id: pid, startMs: c.timelineStart });
+      } else if (t === "camera") {
+        const c = cameraClips.find((x) => x.id === pid);
+        if (c) items.push({ track: t, id: pid, startMs: c.timelineStart });
+      } else {
+        const z = timeline.zooms.find((x) => x.id === pid);
+        if (z) items.push({ track: t, id: pid, startMs: z.startMs, maxStartMs: durationMs - z.durationMs });
+      }
+    }
+    groupDragRef.current = { originMs: pointerMs, downX: e.clientX, downY: e.clientY, moved: false, clickedTrack: track, clickedId: id, items };
+    setDragCursor("grabbing");
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+  function handleGroupDragMove(e: React.PointerEvent<HTMLDivElement>) {
+    const drag = groupDragRef.current;
+    if (!drag) return;
+    const trackEl = trackElFor(drag.clickedTrack);
+    if (!trackEl) return;
+    if (!drag.moved) {
+      if (Math.hypot(e.clientX - drag.downX, e.clientY - drag.downY) < DRAG_THRESHOLD_PX) return;
+      drag.moved = true;
+    }
+    const scaleMs = dragDurationMsRef.current;
+    const pointerMs = pctToMs(e.clientX, trackEl, scaleMs);
+    let delta = pointerMs - drag.originMs;
+    // No item may go below 0 — clamp to the tightest (largest) lower bound across the group.
+    delta = Math.max(delta, Math.max(...drag.items.map((it) => -it.startMs)));
+    // Zoom items can't be dragged past the end of the timeline either (Clips/Camera pieces
+    // have no such ceiling — see dragDurationMsRef's own doc comment).
+    const maxCandidates = drag.items.filter((it) => it.maxStartMs !== undefined).map((it) => it.maxStartMs! - it.startMs);
+    if (maxCandidates.length > 0) delta = Math.min(delta, Math.min(...maxCandidates));
+
+    // One combined onChange, not three separate updateClips/updateCameraClips/updateZooms
+    // calls — those would each read the same stale `timeline` prop within this single
+    // synchronous handler, so only the last call's change would actually stick.
+    const newClips = clipsList().map((c) => {
+      const item = drag.items.find((it) => it.track === "clips" && it.id === c.id);
+      return item ? { ...c, timelineStart: item.startMs + delta } : c;
+    });
+    const newCameraClips = cameraClipsList().map((c) => {
+      const item = drag.items.find((it) => it.track === "camera" && it.id === c.id);
+      return item ? { ...c, timelineStart: item.startMs + delta } : c;
+    });
+    const newZooms = timeline.zooms.map((z) => {
+      const item = drag.items.find((it) => it.track === "zoom" && it.id === z.id);
+      return item ? { ...z, startMs: item.startMs + delta } : z;
+    });
+    onChange({ ...timeline, clips: newClips, cameraClips: newCameraClips, zooms: newZooms });
+  }
+  function handleGroupDragUp(e: React.PointerEvent<HTMLDivElement>) {
+    const drag = groupDragRef.current;
+    if (drag && !drag.moved) {
+      // Clicked (didn't drag) a member of an existing multi-selection — collapse to just it.
+      selectOnly(drag.clickedTrack, drag.clickedId);
+    }
+    groupDragRef.current = null;
+    setDragCursor("");
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  }
+
+  // Marquee (rubber-band) select — press on empty track space and drag to select every
+  // Clips/Camera/Zoom piece the box touches, across all three tracks at once. Started from
+  // whichever track's empty space the drag began on (each track's own pointerdown handler
+  // calls this — see handleClipsTrackPointerDown et al); pointer capture on that same
+  // element means the move/up events below keep arriving there even once the box has grown
+  // to cover the other two tracks. A plain click (never clears DRAG_THRESHOLD_PX) is left to
+  // whatever that track already does with an empty click instead (Clips/Camera: nothing but
+  // clearing the selection; Zoom: also drops a new block — see handleZoomTrackClick).
+  function startMarquee(e: React.PointerEvent<HTMLDivElement>) {
+    marqueeRef.current = {
+      downX: e.clientX, downY: e.clientY, curX: e.clientX, curY: e.clientY,
+      active: false, addMode: e.ctrlKey || e.metaKey || e.shiftKey,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+  // Returns whether a marquee drag is in progress, so each track's own pointermove handler
+  // can skip its normal logic (cut-guide preview, etc.) while one is.
+  function handleMarqueeMove(e: React.PointerEvent<HTMLDivElement>): boolean {
+    const m = marqueeRef.current;
+    if (!m) return false;
+    m.curX = e.clientX;
+    m.curY = e.clientY;
+    if (!m.active) {
+      if (Math.hypot(e.clientX - m.downX, e.clientY - m.downY) < DRAG_THRESHOLD_PX) return true;
+      m.active = true;
+    }
+    const container = tlInnerRef.current;
+    if (container) {
+      const rect = container.getBoundingClientRect();
+      const x0 = Math.min(m.downX, m.curX) - rect.left;
+      const x1 = Math.max(m.downX, m.curX) - rect.left;
+      const y0 = Math.min(m.downY, m.curY) - rect.top;
+      const y1 = Math.max(m.downY, m.curY) - rect.top;
+      setMarqueeBox({ left: x0, top: y0, width: x1 - x0, height: y1 - y0 });
+    }
+    return true;
+  }
+  function finalizeMarqueeHits(m: NonNullable<(typeof marqueeRef)["current"]>) {
+    const x0 = Math.min(m.downX, m.curX);
+    const x1 = Math.max(m.downX, m.curX);
+    const y0 = Math.min(m.downY, m.curY);
+    const y1 = Math.max(m.downY, m.curY);
+    const hits = new Set<string>();
+    function collect(trackKind: TrackKind, el: HTMLElement | null, items: { id: string; start: number; dur: number }[]) {
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || y1 < rect.top || y0 > rect.bottom) return;
+      const msAt = (clientX: number) => clamp01((clientX - rect.left) / rect.width) * durationMs;
+      const msStart = msAt(x0);
+      const msEnd = msAt(x1);
+      for (const it of items) {
+        if (it.start + it.dur > msStart && it.start < msEnd) hits.add(keyOf(trackKind, it.id));
+      }
+    }
+    collect("clips", clipsTrackRef.current, clipsList().map((c) => ({ id: c.id, start: c.timelineStart, dur: c.sourceEnd - c.sourceStart })));
+    collect("zoom", zoomTrackRef.current, timeline.zooms.map((z) => ({ id: z.id, start: z.startMs, dur: z.durationMs })));
+    collect("camera", cameraTrackRef.current, cameraClipsList().map((c) => ({ id: c.id, start: c.timelineStart, dur: c.sourceEnd - c.sourceStart })));
+    setSelection((prev) => (m.addMode ? new Set([...prev, ...hits]) : hits));
+  }
+  // Shared pointerup for all three tracks (see startMarquee) — a plain click on empty space
+  // clears the selection (unless an additive modifier was held, in which case it's a no-op
+  // rather than wiping out what Ctrl/Cmd-drag was about to add to); a real drag finalizes
+  // the box into a selection.
+  function handleMarqueeUp(e: React.PointerEvent<HTMLDivElement>) {
+    const m = marqueeRef.current;
+    if (!m) return;
+    marqueeRef.current = null;
+    setMarqueeBox(null);
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    if (!m.active) {
+      if (!m.addMode) clearSelection();
+      return;
+    }
+    finalizeMarqueeHits(m);
+  }
+
+  // Removes every currently-selected piece in one shot — across all three tracks at once
+  // if the selection spans more than one, via a single onChange (calling updateClips/
+  // updateCameraClips/updateZooms separately here would each read the same stale `timeline`
+  // prop within this one synchronous call, so only the last of the three would actually
+  // stick — see the equivalent note on handleGroupDragMove).
+  function deleteSelectedPieces() {
+    const clipIds = new Set<string>();
+    const cameraIds = new Set<string>();
+    const zoomIds = new Set<string>();
+    for (const key of selection) {
+      const idx = key.indexOf(":");
+      const track = key.slice(0, idx);
+      const id = key.slice(idx + 1);
+      if (track === "clips") clipIds.add(id);
+      else if (track === "camera") cameraIds.add(id);
+      else if (track === "zoom") zoomIds.add(id);
+    }
+    onChange({
+      ...timeline,
+      clips: clipIds.size > 0 ? emptiedTrack(clipsList().filter((c) => !clipIds.has(c.id))) : timeline.clips,
+      cameraClips: cameraIds.size > 0 ? emptiedTrack(cameraClipsList().filter((c) => !cameraIds.has(c.id))) : timeline.cameraClips,
+      zooms: zoomIds.size > 0 ? timeline.zooms.filter((z) => !zoomIds.has(z.id)) : timeline.zooms,
+    });
+    clearSelection();
+  }
+
   handleDeleteShortcutRef.current = () => {
-    if (selectedZoomId !== null) {
-      removeZoom(selectedZoomId);
+    if (selection.size > 0) {
+      deleteSelectedPieces();
       return true;
     }
     if (hoveredClipId !== null) {
       const clip = clipsList().find((c) => c.id === hoveredClipId);
       if (clip) {
-        updateClips(deleteClip(clipsList(), clip.id));
+        updateClips(emptiedTrack(deleteClip(clipsList(), clip.id)));
         setHoveredClipId(null);
         return true;
       }
@@ -606,7 +1013,7 @@ export function Timeline({
     if (hoveredCameraClipId !== null) {
       const clip = cameraClipsList().find((c) => c.id === hoveredCameraClipId);
       if (clip) {
-        updateCameraClips(deleteClip(cameraClipsList(), clip.id));
+        updateCameraClips(emptiedTrack(deleteClip(cameraClipsList(), clip.id)));
         setHoveredCameraClipId(null);
         return true;
       }
@@ -614,13 +1021,46 @@ export function Timeline({
     return false;
   };
 
+  // Ctrl/Cmd+A (see the keydown listener above) — every Clips/Camera/Zoom piece at once.
+  function selectAll() {
+    const all = new Set<string>();
+    for (const c of clipsList()) all.add(keyOf("clips", c.id));
+    for (const c of cameraClipsList()) all.add(keyOf("camera", c.id));
+    for (const z of timeline.zooms) all.add(keyOf("zoom", z.id));
+    setSelection(all);
+  }
+  handleSelectAllRef.current = selectAll;
+
+  // Two separate reset buttons, next to the tool toggle — "default" and "original" are
+  // meant to end up as two distinct baselines (TODO: wire each to its own actual settings
+  // once that distinction is defined), but for now both just discard every cut, trim, zoom,
+  // and camera edit and go back to the untouched recording. Both go through the same
+  // `onChange` as every other edit, so each is a normal, undoable (Ctrl+Z) history step.
+  function resetToDefault() {
+    if (!window.confirm("Reset to default? This removes every cut, trim, zoom, and camera edit.")) return;
+    clearSelection();
+    // A single combined onChange, not a plain reset followed by a separate
+    // updateZooms/autoZoomFromClicks call — those would each read the same stale
+    // `timeline` prop within this one synchronous handler, so only the last would stick
+    // (same hazard as handleGroupDragMove/deleteSelectedPieces). Auto-zoom is computed
+    // against the *default* (uncut, full-length) clips, matching what a freshly recorded
+    // project gets — see autoZoomOnLoad.
+    const zooms = computeAutoZooms(effectiveClips(DEFAULT_TIMELINE_EDIT_SETTINGS.clips, sourceDurationMs));
+    onChange({ ...DEFAULT_TIMELINE_EDIT_SETTINGS, zooms });
+  }
+  function resetToOriginal() {
+    if (!window.confirm("Reset to original? This removes every cut, trim, zoom, and camera edit and goes back to the original recording.")) return;
+    clearSelection();
+    onChange({ ...DEFAULT_TIMELINE_EDIT_SETTINGS });
+  }
+
   function updateZooms(next: TimelineZoom[]) {
     onChange({ ...timeline, zooms: next });
   }
 
   function removeZoom(id: string) {
     updateZooms(timeline.zooms.filter((z) => z.id !== id));
-    setSelectedZoomId(null);
+    discardFromSelection("zoom", id);
   }
   function setZoomPct(id: string, pct: TimelineZoomPct) {
     updateZooms(timeline.zooms.map((z) => (z.id === id ? { ...z, pct } : z)));
@@ -631,7 +1071,7 @@ export function Timeline({
     const blockDuration = Math.min(ZOOM_DEFAULT_DURATION_MS, Math.max(200, durationMs - startMs));
     const zoom: TimelineZoom = { id: newId(), startMs, durationMs: blockDuration, pct: ZOOM_DEFAULT_PCT };
     updateZooms([...timeline.zooms, zoom]);
-    setSelectedZoomId(zoom.id);
+    selectOnly("zoom", zoom.id);
   }
 
   // "Magic" auto zoom — regenerates the whole Zoom track from where clicks actually
@@ -646,14 +1086,18 @@ export function Timeline({
   // after further cuts/trims regenerates cleanly instead of piling up stale blocks.
   const CLICK_CLUSTER_GAP_MS = 1200;
   const ZOOM_AUTO_TRAIL_MS = 700;
-  function autoZoomFromClicks() {
-    if (!clicksSourceMs || clicksSourceMs.length === 0 || durationMs <= 0) return;
-    const clips = effectiveClips(timeline.clips, sourceDurationMs);
+  // The actual click-to-zoom-windows computation, factored out so both the magic-wand
+  // button (against the *live* clips, below) and resetToDefault (against the *default*,
+  // uncut clips) can share it without duplicating the clustering logic. Returns [] if
+  // there's nothing to compute (no clicks loaded yet, none survive the clips they're
+  // mapped against, or the timeline has no duration yet).
+  function computeAutoZooms(clips: TimelineClip[]): TimelineZoom[] {
+    if (!clicksSourceMs || clicksSourceMs.length === 0 || durationMs <= 0) return [];
     const editedMs = clicksSourceMs
       .map((ms) => sourceToEditedMs(clips, ms))
       .filter((ms): ms is number => ms !== null)
       .sort((a, b) => a - b);
-    if (editedMs.length === 0) return;
+    if (editedMs.length === 0) return [];
 
     // Pass 1 — group clicks themselves by gap.
     const clusters: number[][] = [];
@@ -678,14 +1122,19 @@ export function Timeline({
       else windows.push({ start, end });
     }
 
-    const zooms: TimelineZoom[] = windows.map((w) => ({
+    return windows.map((w) => ({
       id: newId(),
       startMs: w.start,
       durationMs: w.end - w.start,
       pct: ZOOM_DEFAULT_PCT,
     }));
+  }
+
+  function autoZoomFromClicks() {
+    const zooms = computeAutoZooms(effectiveClips(timeline.clips, sourceDurationMs));
+    if (zooms.length === 0) return;
     updateZooms(zooms);
-    setSelectedZoomId(null);
+    clearSelection();
   }
 
   // Scrub — the ruler only. Clicking the Clips/Camera/Zoom tracks never moves the
@@ -710,28 +1159,54 @@ export function Timeline({
   }
 
   // Zoom track — a plain click on empty space drops a new block anchored a few hundred
-  // ms before the click point; existing blocks handle their own drag-to-move.
+  // ms before the click point; existing blocks handle their own drag-to-move. A press-and-
+  // drag on empty space instead starts a marquee select (see startMarquee) — handleMarqueeUp
+  // only lets this click-to-add-a-block logic fire when that drag never happened.
   function handleZoomTrackClick(e: React.MouseEvent<HTMLDivElement>) {
     if (e.target !== e.currentTarget) return;
     const track = zoomTrackRef.current;
     if (!track) return;
     addZoomAt(pctToMs(e.clientX, track, durationMs));
   }
+  function handleZoomTrackPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    startMarquee(e);
+  }
+  function handleZoomTrackPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    handleMarqueeMove(e);
+  }
   function handleZoomBlockPointerDown(e: React.PointerEvent<HTMLDivElement>, zoom: TimelineZoom) {
-    // Only preps the drag here — selection is toggled by the click handler below. Setting
-    // it here too would double-toggle: pointerdown selects, then the click that follows
-    // immediately (even on a plain click, not just a drag) would flip it straight back off.
     e.stopPropagation();
+    if (e.ctrlKey || e.metaKey) {
+      toggleSelect("zoom", zoom.id);
+      return;
+    }
     const track = zoomTrackRef.current;
     if (!track) return;
+    if (selection.size > 1 && isSelected("zoom", zoom.id)) {
+      startGroupDrag(e, "zoom", zoom.id);
+      return;
+    }
+    const wasSoleSelected = selection.size === 1 && isSelected("zoom", zoom.id);
+    if (!wasSoleSelected) selectOnly("zoom", zoom.id);
     const pointerMs = pctToMs(e.clientX, track, durationMs);
-    zoomDragRef.current = { id: zoom.id, grabOffsetMs: pointerMs - zoom.startMs };
+    zoomDragRef.current = {
+      id: zoom.id, grabOffsetMs: pointerMs - zoom.startMs,
+      moved: false, downX: e.clientX, downY: e.clientY, wasSoleSelected,
+    };
     e.currentTarget.setPointerCapture(e.pointerId);
   }
   function handleZoomBlockPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (groupDragRef.current) {
+      handleGroupDragMove(e);
+      return;
+    }
     const drag = zoomDragRef.current;
     const track = zoomTrackRef.current;
     if (!drag || !track) return;
+    if (!drag.moved) {
+      if (Math.hypot(e.clientX - drag.downX, e.clientY - drag.downY) < DRAG_THRESHOLD_PX) return;
+      drag.moved = true;
+    }
     const zoom = timeline.zooms.find((z) => z.id === drag.id);
     if (!zoom) return;
     const pointerMs = pctToMs(e.clientX, track, durationMs);
@@ -739,12 +1214,14 @@ export function Timeline({
     updateZooms(timeline.zooms.map((z) => (z.id === zoom.id ? { ...z, startMs: newStart } : z)));
   }
   function handleZoomBlockPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (groupDragRef.current) {
+      handleGroupDragUp(e);
+      return;
+    }
+    const drag = zoomDragRef.current;
+    if (drag && !drag.moved && drag.wasSoleSelected) clearSelection();
     zoomDragRef.current = null;
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
-  }
-  function handleZoomBlockClick(e: React.MouseEvent<HTMLDivElement>, zoomId: string) {
-    e.stopPropagation();
-    setSelectedZoomId((id) => (id === zoomId ? null : zoomId));
   }
 
   // Duration trim handles — grabbing an edge stretches/shrinks the zoom block's window,
@@ -754,8 +1231,7 @@ export function Timeline({
   // startMs anchored), both clamped to [0, durationMs] and to at least MIN_ZOOM_MS wide.
   const MIN_ZOOM_MS = 300;
   function handleZoomEdgePointerDown(e: React.PointerEvent<HTMLDivElement>, zoom: TimelineZoom, edge: "left" | "right") {
-    // Selection is left to the click that follows (see handleZoomBlockPointerDown's note
-    // above) — setting it here too would double-toggle it straight back off.
+    // Trimming an edge never touches selection, same as Clips/Camera edge-trims.
     e.stopPropagation();
     zoomTrimDragRef.current = { id: zoom.id, edge };
     setDragCursor("ew-resize");
@@ -787,7 +1263,10 @@ export function Timeline({
   // just splitting whichever Camera piece is on top instead. Snaps onto a Clips piece
   // boundary it's hovering near so the two actually land on the same ms.
   function handleCameraTrackPointerDown(e: React.PointerEvent<HTMLDivElement>) {
-    if (tool !== "cut") return;
+    if (tool !== "cut") {
+      startMarquee(e);
+      return;
+    }
     const track = cameraTrackRef.current;
     if (!track) return;
     const rawMs = pctToMs(e.clientX, track, durationMs);
@@ -799,6 +1278,7 @@ export function Timeline({
     setCutGuide(null);
   }
   function handleCameraTrackPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (handleMarqueeMove(e)) return;
     if (tool !== "cut") return;
     const track = cameraTrackRef.current;
     if (!track) return;
@@ -813,18 +1293,20 @@ export function Timeline({
   function renderCameraPieces() {
     return cameraClipsList().map((clip) => {
       const dur = clip.sourceEnd - clip.sourceStart;
+      if (dur <= 0) return null; // emptiedTrack's zero-width "whole track deleted" placeholder
       const touching = cameraSnapPair !== null && (cameraSnapPair.dragged === clip.id || cameraSnapPair.touching === clip.id);
+      const selected = isSelected("camera", clip.id);
       return (
         <div
           key={clip.id}
-          className={`tl-camera-fill${touching ? " tl-piece-touching" : ""}`}
+          className={`tl-camera-fill${touching ? " tl-piece-touching" : ""}${selected ? " selected" : ""}`}
           style={{ left: `${msToPct(clip.timelineStart, durationMs)}%`, width: `${msToPct(dur, durationMs)}%` }}
           onPointerDown={(e) => handleCameraClipBodyPointerDown(e, clip)}
           onPointerMove={handleCameraClipBodyPointerMove}
           onPointerUp={handleCameraClipBodyPointerUp}
           onPointerEnter={() => setHoveredCameraClipId(clip.id)}
           onPointerLeave={() => setHoveredCameraClipId((id) => (id === clip.id ? null : id))}
-          title={`${formatTime(clip.timelineStart)} – ${formatTime(clip.timelineStart + dur)} — drag anywhere, even over another piece; drag an edge to trim`}
+          title={`${formatTime(clip.timelineStart)} – ${formatTime(clip.timelineStart + dur)} — click to select (Ctrl/Cmd+click to add), drag anywhere, even over another piece; drag an edge to trim`}
         >
           <div className="tl-piece-edge tl-piece-edge-left" onPointerDown={(e) => handleCameraClipEdgePointerDown(e, clip, "left")} onPointerMove={handleCameraClipEdgePointerMove} onPointerUp={handleCameraClipEdgePointerUp} />
           <div className="tl-piece-edge tl-piece-edge-right" onPointerDown={(e) => handleCameraClipEdgePointerDown(e, clip, "right")} onPointerMove={handleCameraClipEdgePointerMove} onPointerUp={handleCameraClipEdgePointerUp} />
@@ -835,7 +1317,8 @@ export function Timeline({
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
-              updateCameraClips(deleteClip(cameraClipsList(), clip.id));
+              updateCameraClips(emptiedTrack(deleteClip(cameraClipsList(), clip.id)));
+              discardFromSelection("camera", clip.id);
             }}
             title="Delete this part — camera hidden here in preview"
           >
@@ -849,10 +1332,11 @@ export function Timeline({
   const tickStep = pickTickStepMs(durationMs);
   const ticks: number[] = [];
   for (let t = 0; t <= durationMs; t += tickStep) ticks.push(t);
+  const sole = soleSelection();
 
   return (
     <div className="tl-root">
-    <div className="tl-inner">
+    <div className="tl-inner" ref={tlInnerRef}>
       <div className="tl-row">
         <div className="tl-row-header tl-tool-toggle" role="group" aria-label="Timeline tool">
           <button
@@ -873,6 +1357,24 @@ export function Timeline({
           >
             <Scissors size={12} />
           </button>
+          <div className="tl-reset-group">
+            <button
+              type="button"
+              className="tl-tool-btn tl-reset-btn tl-reset-default-btn"
+              onClick={resetToDefault}
+              title="Reset to default — removes every cut, trim, zoom, and camera edit"
+            >
+              <RotateCcw size={12} />
+            </button>
+            <button
+              type="button"
+              className="tl-tool-btn tl-reset-btn tl-reset-original-btn"
+              onClick={resetToOriginal}
+              title="Reset to original — removes every cut, trim, zoom, and camera edit and goes back to the original recording"
+            >
+              <RotateCw size={12} />
+            </button>
+          </div>
         </div>
         <div
           className="tl-ruler"
@@ -896,6 +1398,7 @@ export function Timeline({
           ref={clipsTrackRef}
           onPointerDown={handleClipsTrackPointerDown}
           onPointerMove={handleClipsTrackPointerMove}
+          onPointerUp={handleMarqueeUp}
           onPointerLeave={handleClipsTrackPointerLeave}
         >
           {renderClipsPieces()}
@@ -930,23 +1433,28 @@ export function Timeline({
             <MagicWand size={10} weight="fill" />
           </button>
         </div>
-        <div className="tl-track tl-track-zoom" ref={zoomTrackRef} onClick={handleZoomTrackClick}>
+        <div
+          className="tl-track tl-track-zoom"
+          ref={zoomTrackRef}
+          onClick={handleZoomTrackClick}
+          onPointerDown={handleZoomTrackPointerDown}
+          onPointerMove={handleZoomTrackPointerMove}
+          onPointerUp={handleMarqueeUp}
+        >
           {timeline.zooms.map((zoom) => (
             <div
               key={zoom.id}
-              ref={selectedZoomId === zoom.id ? selectedZoomBlockRef : undefined}
-              className={`tl-zoom-block${selectedZoomId === zoom.id ? " selected" : ""}`}
+              className={`tl-zoom-block${isSelected("zoom", zoom.id) ? " selected" : ""}`}
               style={{ left: `${msToPct(zoom.startMs, durationMs)}%`, width: `${msToPct(zoom.durationMs, durationMs)}%` }}
               onPointerDown={(e) => handleZoomBlockPointerDown(e, zoom)}
               onPointerMove={handleZoomBlockPointerMove}
               onPointerUp={handleZoomBlockPointerUp}
-              onClick={(e) => handleZoomBlockClick(e, zoom.id)}
-              title={`${formatTime(zoom.startMs)} – ${formatTime(zoom.startMs + zoom.durationMs)} · ${zoom.pct}% — drag an edge to change duration`}
+              title={`${formatTime(zoom.startMs)} – ${formatTime(zoom.startMs + zoom.durationMs)} · ${zoom.pct}% — click to select (Ctrl/Cmd+click to add), drag an edge to change duration`}
             >
               <div className="tl-piece-edge tl-piece-edge-left" onPointerDown={(e) => handleZoomEdgePointerDown(e, zoom, "left")} onPointerMove={handleZoomEdgePointerMove} onPointerUp={handleZoomEdgePointerUp} />
               <div className="tl-piece-edge tl-piece-edge-right" onPointerDown={(e) => handleZoomEdgePointerDown(e, zoom, "right")} onPointerMove={handleZoomEdgePointerMove} onPointerUp={handleZoomEdgePointerUp} />
               <span className="tl-zoom-pct-badge">{zoom.pct}%</span>
-              {selectedZoomId === zoom.id && (
+              {sole?.track === "zoom" && sole.id === zoom.id && (
                 <div className="tl-zoom-toolbar" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
                   {ZOOM_PCT_PRESETS.map((p) => (
                     <button
@@ -975,6 +1483,7 @@ export function Timeline({
           ref={cameraTrackRef}
           onPointerDown={handleCameraTrackPointerDown}
           onPointerMove={handleCameraTrackPointerMove}
+          onPointerUp={handleMarqueeUp}
           onPointerLeave={handleCameraTrackPointerLeave}
           title={cameraHidden ? "Camera is hidden in the Camera tab — enable it there to edit this track" : undefined}
         >
@@ -989,6 +1498,12 @@ export function Timeline({
         className="tl-playhead"
         style={{ left: `calc(${TL_TRACK_START_PX}px + (100% - ${TL_TRACK_START_PX}px) * ${clamp01(currentMs / durationMs)})` }}
       />
+      {marqueeBox && (
+        <div
+          className="tl-marquee"
+          style={{ left: marqueeBox.left, top: marqueeBox.top, width: marqueeBox.width, height: marqueeBox.height }}
+        />
+      )}
     </div>
     </div>
   );

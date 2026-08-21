@@ -53,7 +53,12 @@
 .tl-zoom-magic-btn:hover:not(:disabled) { background: rgba(126, 34, 206, .18); }
 .tl-zoom-magic-btn:disabled { color: #c4b5fd; cursor: not-allowed; }
 
-.tl-tool-toggle { justify-content: center; gap: 3px; }
+/* Wraps so the reset pair (see .tl-reset-group), full tool-button size to match the
+   pointer/scissors pair, drops to its own centered second line instead of squeezing four
+   same-size icons into the 72px header column on one row — .tl-row's min-height (44px) is
+   just shy of the two 22px rows + 3px gap between them (47px), so the row grows slightly
+   to fit rather than clipping. */
+.tl-tool-toggle { justify-content: center; align-content: center; gap: 3px; flex-wrap: wrap; }
 .tl-tool-btn {
   flex: none; width: 22px; height: 22px; border-radius: 5px; padding: 0;
   display: flex; align-items: center; justify-content: center;
@@ -61,6 +66,14 @@
 }
 .tl-tool-btn:hover { background: var(--border); color: var(--text); }
 .tl-tool-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* Reset isn't a tool (no active/pressed state) — the two reset buttons are grouped in their
+   own flex item so they wrap as a unit onto line two together, set apart from the pointer/
+   scissors pair above, each tinted its own color to stay visually distinct from one another
+   too pending the two being wired to actually different baselines (see resetToDefault/
+   resetToOriginal in Timeline.tsx). */
+.tl-reset-group { display: flex; gap: 3px; flex: 0 0 auto; }
+.tl-reset-default-btn:hover { background: rgba(91, 75, 245, .14); color: var(--accent); }
+.tl-reset-original-btn:hover { background: rgba(239, 68, 68, .12); color: var(--danger); }
 
 .tl-ruler {
   position: relative; flex: 1; height: 20px; cursor: pointer; user-select: none;
@@ -118,6 +131,12 @@
    touching (see Timeline.tsx's clipSnapPair/cameraSnapPair). */
 .tl-clip-base.tl-piece-touching,
 .tl-camera-fill.tl-piece-touching {
+  outline: 2px solid var(--accent); outline-offset: 1px; z-index: 3;
+}
+/* Part of the current selection (click, Ctrl/Cmd+click, or marquee-drag — see
+   Timeline.tsx's `selection`). Same treatment as .tl-zoom-block.selected below. */
+.tl-clip-base.selected,
+.tl-camera-fill.selected {
   outline: 2px solid var(--accent); outline-offset: 1px; z-index: 3;
 }
 /* Pieces tile the whole track, so their own cursor would otherwise mask the track's
@@ -204,4 +223,12 @@
 .tl-playhead {
   position: absolute; top: 0; bottom: 0; width: 1.5px; pointer-events: none; z-index: 6;
   background: var(--accent); box-shadow: 0 0 4px rgba(91, 75, 245, .5);
+}
+
+/* Marquee (rubber-band) selection box — drawn while dragging over empty track space, see
+   Timeline.tsx's startMarquee/handleMarqueeMove. Positioned in pixels relative to .tl-inner. */
+.tl-marquee {
+  position: absolute; border: 1px solid var(--accent);
+  background: rgba(91, 75, 245, .12);
+  pointer-events: none; z-index: 8;
 }
