@@ -44,6 +44,7 @@ export const Channels = {
     getConfig: "recordingDock:getConfig",
     getBounds: "recordingDock:getBounds",
     setBounds: "recordingDock:setBounds",
+    setInteractive: "recordingDock:setInteractive",
     sendAction: "recordingDock:sendAction",
     syncTimer: "recordingDock:syncTimer",
     getTimerSync: "recordingDock:getTimerSync",

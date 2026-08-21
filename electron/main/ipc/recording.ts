@@ -80,7 +80,6 @@ async function resolveScreenTrack(
   signal: AbortSignal,
   cleanupPaths: string[]
 ): Promise<string> {
-  const startedAt = Date.now();
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
   if (input.screenFilePath) {
@@ -110,13 +109,6 @@ async function resolveScreenTrack(
     }
   }
 
-  console.log("[recording] resolveScreenTrack (screen.mp4 prepared)", {
-    id,
-    outputPath,
-    platform: process.platform,
-    branch: input.screenFilePath ? "move-file" : "non-native-transcode",
-    elapsedMs: Date.now() - startedAt,
-  });
   return outputPath;
 }
 
@@ -137,15 +129,6 @@ async function buildFinalMp4(
   signal: AbortSignal,
   cleanupPaths: string[]
 ): Promise<void> {
-  console.log("[recording] buildFinalMp4", {
-    id,
-    hasScreenFilePath: !!input.screenFilePath,
-    hasScreenBytes: !!input.screenBytes,
-    screenBytesLength: input.screenBytes?.byteLength,
-    areaRect: input.areaRect,
-    hasSideClipAudio: input.sideClip?.hasAudio,
-  });
-
   if (input.screenFilePath || input.screenBytes) {
     const tempScreenPath = path.join(os.tmpdir(), `${id}-screen-final.mp4`);
     cleanupPaths.push(tempScreenPath);
@@ -223,8 +206,6 @@ async function finishRecordingSave(
   input: SaveRecordingInput,
   sender: IpcMainInvokeEvent["sender"]
 ): Promise<void> {
-  console.log("[recording] finishRecordingSave start", { id, finalMp4, mode: input.mode });
-  const startedAt = Date.now();
   const abort = new AbortController();
   pendingSaves.set(id, abort);
   const cleanupPaths: string[] = [];
@@ -238,11 +219,6 @@ async function finishRecordingSave(
     if (input.mode === "advanced") {
       await buildEditProjectMaterials(id, input, recDir, onProgress, abort.signal, cleanupPaths);
       const project = createEditProject(input.title, { kind: "recording", recDir });
-      console.log("[recording] finishRecordingSave done (advanced)", {
-        id,
-        editProjectId: project.id,
-        elapsedMs: Date.now() - startedAt,
-      });
       const result: RecordingSaveResult = {
         kind: "editProject",
         recordingId: id,
@@ -275,11 +251,6 @@ async function finishRecordingSave(
       // No Edit Project for a Quick recording to read metadata/ afterward (cursor.json
       // isn't even written for Quick anymore — see the save handler below).
       await fs.rm(path.join(recDir, "metadata"), { recursive: true, force: true });
-      console.log("[recording] finishRecordingSave done", {
-        id,
-        cursorBakedIn: video.cursorBakedIn,
-        elapsedMs: Date.now() - startedAt,
-      });
       const result: RecordingSaveResult = { kind: "video", video };
       if (!sender.isDestroyed()) sender.send(Channels.recording.saveCompleted, result);
     }

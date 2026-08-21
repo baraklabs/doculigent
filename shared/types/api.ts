@@ -118,6 +118,12 @@ export interface DoculigentApi {
     getConfig(): Promise<RecordingDockConfig>;
     getBounds(): Promise<RecordingDockBounds | null>;
     setBounds(bounds: RecordingDockBounds): Promise<void>;
+    /** The dock window permanently reserves room for its popovers/tooltips (it never
+     *  resizes — see sizeFor), so most of it is empty transparent space. This toggles
+     *  click-through for that space: the renderer reports whether the pointer is actually
+     *  over the bar (or an open popover), and everywhere else clicks pass to whatever is
+     *  behind the dock instead of being swallowed by the window. */
+    setInteractive(interactive: boolean): Promise<void>;
     sendAction(action: RecordingDockAction): Promise<void>;
     syncTimer(sync: RecordingDockTimerSync): Promise<void>;
     /** Pulls whatever the last pushed syncTimer value was — for the dock's own mount,

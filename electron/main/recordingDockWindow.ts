@@ -43,8 +43,34 @@ function persist(): void {
   setRecordingDockState(lastConfig, lastBounds);
 }
 
+// The window is sized once, to fit the bar *plus* everything that can pop out of it, and
+// never resized afterward. Resizing it to fit an opening popover is what caused the dock
+// to visibly flicker: growing the window moves its top-left origin, and Windows presents
+// the already-painted frame at that new origin for a frame or two before Chromium
+// repaints, so the bar appeared to leap and settle back. Anything overflowing a window is
+// hard-clipped rather than overhanging, so the room has to be reserved up front instead.
+//
+// The reserved area is empty and transparent; setRecordingDockInteractive keeps it
+// click-through so it doesn't swallow clicks meant for whatever is behind the dock.
+// Popovers open toward the same side tooltips do (up, for both orientations — see the
+// popover/[data-tooltip] rules' `bottom: 100%`), except vertical, whose popovers open
+// leftward (`right: 100%`); the bar is anchored flush to the opposite edge so all the
+// slack lands on the side things actually open toward.
+const POPOVER_RESERVE = 168;
+const TOOLTIP_HEADROOM = 34;
+const BAR_THICKNESS = 48;
+
 function sizeFor(orientation: RecordingDockOrientation): { width: number; height: number } {
-  return orientation === "horizontal" ? { width: 460, height: 64 } : { width: 64, height: 460 };
+  // Vertical's bar width must fit the timer row (dot + "1:23:45" digits), which is wider
+  // than the 30px button column — too narrow and the bar's flush-right-anchored left edge
+  // (and its rounded corner) is clipped off rather than just leaving a gap.
+  // 520 rather than the bar's ~490 measured content width: the timer is the one
+  // variable-width part (it grows a whole field once a recording passes an hour), and
+  // overflow here doesn't wrap or scroll, it clips the bar's rounded ends off against the
+  // window edge — which is what used to make one end look square.
+  return orientation === "horizontal"
+    ? { width: 520, height: BAR_THICKNESS + POPOVER_RESERVE }
+    : { width: 96 + POPOVER_RESERVE, height: 460 + TOOLTIP_HEADROOM };
 }
 
 function displayForMainWindow(): Electron.Display {
@@ -75,6 +101,38 @@ function defaultBoundsFor(orientation: RecordingDockOrientation, display: Electr
   };
 }
 
+// Bounds persisted by an older build (or a stale size from before a sizeFor tweak) can carry
+// a width/height that no longer matches the current canonical size for this orientation — the
+// bar is flush against one edge (bottom in horizontal, right in vertical; see the CSS's
+// align-items/justify-content: flex-end), so a too-small size silently clips content off that
+// edge instead of just leaving a gap. Re-apply the current size, anchored to the same flush
+// edge, rather than trusting a persisted size verbatim.
+function normalizeBoundsSize(bounds: RecordingDockBounds, orientation: RecordingDockOrientation): RecordingDockBounds {
+  const { width, height } = sizeFor(orientation);
+  if (bounds.width === width && bounds.height === height) return bounds;
+  return {
+    x: orientation === "vertical" ? bounds.x + bounds.width - width : bounds.x,
+    y: orientation === "horizontal" ? bounds.y + bounds.height - height : bounds.y,
+    width,
+    height,
+  };
+}
+
+// Most of the dock window is empty reserved space (see sizeFor). Without this it would
+// still swallow every click landing in it, blocking a large always-on-top rectangle over
+// whatever the user is recording. The renderer hit-tests the pointer against the bar and
+// any open popover and reports the result here; `forward: true` is what keeps mouse moves
+// flowing to the renderer even while the window is click-through, so it can tell when the
+// pointer comes back over the bar and re-enable interaction.
+let lastInteractive: boolean | null = null;
+
+export function setRecordingDockInteractive(interactive: boolean): void {
+  if (!win || win.isDestroyed()) return;
+  if (lastInteractive === interactive) return;
+  lastInteractive = interactive;
+  win.setIgnoreMouseEvents(!interactive, { forward: true });
+}
+
 export function isRecordingDockOpen(): boolean {
   return !!win && !win.isDestroyed();
 }
@@ -85,15 +143,22 @@ export function getRecordingDockConfig(): RecordingDockConfig {
 
 function resolveDockBounds(): RecordingDockBounds {
   const targetDisplay = displayForMainWindow();
+  const candidate = lastBounds ? normalizeBoundsSize(lastBounds, lastConfig.orientation) : null;
   return ensureOnScreenBounds(
-    lastBounds && isWithinDisplay(lastBounds, targetDisplay) ? lastBounds : defaultBoundsFor(lastConfig.orientation, targetDisplay),
+    candidate && isWithinDisplay(candidate, targetDisplay) ? candidate : defaultBoundsFor(lastConfig.orientation, targetDisplay),
     lastConfig.orientation
   );
 }
 
+/** Where the *visible bar* is on screen, which is only part of the dock window — the rest
+ *  is the transparent reserve reasoned about in sizeFor. Callers positioning UI relative
+ *  to the dock (the countdown bubble) want the bar, not the window, or they end up
+ *  POPOVER_RESERVE px adrift of the thing they're supposed to sit next to. */
 export function getRecordingDockAnchorBounds(): RecordingDockBounds {
-  if (win && !win.isDestroyed()) return win.getBounds();
-  return resolveDockBounds();
+  const b = win && !win.isDestroyed() ? win.getBounds() : resolveDockBounds();
+  return lastConfig.orientation === "horizontal"
+    ? { x: b.x, y: b.y + b.height - BAR_THICKNESS, width: b.width, height: BAR_THICKNESS }
+    : { x: b.x + POPOVER_RESERVE, y: b.y + TOOLTIP_HEADROOM, width: b.width - POPOVER_RESERVE, height: b.height - TOOLTIP_HEADROOM };
 }
 
 export function openRecordingDockWindow(): void {
@@ -164,6 +229,7 @@ export function openRecordingDockWindow(): void {
 export function closeRecordingDockWindow(): void {
   if (win && !win.isDestroyed()) win.close();
   win = null;
+  lastInteractive = null;
   // Otherwise the next recording's dock could briefly pull this stale value (see
   // getRecordingDockTimerSync) before the fresh push for the new session arrives.
   lastTimerSync = null;

@@ -18,6 +18,7 @@ import {
   isMainWindowVisibleForDock,
   openRecordingDockWindow,
   setRecordingDockBounds,
+  setRecordingDockInteractive,
   setRecordingDockOrientation,
   showMainWindowForDock,
 } from "../recordingDockWindow";
@@ -46,6 +47,10 @@ export function registerRecordingDockIpc(): void {
 
   ipcMain.handle(Channels.recordingDock.setBounds, async (_event, bounds: RecordingDockBounds): Promise<void> => {
     setRecordingDockBounds(bounds);
+  });
+
+  ipcMain.handle(Channels.recordingDock.setInteractive, async (_event, interactive: boolean): Promise<void> => {
+    setRecordingDockInteractive(interactive);
   });
 
   ipcMain.handle(Channels.recordingDock.sendAction, async (_event, action: RecordingDockAction): Promise<void> => {

@@ -7,8 +7,12 @@ html, body, #root { background: transparent; }
   user-select: none;
   display: flex;
 }
+/* The window is bigger than the bar on purpose — it reserves room for popovers/tooltips
+   so it never has to resize (see sizeFor). Anchoring the bar to the far edge on both axes
+   is what puts all that slack on the side things actually open toward: up for horizontal,
+   up and to the left for vertical. */
 .recording-dock-root[data-orientation="horizontal"] { align-items: flex-end; justify-content: center; }
-.recording-dock-root[data-orientation="vertical"] { align-items: center; justify-content: flex-end; }
+.recording-dock-root[data-orientation="vertical"] { align-items: flex-end; justify-content: flex-end; }
 
 .recording-dock-bar {
   display: flex;
@@ -17,8 +21,8 @@ html, body, #root { background: transparent; }
   padding: 8px;
   background: rgba(20, 21, 28, .92);
   border: 1px solid rgba(255, 255, 255, .1);
-  border-radius: 16px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, .45);
+  border-radius: 10px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, .35);
 }
 .recording-dock-root[data-orientation="vertical"] .recording-dock-bar { flex-direction: column; }
 

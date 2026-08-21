@@ -385,7 +385,6 @@ function spawnWgcSegment(helperPath: string, capture: WgcCapture): Promise<Segme
     areaHeight: capture.areaHeight,
   };
 
-  console.log("[screenCapture] starting WGC helper", { helperPath, config });
   const proc = spawn(helperPath, [JSON.stringify(config)], { stdio: ["pipe", "pipe", "pipe"] });
   let stdoutBuf = "";
   let stderrBuf = "";

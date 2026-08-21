@@ -71,7 +71,6 @@ const TOOLS: { value: AnnotationTool; label: string; icon: ReactNode }[] = [
 
 type Popover = "tool" | "color" | "width" | null;
 
-const POPOVER_EXTRA = 168;
 
 function formatElapsed(ms: number): string {
   const totalSec = Math.max(0, Math.floor(ms / 1000));
@@ -90,7 +89,20 @@ export function RecordingDockPage() {
   const [started, setStarted] = useState(false);
   const [mainVisible, setMainVisible] = useState(true);
   const [popover, setPopover] = useState<Popover>(null);
-  const collapsedBoundsRef = useRef<RecordingDockBounds | null>(null);
+  // Mirrors `popover` synchronously. A click's onClick closure is bound to whatever
+  // `popover` React state was as of the last render — if a click lands in the gap between
+  // the previous click and React actually re-rendering (state updates aren't synchronous),
+  // that closure still sees the stale value and toggles the wrong way. Branching on this
+  // ref keeps the decision current regardless of render timing.
+  const popoverRef = useRef<Popover>(null);
+  // Hit-test targets for the click-through tracking below: the visible bar, plus whichever
+  // popover is open (it's the only other thing actually drawn in the window).
+  const barElRef = useRef<HTMLDivElement | null>(null);
+  const popoverElRef = useRef<HTMLDivElement | null>(null);
+  // A grip drag can outrun the pointer's position relative to the bar (the pointer is
+  // captured, so it legitimately travels outside it) — going click-through mid-drag would
+  // drop the drag, so interaction is pinned on for its duration.
+  const draggingRef = useRef(false);
 
   const [tool, setToolState] = useState<AnnotationTool>("pointer");
   const [color, setColorState] = useState<string>(ANNOTATION_COLORS[0]);
@@ -155,8 +167,38 @@ export function RecordingDockPage() {
     });
   }, []);
 
+  // Keeps the window click-through except where something is actually drawn. Mouse moves
+  // still arrive while it's click-through (the main side passes `forward: true`), which is
+  // what lets the pointer coming back over the bar re-enable interaction. Tooltips are
+  // deliberately not hit-tested: they only appear while the pointer is already over a
+  // button, and they're pointer-events: none regardless.
+  useEffect(() => {
+    const hits = (el: HTMLElement | null, x: number, y: number): boolean => {
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    };
+    const sync = (x: number, y: number): void => {
+      const interactive = draggingRef.current || hits(barElRef.current, x, y) || hits(popoverElRef.current, x, y);
+      window.api.recordingDock.setInteractive(interactive).catch(() => {});
+    };
+    const onMove = (e: MouseEvent): void => sync(e.clientX, e.clientY);
+    // Chromium stops delivering moves once the pointer leaves the window, so the last
+    // in-window position could otherwise leave it stuck interactive.
+    const onLeave = (): void => {
+      if (!draggingRef.current) window.api.recordingDock.setInteractive(false).catch(() => {});
+    };
+    window.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseleave", onLeave);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseleave", onLeave);
+    };
+  }, []);
+
   function handleGripPointerDown(e: ReactPointerEvent<HTMLDivElement>): void {
     if (e.button !== 0) return;
+    draggingRef.current = true;
     e.currentTarget.setPointerCapture(e.pointerId);
     const startX = e.screenX;
     const startY = e.screenY;
@@ -175,6 +217,7 @@ export function RecordingDockPage() {
       window.api.recordingDock.setBounds(next).catch(() => {});
     }
     function onUp(): void {
+      draggingRef.current = false;
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     }
@@ -182,36 +225,18 @@ export function RecordingDockPage() {
     window.addEventListener("pointerup", onUp);
   }
 
-  async function togglePopover(which: Exclude<Popover, null>): Promise<void> {
-    const opening = popover !== which;
-    if (popover !== null) {
-      setPopover(opening ? which : null);
-      if (!opening) await collapse();
-      return;
-    }
-    if (!opening) return;
-    const current = await window.api.recordingDock.getBounds();
-    if (!current || !config) return;
-    collapsedBoundsRef.current = current;
-    const expanded: RecordingDockBounds =
-      config.orientation === "horizontal"
-        ? { x: current.x, y: current.y - POPOVER_EXTRA, width: current.width, height: current.height + POPOVER_EXTRA }
-        : { x: current.x - POPOVER_EXTRA, y: current.y, width: current.width + POPOVER_EXTRA, height: current.height };
-    await window.api.recordingDock.setBounds(expanded);
-    setPopover(which);
+  // Purely a render toggle now — the window already reserves room for the popover and
+  // never resizes, so opening one can't move anything.
+  function togglePopover(which: Exclude<Popover, null>): void {
+    const next = popoverRef.current === which ? null : which;
+    popoverRef.current = next;
+    setPopover(next);
   }
 
-  async function collapse(): Promise<void> {
-    if (collapsedBoundsRef.current) {
-      await window.api.recordingDock.setBounds(collapsedBoundsRef.current);
-      collapsedBoundsRef.current = null;
-    }
-  }
-
-  async function closePopover(): Promise<void> {
-    if (popover === null) return;
+  function closePopover(): void {
+    if (popoverRef.current === null) return;
+    popoverRef.current = null;
     setPopover(null);
-    await collapse();
   }
 
   async function selectTool(next: AnnotationTool): Promise<void> {
@@ -231,9 +256,9 @@ export function RecordingDockPage() {
     window.api.annotation.setWidth(next).catch(() => {});
   }
 
-  async function toggleOrientation(): Promise<void> {
+  function toggleOrientation(): void {
     if (!config) return;
-    await closePopover();
+    closePopover();
     const next: RecordingDockOrientation = config.orientation === "horizontal" ? "vertical" : "horizontal";
     window.api.recordingDock.setOrientation(next).catch(() => {});
   }
@@ -256,10 +281,10 @@ export function RecordingDockPage() {
 
   return (
     <div className="recording-dock-root" data-orientation={config.orientation}>
-      <div className="recording-dock-bar">
+      <div className="recording-dock-bar" ref={barElRef}>
         <div
           className="recording-dock-grip"
-          title="Drag to move"
+          data-tooltip="Move"
           onPointerDown={handleGripPointerDown}
         >
           {config.orientation === "horizontal" ? <GripVertical size={14} /> : <GripHorizontal size={14} />}
@@ -273,7 +298,6 @@ export function RecordingDockPage() {
         <button
           type="button"
           className="recording-dock-btn"
-          title="Restart (discards this recording and starts over)"
           data-tooltip="Restart"
           onClick={() => sendAction("restart")}
         >
@@ -283,7 +307,6 @@ export function RecordingDockPage() {
         <button
           type="button"
           className="recording-dock-btn"
-          title={paused ? "Resume" : "Pause"}
           data-tooltip={paused ? "Resume" : "Pause"}
           onClick={() => sendAction(paused ? "resume" : "pause")}
         >
@@ -293,7 +316,6 @@ export function RecordingDockPage() {
         <button
           type="button"
           className="recording-dock-btn recording-dock-btn-stop"
-          title="Stop recording"
           data-tooltip="Stop"
           onClick={() => sendAction("stop")}
         >
@@ -303,7 +325,6 @@ export function RecordingDockPage() {
         <button
           type="button"
           className="recording-dock-btn recording-dock-btn-danger"
-          title="Discard recording (stops and deletes it without saving)"
           data-tooltip="Discard"
           onClick={handleDiscard}
         >
@@ -316,20 +337,19 @@ export function RecordingDockPage() {
           <button
             type="button"
             className={`recording-dock-btn${tool !== "pointer" ? " active" : ""}${popover === "tool" ? " open" : ""}`}
-            title="Annotation tool"
             data-tooltip="Draw"
             onClick={() => togglePopover("tool")}
           >
             <Pencil size={15} />
           </button>
           {popover === "tool" && (
-            <div className="recording-dock-popover">
+            <div className="recording-dock-popover" ref={popoverElRef}>
               {TOOLS.map((t) => (
                 <button
                   key={t.value}
                   type="button"
                   className={`recording-dock-popover-btn${tool === t.value ? " active" : ""}`}
-                  title={t.label}
+                  data-tooltip={t.label}
                   onClick={() => selectTool(t.value)}
                 >
                   {t.icon}
@@ -343,21 +363,20 @@ export function RecordingDockPage() {
           <button
             type="button"
             className={`recording-dock-btn${popover === "color" ? " open" : ""}`}
-            title="Annotation color"
             data-tooltip="Color"
             onClick={() => togglePopover("color")}
           >
             <span className="recording-dock-color-swatch" style={{ background: color }} />
           </button>
           {popover === "color" && (
-            <div className="recording-dock-popover">
+            <div className="recording-dock-popover" ref={popoverElRef}>
               {ANNOTATION_COLORS.map((c) => (
                 <button
                   key={c}
                   type="button"
                   className={`recording-dock-swatch-btn${color === c ? " active" : ""}`}
                   style={{ background: c }}
-                  title={c}
+                  data-tooltip={c}
                   onClick={() => selectColor(c)}
                 />
               ))}
@@ -369,20 +388,19 @@ export function RecordingDockPage() {
           <button
             type="button"
             className={`recording-dock-btn${popover === "width" ? " open" : ""}`}
-            title="Annotation stroke width"
             data-tooltip="Width"
             onClick={() => togglePopover("width")}
           >
             <span className="recording-dock-width-dot" style={{ width: Math.min(width + 3, 16), height: Math.min(width + 3, 16) }} />
           </button>
           {popover === "width" && (
-            <div className="recording-dock-popover">
+            <div className="recording-dock-popover" ref={popoverElRef}>
               {ANNOTATION_WIDTHS.map((w) => (
                 <button
                   key={w}
                   type="button"
                   className={`recording-dock-popover-btn${width === w ? " active" : ""}`}
-                  title={`${w}px stroke`}
+                  data-tooltip={`${w}px stroke`}
                   onClick={() => selectWidth(w)}
                 >
                   <span className="recording-dock-width-dot" style={{ width: Math.min(w + 3, 18), height: Math.min(w + 3, 18) }} />
@@ -395,7 +413,6 @@ export function RecordingDockPage() {
         <button
           type="button"
           className="recording-dock-btn"
-          title="Delete all annotations"
           data-tooltip="Erase"
           onClick={() => window.api.annotation.clear().catch(() => {})}
         >
@@ -407,7 +424,6 @@ export function RecordingDockPage() {
         <button
           type="button"
           className="recording-dock-btn"
-          title={config.orientation === "horizontal" ? "Switch to vertical dock" : "Switch to horizontal dock"}
           data-tooltip="Orientation"
           onClick={toggleOrientation}
         >
@@ -417,7 +433,6 @@ export function RecordingDockPage() {
         <button
           type="button"
           className={`recording-dock-btn${mainVisible ? " active" : ""}`}
-          title={mainVisible ? "Hide the Doculigent app window" : "Show the Doculigent app window"}
           data-tooltip={mainVisible ? "Hide app" : "Show app"}
           onClick={toggleMainWindow}
         >
@@ -426,7 +441,7 @@ export function RecordingDockPage() {
 
         <div
           className="recording-dock-grip"
-          title="Drag to move — this dock never appears in your recording"
+          data-tooltip="Move"
           onPointerDown={handleGripPointerDown}
         >
           {config.orientation === "horizontal" ? <GripVertical size={14} /> : <GripHorizontal size={14} />}

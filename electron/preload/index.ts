@@ -82,6 +82,7 @@ const api: DoculigentApi = {
     getConfig: () => ipcRenderer.invoke(Channels.recordingDock.getConfig),
     getBounds: () => ipcRenderer.invoke(Channels.recordingDock.getBounds),
     setBounds: (bounds) => ipcRenderer.invoke(Channels.recordingDock.setBounds, bounds),
+    setInteractive: (interactive) => ipcRenderer.invoke(Channels.recordingDock.setInteractive, interactive),
     sendAction: (action) => ipcRenderer.invoke(Channels.recordingDock.sendAction, action),
     syncTimer: (sync) => ipcRenderer.invoke(Channels.recordingDock.syncTimer, sync),
     getTimerSync: () => ipcRenderer.invoke(Channels.recordingDock.getTimerSync),
