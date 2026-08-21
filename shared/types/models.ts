@@ -429,7 +429,7 @@ export const DEFAULT_TIMELINE_EDIT_SETTINGS: TimelineEditSettings = {
   cameraClips: [],
 };
 
-export const ZOOM_DEFAULT_PCT: TimelineZoomPct = 200;
+export const ZOOM_DEFAULT_PCT: TimelineZoomPct = 150;
 export const ZOOM_DEFAULT_DURATION_MS = 1600;
 // How long a new zoom block's ease in/out takes at each edge of its window.
 export const ZOOM_TRANSITION_MS = 350;

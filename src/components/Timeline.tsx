@@ -591,6 +591,10 @@ export function Timeline({
   }
 
   handleDeleteShortcutRef.current = () => {
+    if (selectedZoomId !== null) {
+      removeZoom(selectedZoomId);
+      return true;
+    }
     if (hoveredClipId !== null) {
       const clip = clipsList().find((c) => c.id === hoveredClipId);
       if (clip) {
