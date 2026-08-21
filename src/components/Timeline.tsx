@@ -7,6 +7,7 @@ import {
   ZOOM_DEFAULT_PCT,
   ZOOM_LEAD_MS,
   ZOOM_PCT_PRESETS,
+  ZOOM_TRANSITION_MS,
   type CursorMetadata,
   type TimelineClip,
   type TimelineEditSettings,
@@ -14,6 +15,7 @@ import {
   type TimelineZoomPct,
 } from "@shared/types/models";
 import { bringClipToFront, deleteClip, effectiveClips, resolveClipAt, sourceToEditedMs, splitClipAtSource } from "@shared/lib/timelineClips";
+import { frameDimensions, toFrameCoords } from "@shared/lib/cursorFrame";
 import { mediaUrl } from "@shared/constants/media";
 import "./Timeline.css";
 
@@ -240,14 +242,49 @@ export function Timeline({
   // recording genuinely has no clicks), so the button can tell "still loading" from
   // "nothing to work with" and word its title accordingly.
   const [clicksSourceMs, setClicksSourceMs] = useState<number[] | null>(null);
+  // Each click's on-screen position (frame pixel coords, same space PreviewCompositor's own
+  // cursor-follow crop works in), parallel to clicksSourceMs by index — null entries where
+  // no cursor sample was found nearby. Lets computeAutoZooms tell "two clicks close in time
+  // but far apart on screen" from "two clicks on roughly the same spot" (see its own
+  // SPATIAL_SPLIT_FRAC). clickFrame is that same space's own dimensions, for turning a raw
+  // pixel distance into a fraction of the frame.
+  const [clickPositions, setClickPositions] = useState<({ x: number; y: number } | null)[] | null>(null);
+  const [clickFrame, setClickFrame] = useState<{ width: number; height: number } | null>(null);
   useEffect(() => {
     setClicksSourceMs(null);
+    setClickPositions(null);
+    setClickFrame(null);
     if (!cursorMetadataPath) return;
     let cancelled = false;
     (async () => {
       try {
         const metadata: CursorMetadata = await (await fetch(mediaUrl(cursorMetadataPath))).json();
-        if (!cancelled) setClicksSourceMs(metadata.clicks ?? []);
+        if (cancelled) return;
+        const clicks = metadata.clicks ?? [];
+        setClicksSourceMs(clicks);
+        setClickFrame(frameDimensions(metadata));
+        const points = metadata.points;
+        setClickPositions(
+          clicks.map((ms) => {
+            if (!points || points.length === 0) return null;
+            // Nearest recorded cursor sample at or before this click's own timestamp —
+            // same binary search PreviewCompositor's own live cursor-follow uses.
+            let lo = 0;
+            let hi = points.length - 1;
+            let idx = 0;
+            while (lo <= hi) {
+              const mid = (lo + hi) >> 1;
+              if (points[mid].t <= ms) {
+                idx = mid;
+                lo = mid + 1;
+              } else {
+                hi = mid - 1;
+              }
+            }
+            const p = points[idx];
+            return toFrameCoords(metadata, p.x, p.y);
+          })
+        );
       } catch {
         // No cursor track for this recording — the magic button just stays disabled.
       }
@@ -1079,13 +1116,32 @@ export function Timeline({
   // source ms (same clock cursor points/the video itself run on), so each one is first
   // mapped onto the *edited* timeline via sourceToEditedMs — a click inside a stretch since
   // cut out of the edit is simply dropped, since it isn't visible anywhere anymore. Clicks
-  // close together (a rapid double-click, or several quick clicks across a UI) are merged
-  // into one longer block spanning all of them rather than a pile of overlapping short
-  // ones; an isolated click gets a single short block, same length as a manually-placed
-  // one. Replaces the track outright (undo-able) rather than appending, so re-running it
-  // after further cuts/trims regenerates cleanly instead of piling up stale blocks.
+  // close together *and in roughly the same spot* (a rapid double-click, or several quick
+  // clicks across one UI element) are merged into one longer block spanning all of them
+  // rather than a pile of overlapping short ones; an isolated click gets a single short
+  // block, same length as a manually-placed one. Two clicks close together in time but far
+  // apart on screen stay as two separate blocks with a real gap between them instead (see
+  // SPATIAL_SPLIT_FRAC below) — holding one zoom across both would mean the crop has to
+  // sweep that whole distance while still magnified, which reads as a fast, jarring pan;
+  // splitting them lets the zoom ease back down through the gap while the cursor is
+  // actually making that crossing, then back up once it's settled at the next spot.
+  // Replaces the track outright (undo-able) rather than appending, so re-running it after
+  // further cuts/trims regenerates cleanly instead of piling up stale blocks.
   const CLICK_CLUSTER_GAP_MS = 1200;
   const ZOOM_AUTO_TRAIL_MS = 700;
+  // Fraction of the frame's own diagonal two clicks have to be apart before they're kept as
+  // separate zoom blocks even when close in time (see the block comment above) — small
+  // enough to still merge clicks within roughly the same button/menu, large enough to catch
+  // an actual jump across the screen.
+  const SPATIAL_SPLIT_FRAC = 0.18;
+  // Minimum real gap enforced between two spatially-split blocks — short enough to barely
+  // register as its own beat, long enough for computeActiveZoomPct's own ease in/out
+  // (ZOOM_TRANSITION_MS) to actually read as a dip rather than a flicker.
+  const ZOOM_VALLEY_GAP_MS = 260;
+  // A clipped-apart block shorter than this on either side isn't worth it — the ease in/out
+  // alone (ZOOM_TRANSITION_MS each edge) wouldn't leave any real hold in the middle, so
+  // falls back to a plain merge instead (the old, always-merge behavior).
+  const MIN_SPLIT_WINDOW_MS = ZOOM_TRANSITION_MS * 2;
   // The actual click-to-zoom-windows computation, factored out so both the magic-wand
   // button (against the *live* clips, below) and resetToDefault (against the *default*,
   // uncut clips) can share it without duplicating the clustering logic. Returns [] if
@@ -1093,33 +1149,62 @@ export function Timeline({
   // mapped against, or the timeline has no duration yet).
   function computeAutoZooms(clips: TimelineClip[]): TimelineZoom[] {
     if (!clicksSourceMs || clicksSourceMs.length === 0 || durationMs <= 0) return [];
-    const editedMs = clicksSourceMs
-      .map((ms) => sourceToEditedMs(clips, ms))
-      .filter((ms): ms is number => ms !== null)
-      .sort((a, b) => a - b);
-    if (editedMs.length === 0) return [];
+    const items = clicksSourceMs
+      .map((ms, i) => ({ editedMs: sourceToEditedMs(clips, ms), pos: clickPositions?.[i] ?? null }))
+      .filter((it): it is { editedMs: number; pos: { x: number; y: number } | null } => it.editedMs !== null)
+      .sort((a, b) => a.editedMs - b.editedMs);
+    if (items.length === 0) return [];
 
-    // Pass 1 — group clicks themselves by gap.
-    const clusters: number[][] = [];
-    for (const ms of editedMs) {
-      const last = clusters[clusters.length - 1];
-      if (last && ms - last[last.length - 1] <= CLICK_CLUSTER_GAP_MS) last.push(ms);
-      else clusters.push([ms]);
+    const diag = clickFrame ? Math.hypot(clickFrame.width, clickFrame.height) : null;
+    // Unknown position (older recordings, or a click with no nearby cursor sample) always
+    // falls back to time-only clustering — same as before spatial splitting existed.
+    function farApart(a: { x: number; y: number } | null, b: { x: number; y: number } | null): boolean {
+      if (!a || !b || !diag) return false;
+      return Math.hypot(a.x - b.x, a.y - b.y) / diag > SPATIAL_SPLIT_FRAC;
+    }
+
+    // Pass 1 — group clicks by gap, same as before, except a click spatially far from the
+    // cluster's most recent one starts a new cluster even if it's within the time gap.
+    const clusters: (typeof items)[] = [];
+    for (const it of items) {
+      const cluster = clusters[clusters.length - 1];
+      const prev = cluster?.[cluster.length - 1];
+      if (cluster && prev && it.editedMs - prev.editedMs <= CLICK_CLUSTER_GAP_MS && !farApart(prev.pos, it.pos)) {
+        cluster.push(it);
+      } else {
+        clusters.push([it]);
+      }
     }
 
     // Pass 2 — turn each cluster into a [start, end) window (lead-in before the first
     // click, trailing hold after the last, stretched out to at least the same length a
-    // manually-placed block gets), then merge any windows that now overlap as a result of
-    // that stretch — e.g. two clusters just over the gap threshold apart whose trailing
-    // hold reaches into the next one's lead-in.
+    // manually-placed block gets), then reconcile it against the previous window: where the
+    // two naturally overlap, either merge them into one continuous hold (same as before —
+    // e.g. two clusters just over the gap threshold apart) or, if they were kept apart by
+    // farApart above, clip them to a real minimum gap straddling the midpoint between the
+    // two clusters' nearest clicks, falling back to a merge if clipping would leave either
+    // side too short to read as a real ease in/out.
     const windows: { start: number; end: number }[] = [];
-    for (const cluster of clusters) {
-      const start = Math.max(0, cluster[0] - ZOOM_LEAD_MS);
-      let end = Math.min(durationMs, cluster[cluster.length - 1] + ZOOM_AUTO_TRAIL_MS);
+    for (let i = 0; i < clusters.length; i++) {
+      const cluster = clusters[i];
+      const start = Math.max(0, cluster[0].editedMs - ZOOM_LEAD_MS);
+      let end = Math.min(durationMs, cluster[cluster.length - 1].editedMs + ZOOM_AUTO_TRAIL_MS);
       end = Math.min(durationMs, Math.max(end, start + ZOOM_DEFAULT_DURATION_MS));
-      const prev = windows[windows.length - 1];
-      if (prev && start <= prev.end) prev.end = Math.max(prev.end, end);
-      else windows.push({ start, end });
+      const prevWindow = windows[windows.length - 1];
+      if (!prevWindow || start > prevWindow.end) {
+        windows.push({ start, end });
+        continue;
+      }
+      const prevCluster = clusters[i - 1];
+      const midpoint = (prevCluster[prevCluster.length - 1].editedMs + cluster[0].editedMs) / 2;
+      const clippedPrevEnd = midpoint - ZOOM_VALLEY_GAP_MS / 2;
+      const clippedStart = midpoint + ZOOM_VALLEY_GAP_MS / 2;
+      if (clippedPrevEnd - prevWindow.start >= MIN_SPLIT_WINDOW_MS && end - clippedStart >= MIN_SPLIT_WINDOW_MS) {
+        prevWindow.end = clippedPrevEnd;
+        windows.push({ start: clippedStart, end });
+      } else {
+        prevWindow.end = Math.max(prevWindow.end, end);
+      }
     }
 
     return windows.map((w) => ({

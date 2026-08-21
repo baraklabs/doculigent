@@ -478,9 +478,14 @@ function clamp(n: number, min: number, max: number): number {
 /** The padding/zoom/fit math shared between drawing the screen recording and (for reel's
  *  full-bleed "cover" mode) building the pan drag region below it — kept in one place so
  *  the two can never drift out of sync with each other. `focusSrc` (source-video pixel
- *  coords) recenters the crop on a point other than the video's own center — used to keep
- *  a timeline zoom block centered on the recorded cursor instead of the screen's middle;
- *  clamped so the crop window never runs off the source video's edge. */
+ *  coords), while a timeline zoom block is active, is the point to zoom *toward* — not
+ *  toward the frame's own center, but not recentered onto that point either: the crop is
+ *  positioned so focusSrc keeps the same relative position within the frame it already
+ *  had before zooming (bottom-right stays bottom-right, just magnified), the way zooming
+ *  toward a cursor in an image viewer or map works, rather than the click jumping to the
+ *  middle of the screen. Clamped so the crop window never runs off the source video's edge
+ *  — which is also the only time that relative position doesn't hold exactly, since the
+ *  crop can't follow it any further once it's already flush against that edge. */
 function computeScreenContentFit(
   box: Rect,
   bg: BackgroundEditSettings,
@@ -500,8 +505,13 @@ function computeScreenContentFit(
   const zoom = Math.max(1, bg.zoomPct / 100);
   const srcW = svW / zoom;
   const srcH = svH / zoom;
-  const srcX = focusSrc ? clamp(focusSrc.x - srcW / 2, 0, Math.max(0, svW - srcW)) : (svW - srcW) / 2;
-  const srcY = focusSrc ? clamp(focusSrc.y - srcH / 2, 0, Math.max(0, svH - srcH)) : (svH - srcH) / 2;
+  // Keeps focusSrc at the same fractional position within the crop that it holds within
+  // the full frame (focusSrc.x/svW), rather than forcing it to the crop's own center
+  // (focusSrc.x - srcW / 2, which is what a plain "centered crop" would do) — e.g. at 2x
+  // zoom the crop is half-width, so a point 80% of the way across the full frame sits at
+  // srcX + 0.8*srcW only when srcX = focusSrc.x * (1 - srcW / svW) = focusSrc.x * (1 - 1/zoom).
+  const srcX = focusSrc ? clamp(focusSrc.x * (1 - 1 / zoom), 0, Math.max(0, svW - srcW)) : (svW - srcW) / 2;
+  const srcY = focusSrc ? clamp(focusSrc.y * (1 - 1 / zoom), 0, Math.max(0, svH - srcH)) : (svH - srcH) / 2;
   const fitScale =
     fitMode === "cover" ? Math.max(contentW / srcW, contentH / srcH) : Math.min(contentW / srcW, contentH / srcH);
   const fitW = srcW * fitScale;
@@ -520,9 +530,9 @@ function computeScreenContentFit(
  *  only when `reelScreenFull` is set, whose whole point is covering a portrait canvas
  *  edge to edge despite a typically-landscape recording. `panPct` just recenters which
  *  part of a "cover"-cropped recording shows; left at its default (centered) everywhere
- *  this is actually called from. `focusSrc` — see computeScreenContentFit — recenters
- *  the crop on the recorded cursor's position while a timeline zoom block is active,
- *  instead of the video's own center. */
+ *  this is actually called from. `focusSrc` — see computeScreenContentFit — is the point
+ *  a timeline zoom block zooms toward while active, keeping its own on-screen position
+ *  instead of both the video's center *and* instead of recentering onto it. */
 function drawScreenContent(
   ctx: CanvasRenderingContext2D,
   screenVideo: HTMLVideoElement,
@@ -585,17 +595,27 @@ function findActiveZoom(zooms: TimelineZoom[], currentMs: number): TimelineZoom 
   return found;
 }
 
-/** Eases from `baselinePct` up to the active zoom block's pct and back down over
- *  ZOOM_TRANSITION_MS at each edge of its window, holding at the target in between —
- *  a trapezoid envelope, not a hard cut in zoom level. */
-function computeActiveZoomPct(baselinePct: number, zooms: TimelineZoom[], currentMs: number): number {
-  const zoom = findActiveZoom(zooms, currentMs);
-  if (!zoom) return baselinePct;
+/** 0 at either edge of an active zoom block's window (or when none is active), ramping up
+ *  to 1 once fully past the ease-in (ZOOM_TRANSITION_MS) and staying there until the
+ *  ease-out begins — the trapezoid computeActiveZoomPct eases `pct` through below. Exposed
+ *  separately so the cursor-follow crop (see zoomFocusRef's own draw-loop usage) can tell
+ *  "fully zoomed in, holding" (1) from "still changing scale" (<1) and freeze its pan
+ *  during the latter — panning *while* the scale itself is changing reads as two motions
+ *  fighting each other instead of one clean zoom. */
+function computeZoomEnvelope(zoom: TimelineZoom | null, currentMs: number): number {
+  if (!zoom) return 0;
   const half = Math.max(1, zoom.durationMs / 2);
   const transition = Math.min(ZOOM_TRANSITION_MS, half);
   const tIn = Math.min(1, (currentMs - zoom.startMs) / transition);
   const tOut = Math.min(1, (zoom.startMs + zoom.durationMs - currentMs) / transition);
-  const envelope = Math.max(0, Math.min(tIn, tOut));
+  return Math.max(0, Math.min(tIn, tOut));
+}
+
+/** Eases from `baselinePct` up to the active zoom block's pct and back down over
+ *  ZOOM_TRANSITION_MS at each edge of its window, holding at the target in between —
+ *  a trapezoid envelope, not a hard cut in zoom level. */
+function computeActiveZoomPct(baselinePct: number, zoom: TimelineZoom | null, envelope: number): number {
+  if (!zoom) return baselinePct;
   const eased = (1 - Math.cos(envelope * Math.PI)) / 2;
   return baselinePct + (zoom.pct - baselinePct) * eased;
 }
@@ -659,12 +679,17 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   // performance.now() as of the previous draw() call — the wall-clock delta between
   // frames is how a gap's position advances.
   const lastFrameAtRef = useRef(performance.now());
-  // Smoothed cursor-follow target (source-video pixel coords) for an active zoom block —
-  // eased toward the cursor's raw position each frame (see ZOOM_FOCUS_SMOOTH_MS below)
-  // rather than snapping straight to it, so a jump between sparse recorded cursor samples
-  // pans instead of jump-cuts. Cleared whenever no zoom is active so the next one starts
-  // fresh instead of easing in from wherever the last one left off.
+  // Where an active zoom block's crop is centered (source-video pixel coords) — captured
+  // once, the moment the block becomes active, and held completely fixed for its entire
+  // window (ease-in, hold, *and* ease-out alike). Deliberately not a live cursor-follow —
+  // see the draw loop's own zoom section for why. Cleared whenever no zoom is active so the
+  // next one starts fresh instead of carrying over the last one's position.
   const zoomFocusRef = useRef<{ x: number; y: number } | null>(null);
+  // Which zoom block zoomFocusRef was last seeded for — lets the draw loop tell "just
+  // entered a new zoom block" (seed the fixed focus once, from the cursor's position right
+  // now) from "still inside the same block" (leave it alone, holding steady for the rest of
+  // that block's window).
+  const activeZoomIdRef = useRef<string | null>(null);
   // The user's actual play/pause intent — distinct from screenVideo.paused, which the
   // draw loop itself toggles while passing through a gap.
   const isPlayingRef = useRef(false);
@@ -1062,7 +1087,8 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       // Zoom — a timeline zoom block temporarily overrides the Background tab's static
       // zoomPct with an eased-in/out target for the duration of its window.
       const activeZoom = findActiveZoom(timelineState.zooms, currentMs);
-      const zoomedBg: BackgroundEditSettings = { ...bg, zoomPct: computeActiveZoomPct(bg.zoomPct, timelineState.zooms, currentMs) };
+      const zoomEnvelope = computeZoomEnvelope(activeZoom, currentMs);
+      const zoomedBg: BackgroundEditSettings = { ...bg, zoomPct: computeActiveZoomPct(bg.zoomPct, activeZoom, zoomEnvelope) };
 
       // Sample the recorded cursor track early (before the crop is computed below) so an
       // active zoom block can center its crop on the cursor's actual position instead of
@@ -1097,27 +1123,32 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         cursorSample = { point, pos };
       }
 
-      // Raw cursor position, in source-video pixel space, to zoom-focus on this frame —
-      // eased toward via zoomFocusRef rather than applied directly (see its declaration).
-      let zoomFocusTarget: { x: number; y: number } | null = null;
-      if (activeZoom && cursorSample?.pos && track) {
-        const frame = frameDimensions(track.metadata);
-        const svW = screenVideo.videoWidth;
-        const svH = screenVideo.videoHeight;
-        zoomFocusTarget = { x: cursorSample.pos.x * (svW / frame.width), y: cursorSample.pos.y * (svH / frame.height) };
-      }
-      const ZOOM_FOCUS_SMOOTH_MS = 220;
-      if (!zoomFocusTarget) {
+      // Raw cursor position, in source-video pixel space, to zoom-focus on — captured once,
+      // the moment this zoom block first becomes active, and held completely fixed for its
+      // entire window (ease-in, hold, *and* ease-out alike). This is deliberately not a
+      // live cursor-follow: a zoom block targets "where the click happened," not "wherever
+      // the mouse currently is" — re-targeting every frame as the cursor kept moving during
+      // the hold was panning the crop left/right on its own, on top of the zoom itself,
+      // which read as the view drifting rather than a clean zoom toward one spot. Falls
+      // back to the frame's own center (focusSrc null) if there's no cursor sample right at
+      // entry. Reset to null between blocks so the next one starts fresh instead of easing
+      // in from wherever the last one was pointed.
+      if (!activeZoom) {
         zoomFocusRef.current = null;
-      } else if (!zoomFocusRef.current) {
-        zoomFocusRef.current = zoomFocusTarget;
-      } else {
-        const alpha = 1 - Math.exp(-dtMs / ZOOM_FOCUS_SMOOTH_MS);
-        zoomFocusRef.current = {
-          x: zoomFocusRef.current.x + (zoomFocusTarget.x - zoomFocusRef.current.x) * alpha,
-          y: zoomFocusRef.current.y + (zoomFocusTarget.y - zoomFocusRef.current.y) * alpha,
-        };
+        activeZoomIdRef.current = null;
+      } else if (activeZoom.id !== activeZoomIdRef.current) {
+        activeZoomIdRef.current = activeZoom.id;
+        if (cursorSample?.pos && track) {
+          const frame = frameDimensions(track.metadata);
+          const svW = screenVideo.videoWidth;
+          const svH = screenVideo.videoHeight;
+          zoomFocusRef.current = { x: cursorSample.pos.x * (svW / frame.width), y: cursorSample.pos.y * (svH / frame.height) };
+        } else {
+          zoomFocusRef.current = null;
+        }
       }
+      // else: same block continuing — zoomFocusRef stays exactly as captured at entry,
+      // through the ease-in, the hold, and the ease-out alike.
       const zoomFocusSrc = zoomFocusRef.current;
 
       // Resolve this frame's screen/camera boxes — every format works the same way: the
