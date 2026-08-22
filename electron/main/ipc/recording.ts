@@ -16,6 +16,7 @@ import {
   copyToMp4,
   FfmpegCancelledError,
   muxScreenWithAudio,
+  probeDuration,
   remuxToMp4,
   transcodeScreenRecording,
 } from "../native/ffmpeg";
@@ -93,16 +94,23 @@ async function resolveScreenTrack(
     // otherwise scaled/padded like a display capture — see native/screenCapture.ts's
     // `vfFor`, which the display/window branch here reuses so the two pipelines stay in
     // sync with each other.
-    const tempScreenWebm = path.join(os.tmpdir(), `${id}-screen.webm`);
-    await fs.writeFile(tempScreenWebm, Buffer.from(input.screenBytes!));
-    cleanupPaths.push(tempScreenWebm);
+    // `screenExt` names the container RecordingService's MediaRecorder actually produced
+    // ("mp4" whenever H.264/MP4 was supported and preferred, "webm" otherwise) — only used
+    // for the temp file's own extension here (ffmpeg demuxes by sniffing content, not by
+    // extension, so this is a debugging nicety, not a correctness requirement). This still
+    // always runs through transcodeScreenRecording regardless of source codec: the `-vf`
+    // crop/scale/pad below is a real pixel transform, so there's no `-c copy` shortcut
+    // available here even when the source is already H.264.
+    const tempScreenPath = path.join(os.tmpdir(), `${id}-screen.${input.screenExt ?? "webm"}`);
+    await fs.writeFile(tempScreenPath, Buffer.from(input.screenBytes!));
+    cleanupPaths.push(tempScreenPath);
     const area = input.areaRect;
     const vf = area
       ? `crop=iw*${area.width}:ih*${area.height}:iw*${area.x}:ih*${area.y},${vfFor(true)}`
       : vfFor(false);
-    console.log("[recording] transcoding fallback screen recording", { tempScreenWebm, vf });
+    console.log("[recording] transcoding fallback screen recording", { tempScreenPath, screenExt: input.screenExt, vf });
     try {
-      await transcodeScreenRecording(tempScreenWebm, outputPath, vf, onProgress, signal);
+      await transcodeScreenRecording(tempScreenPath, outputPath, vf, onProgress, signal);
     } catch (e) {
       console.error("[recording] transcodeScreenRecording failed", e);
       throw e;
@@ -146,10 +154,17 @@ async function buildFinalMp4(
     return;
   }
 
-  const tempWebm = path.join(os.tmpdir(), `${id}.webm`);
-  await fs.writeFile(tempWebm, Buffer.from(input.webmBytes!));
-  cleanupPaths.push(tempWebm);
-  await remuxToMp4(tempWebm, finalMp4, onProgress, signal);
+  const webmExt = input.webmExt ?? "webm";
+  const tempClipPath = path.join(os.tmpdir(), `${id}.${webmExt}`);
+  await fs.writeFile(tempClipPath, Buffer.from(input.webmBytes!));
+  cleanupPaths.push(tempClipPath);
+  if (webmExt === "mp4") {
+    // MediaRecorder already produced real H.264/AAC — a plain container copy normalizes it
+    // (same as the native-capture branch above), no re-encode needed.
+    await copyToMp4(tempClipPath, finalMp4, onProgress, signal);
+  } else {
+    await remuxToMp4(tempClipPath, finalMp4, onProgress, signal);
+  }
 }
 
 /** The Advanced-mode counterpart to `buildFinalMp4` — produces the same
@@ -176,22 +191,35 @@ async function buildEditProjectMaterials(
     await resolveScreenTrack(id, input, path.join(metaDir, "screen.mp4"), onProgress, signal, cleanupPaths);
 
     if (input.sideClip?.hasVideo) {
-      await fs.writeFile(path.join(metaDir, "camera.webm"), Buffer.from(input.sideClip.bytes));
+      // Written verbatim, whatever the container — camera.mp4 when MediaRecorder produced
+      // real H.264/AAC, camera.webm otherwise (see getEditProjectMedia, which resolves
+      // whichever extension actually exists). Either way this is a raw byte write, no
+      // ffmpeg pass at all, so choosing H.264 here never costs an extra re-encode.
+      await fs.writeFile(path.join(metaDir, `camera.${input.sideClip.ext}`), Buffer.from(input.sideClip.bytes));
     } else if (input.sideClip) {
       // Audio-only side clip (mic/system audio, no camera video) — kept for completeness,
       // though full editor support for an audio-only Advanced project's sound track isn't
-      // wired up yet.
-      await fs.writeFile(path.join(metaDir, "audio.webm"), Buffer.from(input.sideClip.bytes));
+      // wired up yet. Always webm in practice (pickMimeType only tries H.264/MP4 for a
+      // video-carrying stream — see RecordingService.ts), but named off `ext` regardless
+      // rather than assuming that stays true forever.
+      await fs.writeFile(path.join(metaDir, `audio.${input.sideClip.ext}`), Buffer.from(input.sideClip.bytes));
     }
   } else {
     // Camera-only capture — a single already-composited stream (see RecordingService's
-    // stopCameraOnly), not a separate screen+camera pair. Remux it straight into
+    // stopCameraOnly), not a separate screen+camera pair. Landed straight into
     // metadata/screen.mp4 so getEditProjectMedia's single-file fallback still finds
-    // something to edit, same as this mode's Quick-recording remuxToMp4 call does.
-    const tempWebm = path.join(os.tmpdir(), `${id}.webm`);
-    await fs.writeFile(tempWebm, Buffer.from(input.webmBytes!));
-    cleanupPaths.push(tempWebm);
-    await remuxToMp4(tempWebm, path.join(metaDir, "screen.mp4"), onProgress, signal);
+    // something to edit, same as this mode's Quick-recording path — a plain container copy
+    // when it's already H.264/MP4, a real transcode only when it's still VP9/WebM.
+    const webmExt = input.webmExt ?? "webm";
+    const tempClipPath = path.join(os.tmpdir(), `${id}.${webmExt}`);
+    await fs.writeFile(tempClipPath, Buffer.from(input.webmBytes!));
+    cleanupPaths.push(tempClipPath);
+    const screenPath = path.join(metaDir, "screen.mp4");
+    if (webmExt === "mp4") {
+      await copyToMp4(tempClipPath, screenPath, onProgress, signal);
+    } else {
+      await remuxToMp4(tempClipPath, screenPath, onProgress, signal);
+    }
   }
 
   await fs.writeFile(
@@ -204,7 +232,8 @@ async function finishRecordingSave(
   id: string,
   finalMp4: string,
   input: SaveRecordingInput,
-  sender: IpcMainInvokeEvent["sender"]
+  sender: IpcMainInvokeEvent["sender"],
+  stopReceivedAt: number
 ): Promise<void> {
   const abort = new AbortController();
   pendingSaves.set(id, abort);
@@ -215,9 +244,37 @@ async function finishRecordingSave(
     const percent = Math.max(0, Math.min(99, Math.round((secondsDone / input.durationSecs) * 100)));
     sender.send(Channels.recording.saveProgress, { id, percent });
   };
+  // "stopReceivedAt" is when the renderer's recording.save IPC call landed here, i.e. right
+  // after RecordingService.stop() finished — so this timer covers the full recording-stop
+  // -> source-finalized span the review asked to have logged, not just this function's own
+  // work. Native Quick Recording is expected to land near-instant here (moveFile/-c copy,
+  // no re-encode — see resolveScreenTrack/buildFinalMp4's own doc comments); a wildly larger
+  // number for a native capture would itself be a signal something regressed.
+  const logFinalizeBenchmark = async (finalizedPath: string, isEditProject: boolean) => {
+    const elapsedMs = Date.now() - stopReceivedAt;
+    let outputFileSizeBytes = 0;
+    let outputDurationSecs = 0;
+    try {
+      outputFileSizeBytes = (await fs.stat(finalizedPath)).size;
+    } catch {
+      // Nothing to stat (shouldn't happen once we get here, but never fail the save over a
+      // log line).
+    }
+    try {
+      outputDurationSecs = await probeDuration(finalizedPath);
+    } catch {
+      // Same.
+    }
+    logNative(
+      `[recording] finalize: id=${id} mode=${input.mode ?? "quick"} isEditProject=${isEditProject} ` +
+        `nativeCapture=${!!input.screenFilePath} elapsedMs=${elapsedMs} outputFileSizeBytes=${outputFileSizeBytes} ` +
+        `outputDurationSecs=${outputDurationSecs}`
+    );
+  };
   try {
     if (input.mode === "advanced") {
       await buildEditProjectMaterials(id, input, recDir, onProgress, abort.signal, cleanupPaths);
+      await logFinalizeBenchmark(path.join(recDir, "metadata", "screen.mp4"), true);
       const project = createEditProject(input.title, { kind: "recording", recDir });
       const result: RecordingSaveResult = {
         kind: "editProject",
@@ -234,6 +291,7 @@ async function finishRecordingSave(
       // — so buildFinalMp4 here is at most a stream copy or an audio mux, never a
       // compositing re-encode.
       await buildFinalMp4(id, input, finalMp4, onProgress, abort.signal, cleanupPaths);
+      await logFinalizeBenchmark(finalMp4, false);
       logNative(`finishRecordingSave (quick): hasScreenFilePath=${!!input.screenFilePath} durationSecs=${input.durationSecs}`);
       const video: Video = {
         id,
@@ -269,6 +327,7 @@ async function finishRecordingSave(
 
 export function registerRecordingIpc(): void {
   ipcMain.handle(Channels.recording.save, async (event, input: SaveRecordingInput): Promise<{ id: string }> => {
+    const stopReceivedAt = Date.now();
     const saveDir = input.source === "meeting" ? meetingsRoot() : recordingsRoot();
     const id = randomUUID();
     const recDir = recordingDir(saveDir, id);
@@ -282,7 +341,7 @@ export function registerRecordingIpc(): void {
       await writeCursorMetadata(id, recDir);
       await writeCameraMetadata(id, recDir);
     }
-    void finishRecordingSave(id, finalMp4, input, event.sender);
+    void finishRecordingSave(id, finalMp4, input, event.sender, stopReceivedAt);
 
     return { id };
   });

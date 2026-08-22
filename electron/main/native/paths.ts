@@ -104,3 +104,7 @@ export function libraryStoreFilePath(): string {
 export function shareLinksFilePath(): string {
   return path.join(app.getPath("userData"), "share-links.json");
 }
+
+export function encoderCacheFilePath(): string {
+  return path.join(app.getPath("userData"), "encoder-cache.json");
+}

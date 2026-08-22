@@ -13,15 +13,47 @@ import { applyCameraBlur, type CameraBlurHandle } from "../camera/cameraBlur";
 
 const FPS = 30;
 
-function pickMimeType(): string {
-  const candidates = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
-  return candidates.find((c) => MediaRecorder.isTypeSupported(c)) ?? "video/webm";
+interface MimeChoice {
+  mimeType: string;
+  ext: "mp4" | "webm";
+}
+
+// Tried in order — avc1.64001f (High profile) first since it's what the native Quick
+// Recording paths already produce (ScreenCaptureKitRecorder.swift, capture-helper's WGC
+// helper), then a couple of narrower-support H.264 profiles, before ever falling back to
+// VP9/VP8. Never assumed available — every candidate is verified via
+// MediaRecorder.isTypeSupported at call time, since Chromium's MP4/H.264 MediaRecorder
+// output depends on the OS exposing a platform encoder (Media Foundation on Windows,
+// VideoToolbox on mac) that isn't guaranteed present on every machine/Electron build.
+const H264_MP4_CANDIDATES = [
+  'video/mp4;codecs="avc1.64001f"',
+  'video/mp4;codecs="avc1.640028"',
+  'video/mp4;codecs="avc1.42E01E"',
+  "video/mp4",
+];
+const VP9_WEBM_CANDIDATES = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+
+/** `hasVideo: false` (the mic/system-audio-only side clip — see startSideClip) skips the
+ *  H.264/MP4 candidates entirely and keeps the original VP9/WebM-only behavior: those
+ *  candidates all name an H.264 *video* codec, and constructing a MediaRecorder for an
+ *  audio-only MediaStream against a video-codec mimeType is exactly the kind of mismatch
+ *  isTypeSupported doesn't validate (it checks codec/container support in the abstract, not
+ *  against a specific stream's actual tracks) — safest not to touch a path that already
+ *  works. */
+function pickMimeType(hasVideo: boolean): MimeChoice {
+  if (hasVideo) {
+    const h264 = H264_MP4_CANDIDATES.find((c) => MediaRecorder.isTypeSupported(c));
+    if (h264) return { mimeType: h264, ext: "mp4" };
+  }
+  const webm = VP9_WEBM_CANDIDATES.find((c) => MediaRecorder.isTypeSupported(c));
+  return { mimeType: webm ?? "video/webm", ext: "webm" };
 }
 
 interface SideClipResult {
   bytes: ArrayBuffer;
   hasVideo: boolean;
   hasAudio: boolean;
+  ext: "mp4" | "webm";
 }
 
 class RecordingService {
@@ -31,6 +63,7 @@ class RecordingService {
   private rafId: number | null = null;
   private recorder: MediaRecorder | null = null;
   private chunks: Blob[] = [];
+  private cameraOnlyExt: "mp4" | "webm" = "webm";
 
   // The non-native (no gdigrab) equivalent of screenCapture.ts's native pipeline — a raw,
   // uncropped/unscaled recording of the whole display/window, muxed with the camera and
@@ -39,6 +72,7 @@ class RecordingService {
   // live, so this just records `screenStream` directly.
   private rawScreenRecorder: MediaRecorder | null = null;
   private rawScreenChunks: Blob[] = [];
+  private rawScreenExt: "mp4" | "webm" = "webm";
 
   private cameraStream: MediaStream | null = null;
   private cameraBlurHandle: CameraBlurHandle | null = null;
@@ -66,6 +100,7 @@ class RecordingService {
   private sideChunks: Blob[] = [];
   private sideHasVideo = false;
   private sideHasAudio = false;
+  private sideExt: "mp4" | "webm" = "webm";
 
   listCaptureTargets(): Promise<CaptureTarget[]> {
     return window.api.capture.listTargets();
@@ -267,7 +302,8 @@ class RecordingService {
       "[RecordingService] startRawScreenRecording — track settings",
       this.screenStream.getVideoTracks()[0]?.getSettings()
     );
-    const mimeType = pickMimeType();
+    const { mimeType, ext } = pickMimeType(true);
+    this.rawScreenExt = ext;
     this.rawScreenRecorder = new MediaRecorder(this.screenStream, { mimeType });
     this.rawScreenChunks = [];
     this.rawScreenRecorder.ondataavailable = (e) => {
@@ -275,7 +311,7 @@ class RecordingService {
     };
     this.rawScreenRecorder.onerror = (e) => console.error("[RecordingService] rawScreenRecorder error", e);
     this.rawScreenRecorder.start();
-    console.log("[RecordingService] rawScreenRecorder started", { mimeType });
+    console.log("[RecordingService] rawScreenRecorder started", { mimeType, ext });
   }
 
   private async startCameraOnlyPipeline(): Promise<void> {
@@ -287,12 +323,15 @@ class RecordingService {
     const canvasStream = this.canvas.captureStream(FPS);
     if (this.audioTrack) canvasStream.addTrack(this.audioTrack);
 
-    this.recorder = new MediaRecorder(canvasStream, { mimeType: pickMimeType() });
+    const { mimeType, ext } = pickMimeType(true);
+    this.cameraOnlyExt = ext;
+    this.recorder = new MediaRecorder(canvasStream, { mimeType });
     this.chunks = [];
     this.recorder.ondataavailable = (e) => {
       if (e.data.size > 0) this.chunks.push(e.data);
     };
     this.recorder.start();
+    console.log("[RecordingService] camera-only recorder started", { mimeType, ext });
     this.tick();
   }
 
@@ -318,12 +357,15 @@ class RecordingService {
       stream = new MediaStream([this.audioTrack!]);
     }
 
-    this.sideRecorder = new MediaRecorder(stream, { mimeType: pickMimeType() });
+    const { mimeType, ext } = pickMimeType(this.sideHasVideo);
+    this.sideExt = ext;
+    this.sideRecorder = new MediaRecorder(stream, { mimeType });
     this.sideChunks = [];
     this.sideRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) this.sideChunks.push(e.data);
     };
     this.sideRecorder.start();
+    console.log("[RecordingService] side clip recorder started", { mimeType, ext, hasVideo: this.sideHasVideo });
   }
 
   // Camera-only mode's own recorder — the only remaining caller, now that the screen
@@ -437,16 +479,17 @@ class RecordingService {
     overlay: OverlayConfig,
     mode: "quick" | "advanced"
   ): Promise<{ id: string }> {
+    const blobType = this.cameraOnlyExt === "mp4" ? "video/mp4" : "video/webm";
     const finalBlob = await new Promise<Blob>((resolve) => {
       if (!this.recorder || this.recorder.state === "inactive") {
-        resolve(new Blob(this.chunks, { type: "video/webm" }));
+        resolve(new Blob(this.chunks, { type: blobType }));
         return;
       }
-      this.recorder.onstop = () => resolve(new Blob(this.chunks, { type: "video/webm" }));
+      this.recorder.onstop = () => resolve(new Blob(this.chunks, { type: blobType }));
       this.recorder.stop();
     });
     const webmBytes = await finalBlob.arrayBuffer();
-    return window.api.recording.save({ webmBytes, overlay, durationSecs, title, source, mode });
+    return window.api.recording.save({ webmBytes, webmExt: this.cameraOnlyExt, overlay, durationSecs, title, source, mode });
   }
 
   private async stopSeparateFiles(
@@ -471,21 +514,24 @@ class RecordingService {
       return window.api.recording.save({ screenFilePath: filePath, sideClip, overlay, durationSecs, title, source, mode });
     }
 
+    const rawScreenBlobType = this.rawScreenExt === "mp4" ? "video/mp4" : "video/webm";
     const finalBlob = await new Promise<Blob>((resolve) => {
       if (!this.rawScreenRecorder || this.rawScreenRecorder.state === "inactive") {
-        resolve(new Blob(this.rawScreenChunks, { type: "video/webm" }));
+        resolve(new Blob(this.rawScreenChunks, { type: rawScreenBlobType }));
         return;
       }
-      this.rawScreenRecorder.onstop = () => resolve(new Blob(this.rawScreenChunks, { type: "video/webm" }));
+      this.rawScreenRecorder.onstop = () => resolve(new Blob(this.rawScreenChunks, { type: rawScreenBlobType }));
       this.rawScreenRecorder.stop();
     });
     const screenBytes = await finalBlob.arrayBuffer();
     console.log("[RecordingService] raw screen recording stopped", {
       screenBytes: screenBytes.byteLength,
+      screenExt: this.rawScreenExt,
       areaRect: this.areaRect,
     });
     return window.api.recording.save({
       screenBytes,
+      screenExt: this.rawScreenExt,
       areaRect: this.areaRect,
       sideClip,
       overlay,
@@ -498,15 +544,16 @@ class RecordingService {
 
   private async stopSideClip(): Promise<SideClipResult | undefined> {
     if (!this.sideRecorder) return undefined;
+    const sideBlobType = this.sideExt === "mp4" ? "video/mp4" : "video/webm";
     const blob = await new Promise<Blob>((resolve) => {
       if (this.sideRecorder!.state === "inactive") {
-        resolve(new Blob(this.sideChunks, { type: "video/webm" }));
+        resolve(new Blob(this.sideChunks, { type: sideBlobType }));
         return;
       }
-      this.sideRecorder!.onstop = () => resolve(new Blob(this.sideChunks, { type: "video/webm" }));
+      this.sideRecorder!.onstop = () => resolve(new Blob(this.sideChunks, { type: sideBlobType }));
       this.sideRecorder!.stop();
     });
-    return { bytes: await blob.arrayBuffer(), hasVideo: this.sideHasVideo, hasAudio: this.sideHasAudio };
+    return { bytes: await blob.arrayBuffer(), hasVideo: this.sideHasVideo, hasAudio: this.sideHasAudio, ext: this.sideExt };
   }
 
   private cleanupStreams(): void {

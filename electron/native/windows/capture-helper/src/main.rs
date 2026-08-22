@@ -66,6 +66,23 @@ struct HandlerFlags {
     stop_flag: Arc<AtomicBool>,
 }
 
+/// Screen-content bitrate target: ~0.10 bits per pixel per frame — higher than a typical
+/// camera-content encoding factor (~0.05-0.08), since sharp UI text/cursor edges need more
+/// bits to stay clean than natural video does. Resolution-proportional instead of the flat
+/// 12 Mbps this used to hardcode regardless of capture size: that was comfortably enough at
+/// 1080p/1440p (this formula lands close to the same number there) but starved 4K+ text
+/// detail, which is exactly the complaint this replaces. Clamped at both ends: a floor so a
+/// tiny area-capture region never drops to a visibly blocky bitrate, a ceiling so an
+/// unusually large/multi-monitor capture doesn't inflate file size without bound.
+const TARGET_BITS_PER_PIXEL_PER_FRAME: f64 = 0.10;
+const MIN_BITRATE_BPS: u32 = 4_000_000;
+const MAX_BITRATE_BPS: u32 = 40_000_000;
+
+fn bitrate_for(width: u32, height: u32, fps: u32) -> u32 {
+    let raw_bps = f64::from(width) * f64::from(height) * f64::from(fps) * TARGET_BITS_PER_PIXEL_PER_FRAME;
+    raw_bps.round().clamp(f64::from(MIN_BITRATE_BPS), f64::from(MAX_BITRATE_BPS)) as u32
+}
+
 struct Recorder {
     encoder: Option<VideoEncoder>,
     stop_flag: Arc<AtomicBool>,
@@ -80,10 +97,24 @@ impl GraphicsCaptureApiHandler for Recorder {
     fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> {
         let flags = ctx.flags;
 
+        let bitrate = bitrate_for(flags.out_width, flags.out_height, flags.fps);
+        println!(
+            "Recording resolution {}x{} @ {}fps, bitrate {} bps ({:.1} Mbps)",
+            flags.out_width,
+            flags.out_height,
+            flags.fps,
+            bitrate,
+            f64::from(bitrate) / 1_000_000.0
+        );
+        {
+            use std::io::Write;
+            std::io::stdout().flush()?;
+        }
+
         let video_settings = VideoSettingsBuilder::new(flags.out_width, flags.out_height)
             .sub_type(VideoSettingsSubType::H264)
             .frame_rate(flags.fps)
-            .bitrate(12_000_000);
+            .bitrate(bitrate);
 
         let encoder = VideoEncoder::new(
             video_settings,

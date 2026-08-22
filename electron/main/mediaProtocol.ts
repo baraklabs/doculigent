@@ -108,7 +108,12 @@ export function registerMediaHandler(): void {
     if (range === "unsatisfiable") {
       return new Response(null, {
         status: 416,
-        headers: { "Content-Range": `bytes */${size}`, "Accept-Ranges": "bytes", "Content-Type": contentType },
+        headers: {
+          "Content-Range": `bytes */${size}`,
+          "Accept-Ranges": "bytes",
+          "Content-Type": contentType,
+          "Access-Control-Allow-Origin": "*",
+        },
       });
     }
 
@@ -123,6 +128,15 @@ export function registerMediaHandler(): void {
           "Content-Range": `bytes ${range.start}-${range.end}/${size}`,
           "Accept-Ranges": "bytes",
           "Cache-Control": "no-store",
+          // The scheme itself is registered with corsEnabled (see registerMediaScheme), but
+          // that only lets it *make/receive* CORS requests — Chromium still taints a canvas
+          // drawn from a cross-origin <video>/<img> (media:// is always a different origin
+          // from the renderer page) unless the response itself grants access. Without this,
+          // playback works fine (it doesn't need CORS) but canvas.toBlob()/toDataURL() in
+          // PreviewCompositor's export path throws "Tainted canvases may not be exported."
+          // A blanket "*" is fine here: this scheme only ever serves whatever absolute path
+          // the app itself constructs (via mediaUrl()), never third-party content.
+          "Access-Control-Allow-Origin": "*",
         },
       });
     }
@@ -134,6 +148,7 @@ export function registerMediaHandler(): void {
         "Content-Length": String(size),
         "Accept-Ranges": "bytes",
         "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*",
       },
     });
   });

@@ -418,9 +418,21 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
 
   if (!recDir) return NO_MEDIA;
 
-  const screenFilePath = path.join(recDir, "metadata", "screen.mp4");
-  const cameraFilePath = path.join(recDir, "metadata", "camera.webm");
-  if (fs.existsSync(screenFilePath) && fs.existsSync(cameraFilePath)) {
+  // Camera/audio side clips are written as `.mp4` whenever RecordingService's MediaRecorder
+  // captured real H.264/AAC (preferred — see pickMimeType), `.webm` for the VP9/Opus
+  // fallback (see buildEditProjectMaterials) — check both rather than assuming one.
+  function resolveMetaFile(dir: string, base: string): string | null {
+    for (const ext of ["mp4", "webm"]) {
+      const candidate = path.join(dir, `${base}.${ext}`);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+    return null;
+  }
+
+  const metaDir = path.join(recDir, "metadata");
+  const screenFilePath = path.join(metaDir, "screen.mp4");
+  const cameraFilePath = resolveMetaFile(metaDir, "camera");
+  if (fs.existsSync(screenFilePath) && cameraFilePath) {
     const cursorMetaPath = path.join(recDir, "metadata", "cursor.json");
     const hasCursor = fs.existsSync(cursorMetaPath);
     return {
@@ -452,8 +464,8 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
   // Only meaningful for that "recording"-source, screen-only case (recordingFilePath is
   // null there, so singleFileCandidate falls through to screenFilePath); a "video"/"file"
   // source's own single file already has any audio muxed in directly.
-  const audioOnlyPath = path.join(recDir, "metadata", "audio.webm");
-  const audioFilePath = !recordingFilePath && fs.existsSync(audioOnlyPath) ? audioOnlyPath : null;
+  const audioOnlyPath = resolveMetaFile(metaDir, "audio");
+  const audioFilePath = !recordingFilePath ? audioOnlyPath : null;
   // Position tracking (cursor.json) runs regardless of platform, independent of whether
   // screen/camera were split into their own files — only icon *capture* is Windows-only,
   // and that already degrades to a synthetic fallback arrow (see native/cursorIcon.ts).

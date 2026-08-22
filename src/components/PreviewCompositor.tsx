@@ -906,6 +906,10 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     bgImageRef.current = null;
     if (!backdropImageUrl) return;
     const img = new Image();
+    // Needed for the media:// (custom-image backdrop) case — see screenVideo's own
+    // crossOrigin comment below for why. A no-op for the bundled texture/preset URLs,
+    // which are same-origin either way.
+    img.crossOrigin = "anonymous";
     img.onload = () => {
       bgImageRef.current = img;
     };
@@ -954,6 +958,10 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
             (asset) =>
               new Promise<LoadedCursorIcon>((resolve, reject) => {
                 const img = new Image();
+                // See screenVideo's crossOrigin comment below — media:// is a different
+                // origin from the page, so without this, drawing this icon onto the export
+                // canvas would taint it even though on-screen preview draws fine either way.
+                img.crossOrigin = "anonymous";
                 img.onload = () =>
                   resolve({ img, width: asset.width, height: asset.height, hotspotX: asset.hotspotX, hotspotY: asset.hotspotY });
                 img.onerror = () => reject(new Error(`failed to load cursor icon ${asset.file}`));
@@ -988,6 +996,14 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   useEffect(() => {
     const hasSeparateAudio = !!(cameraFilePath || audioFilePath);
     const screenVideo = document.createElement("video");
+    // media:// (mediaProtocol.ts) is always a different origin from the renderer page
+    // (file:// in production, http://localhost in dev) — without this, the browser fetches
+    // the video in no-cors mode, which taints the canvas the instant it's drawn regardless
+    // of the response's own CORS headers (see mediaProtocol.ts's Access-Control-Allow-Origin
+    // comment). Playback itself doesn't need this — only pixel reads like exportVideo's
+    // canvas.toBlob() do, which is why this only ever surfaced as a "Tainted canvases may
+    // not be exported" export-time failure, never a playback issue.
+    screenVideo.crossOrigin = "anonymous";
     screenVideo.src = mediaUrl(screenFilePath);
     screenVideo.muted = hasSeparateAudio ? true : mutedRef.current;
     screenVideo.playsInline = true;
@@ -1016,6 +1032,8 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     }
     if (cameraFilePath) {
       cameraVideo = document.createElement("video");
+      // See screenVideo's crossOrigin comment above.
+      cameraVideo.crossOrigin = "anonymous";
       cameraVideo.src = mediaUrl(cameraFilePath);
       // Always muted — visual-only now. Its audio (mic/system) is carried by audioOnly
       // below instead, decoupled from this element's own play/pause, which is driven by

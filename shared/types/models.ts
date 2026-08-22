@@ -571,12 +571,25 @@ export interface SaveRecordingSideClip {
   bytes: ArrayBuffer;
   hasVideo: boolean;
   hasAudio: boolean;
+  /** Actual container of `bytes`, as chosen by RecordingService's pickMimeType — "mp4" when
+   *  the renderer's MediaRecorder produced real H.264/AAC (preferred whenever
+   *  MediaRecorder.isTypeSupported confirms it's available), "webm" for the VP9/Opus
+   *  fallback. Lets the main process write the matching file extension and skip a redundant
+   *  transcode when the clip is already H.264. */
+  ext: "mp4" | "webm";
 }
 
 export interface SaveRecordingInput {
   webmBytes?: ArrayBuffer;
+  /** Container of `webmBytes` — "mp4" when MediaRecorder recorded real H.264/AAC directly
+   *  (camera-only Quick Recording), "webm" otherwise. Optional and defaults to "webm" so any
+   *  caller that predates this field still behaves exactly as before. */
+  webmExt?: "mp4" | "webm";
   screenFilePath?: string;
   screenBytes?: ArrayBuffer;
+  /** Container of `screenBytes` (the non-native getDisplayMedia fallback) — same "mp4" when
+   *  supported / "webm" otherwise convention as webmExt. */
+  screenExt?: "mp4" | "webm";
   areaRect?: AreaRect | null;
   sideClip?: SaveRecordingSideClip;
   overlay: OverlayConfig;

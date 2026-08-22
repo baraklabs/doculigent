@@ -185,7 +185,7 @@ export function registerEditProjectsIpc(): void {
       if (tempWav && input.audioWavBytes) await fs.writeFile(tempWav, Buffer.from(input.audioWavBytes));
 
       const abort = new AbortController();
-      const handle = startImagePipeExport(
+      const handle = await startImagePipeExport(
         result.filePath,
         tempWav,
         input.width,
