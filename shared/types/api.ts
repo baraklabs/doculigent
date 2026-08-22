@@ -205,17 +205,36 @@ export interface DoculigentApi {
     // if the tab isn't the active route yet) can drop it immediately instead of leaving
     // the delete to fail with EBUSY on Windows.
     onReleaseMedia(callback: (ids: string[]) => void): () => void;
-    export(
+    /** Runs `filePath` through ffmpeg and returns its audio track as WAV bytes —
+     *  PreviewCompositor's renderExportAudio uses this instead of decoding the raw
+     *  source file directly in the browser (via decodeAudioData), since a MediaRecorder-
+     *  produced webm has no proper duration/seek index and that API doesn't reliably
+     *  decode the whole thing; ffmpeg has no such trouble with the same file. */
+    decodeAudioToWav(filePath: string): Promise<ArrayBuffer>;
+    // Streaming export — PreviewCompositor renders and streams one JPEG frame at a time
+    // (exportFrame) straight into an ffmpeg process the main process keeps running for the
+    // whole export (spawned in exportBegin, fed via stdin, closed in exportEnd), rather
+    // than assembling a whole video client-side first. Call order is always
+    // exportBegin → exportFrame × N (awaited in sequence — that's also this pipeline's
+    // backpressure against ffmpeg's own encode throughput) → exportEnd.
+    exportBegin(
       exportId: string,
       input: {
-        webmBytes: ArrayBuffer;
         title: string;
         durationSecs: number;
         width: number;
         height: number;
         fps: number;
+        /** WAV-encoded, rendered entirely offline by PreviewCompositor's renderExportAudio —
+         *  null when there's nothing to mix in (muted, no click sound due, no source audio). */
+        audioWavBytes: ArrayBuffer | null;
       }
-    ): Promise<{ canceled: boolean; filePath?: string }>;
+    ): Promise<{ canceled: boolean }>;
+    /** One JPEG-encoded frame (from canvas.toBlob), in output order. Resolves once ffmpeg
+     *  has accepted it (may wait on its own stdin backpressure) — never drops a frame the
+     *  way the old MediaRecorder-based capture silently could under load. */
+    exportFrame(exportId: string, jpegBytes: ArrayBuffer): Promise<void>;
+    exportEnd(exportId: string): Promise<{ canceled: boolean; filePath?: string }>;
     exportCancel(exportId: string): Promise<boolean>;
     onExportProgress(callback: (progress: { exportId: string; percent: number }) => void): () => void;
   };

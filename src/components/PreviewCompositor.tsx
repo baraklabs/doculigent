@@ -15,7 +15,7 @@ import {
   type TimelineZoom,
 } from "@shared/types/models";
 import { frameDimensions, toFrameCoords } from "@shared/lib/cursorFrame";
-import { effectiveClips, resolveClipAt, splitClipAtSource, totalClipsExtentMs } from "@shared/lib/timelineClips";
+import { effectiveClips, resolveClipAt, sourceToEditedMs, splitClipAtSource, totalClipsExtentMs } from "@shared/lib/timelineClips";
 import type { TimelineClip } from "@shared/types/models";
 import { mediaUrl } from "@shared/constants/media";
 import { BACKGROUND_IMAGE_URLS, BACKGROUND_TEXTURE_URLS } from "../assets/backgrounds";
@@ -28,6 +28,12 @@ interface PreviewCompositorProps {
   /** Only set when the source kept the camera as a separate, re-editable track —
    *  otherwise the camera bubble (if any) is already burned into screenFilePath. */
   cameraFilePath?: string;
+  /** A screen-only recording's own separately-captured mic/system audio (see
+   *  EditProjectMedia.audioFilePath) — only ever set when cameraFilePath isn't, since
+   *  screenFilePath's own native capture is video-only in that case and there's no camera
+   *  track to carry audio instead. Always shares screenFilePath's own clip list (there's
+   *  no independent editing for it) — see the draw loop's audio-only sync. */
+  audioFilePath?: string;
   /** Recorded cursor track — screenFilePath never has the cursor burned in, so it's
    *  rendered live here from the same track used to burn it into the final export. */
   cursorMetadataPath?: string | null;
@@ -64,14 +70,6 @@ interface PreviewCompositorProps {
   canRedo?: boolean;
 }
 
-export interface ExportCaptureResult {
-  blob: Blob;
-  durationSecs: number;
-  width: number;
-  height: number;
-  hasAudio: boolean;
-}
-
 export class ExportCancelledError extends Error {
   constructor() {
     super("export cancelled");
@@ -82,17 +80,34 @@ export class ExportCancelledError extends Error {
 export interface PreviewCompositorHandle {
   seekMs: (ms: number) => void;
   togglePlay: () => void;
-  /** Captures the canvas exactly as shown in the preview — same camera/background/cursor/
-   *  zoom/cuts rendering, same audio source the Mute toggle governs — by rewinding to the
-   *  start and playing the whole edited timeline through in real time while recording it.
-   *  `fps` sets the capture rate; final export resolution/scaling is handled downstream
-   *  (see EditPage's export flow), since this always captures at the canvas's own native
-   *  pixel size. Returns a cancelable handle rather than a bare promise so a real-time,
-   *  potentially long capture can be aborted mid-flight. */
+  /** Renders the export frame-by-frame (same camera/background/cursor/zoom/cuts drawing
+   *  the live preview uses) and streams it straight out via the two callbacks below,
+   *  rather than assembling a video client-side — the caller (ExportDialog) is what
+   *  actually knows how to turn a stream of frames + a rendered audio track into a file
+   *  (piping them into a main-process ffmpeg process — see startImagePipeExport), this
+   *  just drives that process with the right data at the right time. `fps` sets the
+   *  output frame rate; final export resolution/scaling is handled by the caller's own
+   *  ffmpeg pass, since this always renders at the canvas's own native pixel size. Returns
+   *  a cancelable handle rather than a bare promise so a long export can be aborted
+   *  mid-flight. */
   exportVideo: (opts: {
     fps: number;
     onProgress?: (fraction: number) => void;
-  }) => { promise: Promise<ExportCaptureResult>; cancel: () => void };
+    /** Runs a source file through ffmpeg and returns its audio as WAV bytes — used by the
+     *  offline audio render (see renderExportAudio) instead of decoding the raw source
+     *  file directly in the browser, which doesn't reliably decode a MediaRecorder-
+     *  produced webm's full length (no proper duration/seek index in that container). */
+    decodeAudio: (filePath: string) => Promise<ArrayBuffer>;
+    /** Called once, after audio has been fully rendered offline and before any frame is
+     *  produced — the caller uses this to open its save dialog / spawn whatever process
+     *  will receive the frames (see onFrame). Resolving false (e.g. the save dialog was
+     *  dismissed) cancels before any frame work begins. */
+    beginExport: (info: { durationSecs: number; audioWavBytes: ArrayBuffer | null }) => Promise<boolean>;
+    /** One JPEG-encoded frame (from canvas.toBlob), in output order — awaited before the
+     *  next frame is produced, which is also this pipeline's backpressure against
+     *  whatever's consuming them downstream. */
+    onFrame: (jpegBytes: ArrayBuffer) => Promise<void>;
+  }) => { promise: Promise<void>; cancel: () => void };
 }
 
 interface LoadedCursorIcon {
@@ -229,7 +244,7 @@ const MOUSE_POINTER_TAIL_PATH = new Path2D("M12.586 12.586 19 19");
 const MOUSE_POINTER_HOTSPOT = { x: 3.688, y: 3.037 }; // tip of the arrow
 
 interface ClickRipple {
-  startedAt: number; // performance.now() at trigger
+  startedAt: number; // currentMs (edited-timeline ms) at trigger
   x: number;
   y: number;
   r: number;
@@ -249,50 +264,108 @@ function withAlpha(hexColor: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-/** Synthesizes a short click sound in one of a few timbres — no bundled audio asset
- *  needed for any of them. */
-function playClickSound(
-  audioCtxRef: { current: AudioContext | null },
-  style: CursorEditSettings["clickSoundStyle"]
+/** One click sound's envelope, expressed against an arbitrary AudioContext/
+ *  OfflineAudioContext and an arbitrary start time on that context's own clock — shared
+ *  between the live preview's playClickSound (ctx.currentTime, real time) and export's
+ *  offline render (an OfflineAudioContext's own virtual clock, driven by scheduled time
+ *  rather than real time). Keeping the two in exact sync (same timbres, same envelopes)
+ *  is the whole point of factoring this out, rather than the export render drifting out
+ *  of sync with whatever the preview happens to sound like. */
+function scheduleClickEnvelope(
+  ctx: BaseAudioContext,
+  dest: AudioNode,
+  style: CursorEditSettings["clickSoundStyle"],
+  at: number
 ): void {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  if (style === "pop") {
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(900, at);
+    osc.frequency.exponentialRampToValueAtTime(320, at + 0.09);
+    gain.gain.setValueAtTime(0.22, at);
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.1);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(at);
+    osc.stop(at + 0.11);
+  } else if (style === "click") {
+    osc.type = "square";
+    osc.frequency.setValueAtTime(2200, at);
+    gain.gain.setValueAtTime(0.12, at);
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.03);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(at);
+    osc.stop(at + 0.035);
+  } else {
+    osc.type = "sine";
+    osc.frequency.value = 1200;
+    gain.gain.setValueAtTime(0.18, at);
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.06);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(at);
+    osc.stop(at + 0.07);
+  }
+}
+
+/** Synthesizes a short click sound in one of a few timbres — no bundled audio asset
+ *  needed for any of them. Live-preview-only: export renders its own click sounds
+ *  separately and offline (see renderExportAudio), since this one is pinned to
+ *  ctx.currentTime, a real-time clock incompatible with export's non-realtime render. */
+function playClickSound(audioCtxRef: { current: AudioContext | null }, style: CursorEditSettings["clickSoundStyle"]): void {
   try {
     if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
     const ctx = audioCtxRef.current;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    const now = ctx.currentTime;
-    if (style === "pop") {
-      osc.type = "triangle";
-      osc.frequency.setValueAtTime(900, now);
-      osc.frequency.exponentialRampToValueAtTime(320, now + 0.09);
-      gain.gain.setValueAtTime(0.22, now);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.1);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + 0.11);
-    } else if (style === "click") {
-      osc.type = "square";
-      osc.frequency.setValueAtTime(2200, now);
-      gain.gain.setValueAtTime(0.12, now);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.03);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + 0.035);
-    } else {
-      osc.type = "sine";
-      osc.frequency.value = 1200;
-      gain.gain.setValueAtTime(0.18, now);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.06);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + 0.07);
-    }
+    scheduleClickEnvelope(ctx, ctx.destination, style, ctx.currentTime);
   } catch {
     // Web Audio unavailable — skip the sound silently.
   }
+}
+
+/** Encodes a rendered AudioBuffer (from renderExportAudio's OfflineAudioContext) as a
+ *  16-bit PCM WAV — no bundled encoder needed for a container this simple, and it's a
+ *  format ffmpeg reads natively for the final mux (see editProjects.ts's export handler). */
+function encodeWavPcm16(buffer: AudioBuffer): ArrayBuffer {
+  const numChannels = buffer.numberOfChannels;
+  const numFrames = buffer.length;
+  const bytesPerSample = 2;
+  const blockAlign = numChannels * bytesPerSample;
+  const dataSize = numFrames * blockAlign;
+  const out = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(out);
+
+  const writeString = (offset: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i));
+  };
+
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, buffer.sampleRate, true);
+  view.setUint32(28, buffer.sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true);
+  writeString(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  const channels: Float32Array[] = [];
+  for (let ch = 0; ch < numChannels; ch++) channels.push(buffer.getChannelData(ch));
+
+  let offset = 44;
+  for (let i = 0; i < numFrames; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      const sample = Math.max(-1, Math.min(1, channels[ch][i]));
+      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+      offset += 2;
+    }
+  }
+  return out;
 }
 
 /** Traces a rounded-rect as manual arc segments on the current path (caller does its own
@@ -631,6 +704,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   {
     screenFilePath,
     cameraFilePath,
+    audioFilePath,
     cursorMetadataPath,
     cursorIconsDir,
     cursorBakedIn,
@@ -656,11 +730,44 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const screenVideoRef = useRef<HTMLVideoElement | null>(null);
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
+  // cameraVideoRef.current.duration itself is unusable for sizing the camera track's
+  // default clip: a MediaRecorder-produced webm reports `duration: Infinity` until the
+  // browser has actually parsed all the way to the end of the file (see mediaProtocol.ts's
+  // own note on this exact quirk) — Number.isFinite(cameraVideo.duration) is false almost
+  // always in practice, not just as a rare edge case. Populated once by the video-loading
+  // effect below via the seek-past-the-end trick that forces that parse; null until then
+  // (during which callers fall back to the screen recording's own duration, same as before
+  // this existed).
+  const cameraDurationMsRef = useRef<number | null>(null);
+  // The actual recorded audio (mic/system, talking, etc.) whenever it doesn't just live
+  // directly on screenVideo itself — a separate camera track's own file, or a screen-only
+  // recording's own separately-captured audio.webm (see audioFilePath's own doc comment).
+  // Never drawn from, only ever played, so a plain <audio> element rather than a second
+  // hidden <video> — and deliberately decoupled from cameraVideoRef's own play/pause (see
+  // its doc comment), so hiding/deleting a Camera piece never silences this. Kept in sync
+  // with screenVideo's own position/play-state by the live draw loop (see its own
+  // comment), never the Camera track's, since it has no independent clip list of its own.
+  const audioOnlyRef = useRef<HTMLAudioElement | null>(null);
   const blurVideoRef = useRef<HTMLVideoElement | null>(null);
   const blurHandleRef = useRef<CameraBlurHandle | null>(null);
   const rafRef = useRef(0);
   const rippleRef = useRef<ClickRipple | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  // True only while exportVideo()'s frame-stepped capture is in flight. draw() checks
+  // this for two things: (1) to skip the editing-only affordances (drag outline/resize
+  // handles, snap guides) it otherwise renders every frame, so they don't get baked into
+  // the recorded pixels; (2) to trust currentMs/activeClipIdRef/activeCameraClipIdRef as
+  // already resolved by the export loop's own seekToEditedMs call for this exact frame,
+  // instead of deriving them itself from screenVideo.currentTime/wall-clock — export
+  // steps through the timeline out of real time, so neither of those live signals means
+  // anything during a capture. Also silences the live click-sound synth (see its call
+  // site below) — export's audio is rendered separately, offline (see renderExportAudio).
+  const isExportingRef = useRef(false);
+  // Set by the draw-loop effect below to that effect's own `draw` closure, so exportVideo
+  // (a different function in this component, with no access to that closure otherwise)
+  // can invoke exactly one frame's worth of rendering itself, once per output frame,
+  // instead of relying on the always-on rAF loop that drives it for live preview.
+  const drawFrameRef = useRef<(() => void) | null>(null);
   const lastPlaybackMsRef = useRef(-1);
   // Id of whichever clip is currently "active" — either the raw video is actively playing
   // through it (tracked off screenVideo.currentTime), or, if null, we're in a gap (a
@@ -693,7 +800,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   // The user's actual play/pause intent — distinct from screenVideo.paused, which the
   // draw loop itself toggles while passing through a gap.
   const isPlayingRef = useRef(false);
-  const lastClickAtRef = useRef(-Infinity); // performance.now() — drives the hand style's brief grab pose
+  const lastClickAtRef = useRef(-Infinity); // currentMs (edited-timeline ms) — drives the hand style's brief grab pose
 
   // Drag-to-position/resize — the screen and camera can always be moved (dragging the
   // body) and resized (dragging any of its 4 corner handles) directly on the canvas,
@@ -865,34 +972,79 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   }, [cursorMetadataPath, cursorIconsDir]);
 
   // Which element actually carries the recorded audio (mic/system, talking, etc.):
-  // when there's a separate camera track, screenFilePath is the native gdigrab capture
-  // (video-only, ffmpeg only mixes audio into it at export time) and the *camera* track
-  // is what was recorded with the live mic/system audio attached — so it, not the screen
-  // element, is the one that should ever be unmuted. Without a separate camera track,
-  // screenFilePath is already the fully-muxed file and carries the audio itself.
+  // audioOnlyRef when there's one (a separate camera track, or a screen-only recording's
+  // own separately-captured audio.webm — see audioOnlyRef's own doc comment), else
+  // screenVideoRef itself for the case where it's already the fully-muxed file (the
+  // non-native screen-capture fallback). Never cameraVideoRef — see its own doc comment
+  // for why that element is muted and visual-only now.
   const mutedRef = useRef(sound.muted);
   useEffect(() => {
     mutedRef.current = sound.muted;
-    const audioEl = cameraFilePath ? cameraVideoRef.current : screenVideoRef.current;
+    const audioEl = audioOnlyRef.current ?? screenVideoRef.current;
     if (audioEl) audioEl.muted = sound.muted;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sound.muted, cameraFilePath]);
+  }, [sound.muted]);
 
   // Load the source video(s) whenever the project's media changes.
   useEffect(() => {
+    const hasSeparateAudio = !!(cameraFilePath || audioFilePath);
     const screenVideo = document.createElement("video");
     screenVideo.src = mediaUrl(screenFilePath);
-    screenVideo.muted = cameraFilePath ? true : mutedRef.current;
+    screenVideo.muted = hasSeparateAudio ? true : mutedRef.current;
     screenVideo.playsInline = true;
     screenVideoRef.current = screenVideo;
 
     let cameraVideo: HTMLVideoElement | null = null;
+    cameraDurationMsRef.current = null;
+    function resolveCameraDuration() {
+      if (!cameraVideo) return;
+      if (Number.isFinite(cameraVideo.duration)) {
+        cameraDurationMsRef.current = cameraVideo.duration * 1000;
+        return;
+      }
+      // Forcing a seek past the true end makes Chromium parse the whole file and correct
+      // `duration` via a 'durationchange' event — see cameraDurationMsRef's own comment.
+      // Seeking back to 0 after leaves the element exactly where it started for whatever
+      // loads/plays it next.
+      const onDurationChange = () => {
+        if (!cameraVideo || !Number.isFinite(cameraVideo.duration)) return;
+        cameraVideo.removeEventListener("durationchange", onDurationChange);
+        cameraDurationMsRef.current = cameraVideo.duration * 1000;
+        cameraVideo.currentTime = 0;
+      };
+      cameraVideo.addEventListener("durationchange", onDurationChange);
+      cameraVideo.currentTime = 1e9;
+    }
     if (cameraFilePath) {
       cameraVideo = document.createElement("video");
       cameraVideo.src = mediaUrl(cameraFilePath);
-      cameraVideo.muted = mutedRef.current;
+      // Always muted — visual-only now. Its audio (mic/system) is carried by audioOnly
+      // below instead, decoupled from this element's own play/pause, which is driven by
+      // the Camera track's own clips (see this effect's draw-loop counterpart) purely to
+      // control when/where the camera bubble is shown. Coupling the two used to mean
+      // deleting or trimming a Camera piece silenced that stretch of audio too, even
+      // though the user was only ever editing the bubble's visibility, never the sound.
+      cameraVideo.muted = true;
       cameraVideo.playsInline = true;
       cameraVideoRef.current = cameraVideo;
+      if (cameraVideo.readyState >= 1) resolveCameraDuration();
+      else cameraVideo.addEventListener("loadedmetadata", resolveCameraDuration, { once: true });
+    }
+
+    // The actual audio source whenever it doesn't just live directly on screenVideo
+    // itself: the camera file (if there's a separate camera track — see cameraVideo's own
+    // doc comment for why that element no longer carries its own audio), else a
+    // screen-only recording's own separately-captured audio.webm, if there is one (see
+    // EditProjectMedia.audioFilePath). Always synced to *screenVideo's* position/play-
+    // state, never the Camera track's (see the draw loop's own sync block) — audio should
+    // track the master (screen) timeline's cuts, not the independently-editable camera
+    // bubble's visibility.
+    let audioOnly: HTMLAudioElement | null = null;
+    const audioSourcePath = cameraFilePath ?? audioFilePath;
+    if (audioSourcePath) {
+      audioOnly = new Audio();
+      audioOnly.src = mediaUrl(audioSourcePath);
+      audioOnly.muted = mutedRef.current;
+      audioOnlyRef.current = audioOnly;
     }
 
     // progress/duration (the preview's own scrub bar, in seconds/fraction) are set from
@@ -923,14 +1075,19 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       cameraVideo?.pause();
       cameraVideo?.removeAttribute("src");
       cameraVideo?.load();
+      audioOnly?.pause();
+      audioOnly?.removeAttribute("src");
+      audioOnly?.load();
       screenVideo.removeEventListener("ended", onEnded);
       screenVideoRef.current = null;
       cameraVideoRef.current = null;
+      cameraDurationMsRef.current = null;
+      audioOnlyRef.current = null;
       setPlaying(false);
       setProgress(0);
       setDuration(0);
     };
-  }, [screenFilePath, cameraFilePath]);
+  }, [screenFilePath, cameraFilePath, audioFilePath]);
 
   // Background blur — rebuild the blurred camera output whenever the level changes.
   useEffect(() => {
@@ -957,7 +1114,11 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   // Draw loop — background fill, screen content (padded/rounded), camera bubble on top.
   useEffect(() => {
     function draw() {
-      rafRef.current = requestAnimationFrame(draw);
+      // While exporting, exportVideo calls this closure directly (via drawFrameRef) once
+      // per output frame, at its own pace — the ambient rAF loop stands down for the
+      // duration (resumed by exportVideo's own finally block once it's done) so the two
+      // never both drive a frame at once.
+      if (!isExportingRef.current) rafRef.current = requestAnimationFrame(draw);
       const canvas = canvasRef.current;
       const screenVideo = screenVideoRef.current;
       if (!canvas || !screenVideo || !screenVideo.videoWidth) return;
@@ -1006,7 +1167,18 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       // below) so its own rightmost edge can extend `totalMs` — a Camera piece dragged/
       // trimmed past the end of the Clips track should grow the overall timeline to fit it,
       // not get silently clipped off the end.
-      const cameraClips = effectiveClips(timelineState.cameraClips, sourceDurationMs);
+      // Sized off the camera file's own duration, not the screen recording's — the two
+      // are separately captured and frequently differ by a couple of seconds (camera
+      // capture starting/stopping slightly off from screen capture), so an unedited
+      // camera clip stretched to match the screen's length claims content that doesn't
+      // exist in the camera file at all. Live playback just freezes on the camera's last
+      // real frame once currentTime clamps at its own duration, which is easy to miss —
+      // export's frame-exact waitUntilSourceTime has no such clamp to fall back on and
+      // instead stalls on every single frame in that stretch waiting for an unreachable
+      // position, which is what actually surfaced this (see waitUntilSourceTime's own
+      // stall-timeout comment).
+      const cameraSourceDurationMs = cameraDurationMsRef.current ?? sourceDurationMs;
+      const cameraClips = effectiveClips(timelineState.cameraClips, cameraSourceDurationMs);
       let currentMs = 0;
       let totalMs = totalClipsExtentMs(cameraClips);
       let showScreenContent = false;
@@ -1014,7 +1186,19 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       const dtMs = Math.max(0, now - lastFrameAtRef.current);
       lastFrameAtRef.current = now;
 
-      if (clips.length > 0) {
+      if (isExportingRef.current) {
+        // Frame-stepped export already resolved this exact frame via seekToEditedMs
+        // (see exportVideo) before calling draw() — editedMsRef.current and both video
+        // elements' currentTime are already precisely where they need to be. Deriving
+        // currentMs from screenVideo.currentTime (like the live branch below) or
+        // advancing a gap by wall-clock dt would both be meaningless here: export runs
+        // out of real time, as fast as seeking/drawing allows, not at 1x.
+        totalMs = Math.max(totalMs, totalClipsExtentMs(clips));
+        currentMs = editedMsRef.current;
+        const resolved = resolveClipAt(clips, currentMs);
+        activeClipIdRef.current = resolved ? resolved.clip.id : null;
+        showScreenContent = !!resolved;
+      } else if (clips.length > 0) {
         totalMs = Math.max(totalMs, totalClipsExtentMs(clips));
         let activeClip: TimelineClip | undefined = activeClipIdRef.current
           ? clips.find((c) => c.id === activeClipIdRef.current)
@@ -1061,9 +1245,36 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         activeClipIdRef.current = activeClip ? activeClip.id : null;
         showScreenContent = !!activeClip;
       }
-      onTimeUpdateRef.current?.(currentMs, totalMs, sourceDurationMs);
-      setDuration(totalMs / 1000);
-      setProgress(totalMs > 0 ? currentMs / totalMs : 0);
+      // Skipped during export — exportVideo tracks its own progress directly off the
+      // output frame index, and firing these on every one of what can be thousands of
+      // frames (each a separate microtask, so React can't batch them the way it does
+      // rAF-paced live updates) would just add rendering overhead for state nothing is
+      // reading right now, since the export dialog covers this component's own UI anyway.
+      if (!isExportingRef.current) {
+        onTimeUpdateRef.current?.(currentMs, totalMs, sourceDurationMs);
+        setDuration(totalMs / 1000);
+        setProgress(totalMs > 0 ? currentMs / totalMs : 0);
+
+        // Mirrors the resolved edited-timeline position/play-state onto the audio-only
+        // track — deliberately *not* screenVideo's own currentTime/paused, which pause at
+        // every gap in the screen Clips track (blank background, no clip to play); audio
+        // has no clip list of its own (see audioOnlyRef's own doc comment on why it isn't
+        // subject to either track's cuts) and should keep playing straight through such a
+        // gap exactly like it does through a hidden/deleted Camera piece. `currentMs`
+        // above already advances at real time whether it's currently sourced from a
+        // playing clip or a gap's own wall-clock stepping, so it's already the right clock
+        // for this regardless of which. A frame or two of lag (the sync tolerance below)
+        // is imperceptible; only live preview needs this at all — export's audio always
+        // comes from a wholly separate offline render (see renderExportAudio), never from
+        // this element's live playback.
+        const audioOnly = audioOnlyRef.current;
+        if (audioOnly) {
+          const audioTargetSec = currentMs / 1000;
+          if (Math.abs(audioOnly.currentTime - audioTargetSec) > 0.15) audioOnly.currentTime = audioTargetSec;
+          if (!isPlayingRef.current && !audioOnly.paused) audioOnly.pause();
+          else if (isPlayingRef.current && audioOnly.paused) audioOnly.play().catch(() => {});
+        }
+      }
 
       // Camera — resolved independently against the same edited-timeline `currentMs`
       // (the screen/Clips resolution above is the master clock). Its own pieces drag,
@@ -1325,7 +1536,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
               // after a detected click. The two glyphs' hotspots aren't identical (a
               // fist has no fingertip to anchor to) so the swap shifts slightly — that
               // reads as the hand actually closing around the click point, not a glitch.
-              const grabbing = performance.now() - lastClickAtRef.current < GRAB_FLASH_MS;
+              const grabbing = currentMs - lastClickAtRef.current < GRAB_FLASH_MS;
               const regularPath = grabbing ? HAND_GRABBING_REGULAR_PATH : HAND_POINTING_REGULAR_PATH;
               const fillPath = grabbing ? HAND_GRABBING_FILL_PATH : HAND_POINTING_FILL_PATH;
               const hotspot = grabbing ? HAND_GRABBING_HOTSPOT : HAND_POINTING_HOTSPOT;
@@ -1427,22 +1638,29 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
 
           // Click animation/sound — advances only while playback moves forward, so
           // pausing or scrubbing backward can't re-trigger a click that already fired.
+          // Timed off currentMs (edited-timeline ms), not wall-clock — so the ripple/grab
+          // pose durations below track actual playback progress (freezing correctly if
+          // paused) and stay correct during export's non-realtime frame stepping, where
+          // real elapsed time bears no relation to how much edited time a frame covers.
           const clicks = track.metadata.clicks;
           if (clicks && clicks.length > 0 && cursorTMs > lastPlaybackMsRef.current) {
             for (const clickT of clicks) {
               if (clickT > lastPlaybackMsRef.current && clickT <= cursorTMs) {
-                lastClickAtRef.current = performance.now();
+                lastClickAtRef.current = currentMs;
                 if (cur.clickEffect) {
-                  rippleRef.current = { startedAt: performance.now(), x: px, y: py, r, style: cur.clickAnimationStyle };
+                  rippleRef.current = { startedAt: currentMs, x: px, y: py, r, style: cur.clickAnimationStyle };
                 }
-                if (cur.clickSound) playClickSound(audioCtxRef, cur.clickSoundStyle);
+                // Export renders its own click sounds separately and offline (see
+                // renderExportAudio) — this live path is pinned to the AudioContext's
+                // real-time clock, which export's non-realtime frame stepping can't use.
+                if (cur.clickSound && !isExportingRef.current) playClickSound(audioCtxRef, cur.clickSoundStyle);
               }
             }
           }
 
           const ripple = rippleRef.current;
           if (ripple) {
-            const elapsed = performance.now() - ripple.startedAt;
+            const elapsed = currentMs - ripple.startedAt;
             if (elapsed > RIPPLE_DURATION_MS) {
               rippleRef.current = null;
             } else {
@@ -1487,32 +1705,38 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         drawCameraBubbleAt(ctx, source, cam, cameraRect.x, cameraRect.y, cameraRect.w, cameraRect.h);
       }
 
-      // Drag/resize affordance — a faint outline plus a handle at each of a box's 4 corners.
-      ctx.save();
-      ctx.strokeStyle = "rgba(255, 255, 255, .35)";
-      ctx.setLineDash([5, 4]);
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(screenBox.x + 1, screenBox.y + 1, screenBox.w - 2, screenBox.h - 2);
-      if (cameraRect) ctx.strokeRect(cameraRect.x + 1, cameraRect.y + 1, cameraRect.w - 2, cameraRect.h - 2);
-      ctx.setLineDash([]);
-      ctx.fillStyle = "rgba(255, 255, 255, .9)";
-      ctx.strokeStyle = "rgba(0, 0, 0, .55)";
-      ctx.lineWidth = 1;
-      for (const handles of [screenResizeHandles, cameraResizeHandles]) {
-        if (!handles) continue;
-        for (const corner of CORNERS) {
-          const handle = handles[corner];
-          ctx.beginPath();
-          ctx.arc(handle.x + handle.w / 2, handle.y + handle.h / 2, handle.w / 2, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
+      // Drag/resize affordance — a faint outline plus a handle at each of a box's 4
+      // corners. Editing-only chrome, so skipped entirely while exportVideo() is capturing
+      // this same canvas — otherwise it'd be permanently baked into the recorded pixels.
+      if (!isExportingRef.current) {
+        ctx.save();
+        ctx.strokeStyle = "rgba(255, 255, 255, .35)";
+        ctx.setLineDash([5, 4]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(screenBox.x + 1, screenBox.y + 1, screenBox.w - 2, screenBox.h - 2);
+        if (cameraRect) ctx.strokeRect(cameraRect.x + 1, cameraRect.y + 1, cameraRect.w - 2, cameraRect.h - 2);
+        ctx.setLineDash([]);
+        ctx.fillStyle = "rgba(255, 255, 255, .9)";
+        ctx.strokeStyle = "rgba(0, 0, 0, .55)";
+        ctx.lineWidth = 1;
+        for (const handles of [screenResizeHandles, cameraResizeHandles]) {
+          if (!handles) continue;
+          for (const corner of CORNERS) {
+            const handle = handles[corner];
+            ctx.beginPath();
+            ctx.arc(handle.x + handle.w / 2, handle.y + handle.h / 2, handle.w / 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          }
         }
+        ctx.restore();
       }
-      ctx.restore();
 
-      // Snap guides (25%/50%/75% of each axis) — drawn only while actively dragging (see onPointerMove).
+      // Snap guides (25%/50%/75% of each axis) — drawn only while actively dragging (see
+      // onPointerMove), and never during export (same editing-only-chrome reasoning as
+      // the drag affordance above).
       const guide = guideRef.current;
-      if (guide.v.length > 0 || guide.h.length > 0) {
+      if (!isExportingRef.current && (guide.v.length > 0 || guide.h.length > 0)) {
         ctx.save();
         ctx.strokeStyle = GUIDE_COLOR;
         ctx.lineWidth = Math.max(1, Math.min(canvas.width, canvas.height) * 0.0025);
@@ -1531,9 +1755,11 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         ctx.restore();
       }
     }
+    drawFrameRef.current = draw;
     rafRef.current = requestAnimationFrame(draw);
     return () => {
       cancelAnimationFrame(rafRef.current);
+      drawFrameRef.current = null;
       audioCtxRef.current?.close().catch(() => {});
       audioCtxRef.current = null;
     };
@@ -1572,7 +1798,9 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     if (!screenVideo || !screenVideo.duration) return;
     const sourceDurationMs = screenVideo.duration * 1000;
     const clips = effectiveClips(timelineRef.current.clips, sourceDurationMs);
-    const cameraClips = effectiveClips(timelineRef.current.cameraClips, sourceDurationMs);
+    // See the draw loop's identical computation for why this isn't sourceDurationMs.
+    const cameraSourceDurationMs = cameraDurationMsRef.current ?? sourceDurationMs;
+    const cameraClips = effectiveClips(timelineRef.current.cameraClips, cameraSourceDurationMs);
     const totalMs = Math.max(totalClipsExtentMs(clips), totalClipsExtentMs(cameraClips));
     editedMsRef.current = Math.max(0, Math.min(totalMs, editedMs));
     const resolved = resolveClipAt(clips, editedMsRef.current);
@@ -1601,21 +1829,322 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     seekToEditedMs(fraction * duration * 1000);
   }
 
-  function pickExportMimeType(): string {
-    const candidates = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
-    return candidates.find((c) => MediaRecorder.isTypeSupported(c)) ?? "video/webm";
+  // Frame-stepped export originally seeked each video element to its exact resolved
+  // position once *per output frame* (one currentTime write + a wait for it to land, for
+  // both screen and camera, ~every 33ms of edited time). That turned out far slower than
+  // the real-time capture it replaced — Chromium treats *any* currentTime write as a real
+  // seek operation with meaningful fixed overhead, even a forward step of one frame, so a
+  // few thousand of them (a 1-minute/30fps export needs ~1800) added up to minutes.
+  // Continuous forward playback is what browsers actually optimize for, so the loop below
+  // seeks only once per *segment* — a maximal stretch where neither track's resolved clip
+  // changes — then lets both videos play forward on their own (sped up, since we don't
+  // need real-time pacing) and just waits for each one's own decode to catch up to each
+  // output frame's target position, via requestVideoFrameCallback rather than a seek.
+
+  // Chromium's practical ceiling for HTMLMediaElement.playbackRate is 16, but pushing a
+  // decoder anywhere near that lets it start silently dropping frames to keep up rather
+  // than decoding every one — invisible to waitUntilSourceTime (whichever frame is
+  // "current" always satisfies its own timestamp check), so the result isn't a failure,
+  // just a frame that got skipped and, symmetrically, an earlier one that then got drawn
+  // for multiple consecutive output frames while decode caught back up. That reads as a
+  // stutter — easy to miss at 1x scale, glaring under a zoom block's magnification. 4x is
+  // comfortably inside what software decode can sustain frame-for-frame for typical
+  // screen-recording content, at some cost to export speed.
+  const MAX_EXPORT_PLAYBACK_RATE = 4;
+
+  // How close to a source file's *reported* duration a stalled wait has to be before it's
+  // read as "this file has no more frames" rather than "this decode is being slow" (see
+  // waitUntilSourceTime's bail path). Generous, because the gap being detected is exactly
+  // a duration that can't be trusted: a MediaRecorder webm's duration is derived from its
+  // last block timestamp, and a camera file routinely stops a beat before the screen
+  // recording it's paired with, so the unreachable stretch is a fraction of a second in
+  // the good case and the whole overhang of a stale, over-long camera clip in the bad one.
+  const EXPORT_TAIL_TOLERANCE_SEC = 2;
+
+  /** Every edited-ms position where the screen or camera clip resolution could possibly
+   *  change (each clip's own start and end) — the boundaries between export's seek
+   *  segments. Two clips only need re-seeking exactly at the points where what's
+   *  "current" for either track actually changes; everywhere in between, both tracks
+   *  just keep playing forward from wherever the previous segment left them. */
+  function exportSegmentBreaks(totalMs: number, clips: TimelineClip[], cameraClips: TimelineClip[]): number[] {
+    const points = new Set<number>([0, totalMs]);
+    for (const list of [clips, cameraClips]) {
+      for (const c of list) {
+        const dur = Math.max(0, c.sourceEnd - c.sourceStart);
+        points.add(Math.min(Math.max(c.timelineStart, 0), totalMs));
+        points.add(Math.min(Math.max(c.timelineStart + dur, 0), totalMs));
+      }
+    }
+    return Array.from(points).sort((a, b) => a - b);
   }
 
-  // Captures the actual canvas as a real-time recording — the most reliable way to
-  // guarantee the export pixel-matches the preview, since it's literally the same canvas
-  // element the draw loop above already renders every frame, rather than a second,
-  // separately-maintained render path that could drift out of sync with it. Audio is
-  // pulled from whichever element the Mute toggle already governs (see mutedRef's own
-  // comment) via HTMLMediaElement.captureStream(), not re-mixed through Web Audio.
-  function exportVideo(opts: { fps: number; onProgress?: (fraction: number) => void }): {
-    promise: Promise<ExportCaptureResult>;
-    cancel: () => void;
-  } {
+  /** Seeks once and waits for that exact frame to actually be decoded and ready — used
+   *  only at a segment's start (a handful of times per export), unlike the old
+   *  per-output-frame version this replaces. */
+  function seekAndWait(video: HTMLVideoElement, sourceSec: number): Promise<void> {
+    return new Promise((resolve) => {
+      let settled = false;
+      const timeout = setTimeout(done, 300);
+      function done() {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        video.removeEventListener("seeked", done);
+        resolve();
+      }
+      video.addEventListener("seeked", done, { once: true });
+      video.currentTime = sourceSec;
+    });
+  }
+
+  /** Waits for `video` — already playing forward continuously (see exportVideo's segment
+   *  loop) — to reach `targetSec` on its own, via requestVideoFrameCallback rather than a
+   *  seek: each firing is just "a new decoded frame is ready, check again," cheap however
+   *  many times it takes, in contrast to a currentTime write's fixed per-call overhead.
+   *  Resolves immediately, with no callback round-trip at all, if already there. Falls
+   *  back to polling via rAF on engines without rVFC.
+   *
+   *  `reachableEndSec` is the export's own running record (one entry per element, reset
+   *  per export — see exportVideo) of how far each source has ever actually been able to
+   *  decode to; it's both read and written here. */
+  function waitUntilSourceTime(
+    video: HTMLVideoElement,
+    targetSec: number,
+    reachableEndSec: Map<HTMLVideoElement, number>
+  ): Promise<void> {
+    // Already known to be past this source's last decodable frame — no amount of waiting
+    // will ever produce it, so skip the whole play/wait/stall-timeout round trip rather
+    // than rediscovering the same dead end once per remaining output frame (see finish()'s
+    // bail path for what put this entry here). Resolving immediately leaves the element
+    // frozen exactly where it ran out, which is what live preview shows there too.
+    const reachableEnd = reachableEndSec.get(video);
+    if (reachableEnd !== undefined && targetSec > reachableEnd) return Promise.resolve();
+    // Already there — common now that the export loop (see below) pauses the instant
+    // each frame's target is reached and only resumes a track when it's genuinely behind
+    // the next one, rather than unconditionally every frame. Calling play() when the
+    // frozen position already satisfies the next target is exactly the pattern that can
+    // leave Chromium's video element stuck: a play() request "interrupted" by a pause()
+    // called right after it, before the browser's own internal playback state has
+    // actually settled. Skipping the no-op play()/pause() pair entirely avoids that.
+    if (video.currentTime >= targetSec) return Promise.resolve();
+    video.play().catch(() => {});
+    return new Promise((resolve) => {
+      let settled = false;
+      let lastMediaTime = video.currentTime;
+      let stallTimer: ReturnType<typeof setTimeout> | null = null;
+      // Defensive only — normally resolved by the check below (or the stall timer just
+      // below it). Guards against play() silently never advancing at all (an autoplay
+      // policy quirk despite being muted) leaving nothing else to ever satisfy this
+      // promise, which would otherwise hang the whole export indefinitely.
+      const hardTimeout = setTimeout(() => finish(false), 4000);
+      function finish(reached: boolean) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(hardTimeout);
+        if (stallTimer) clearTimeout(stallTimer);
+        // Gave up without ever reaching the target, at a position within touching distance
+        // of where the file claims to end: that's the source running out of content, not a
+        // slow decode. Record how far it genuinely got, so every later frame skips the
+        // wait outright (see the top of this function) instead of each burning its own
+        // stall timeout. Without that memo, a camera file ending a second before the
+        // screen recording it's paired with cost 400ms-4s of dead waiting on *every*
+        // output frame of that overhang — which is both why the last couple of percent of
+        // an export took longer than all the rest of it put together, and why that stretch
+        // came out juddering rather than cleanly frozen: each of those frames bailed with
+        // the camera lagging a little further behind its own target, so its last fraction
+        // of a second got smeared across the whole tail in slow motion. Never lowered by a
+        // later bail (Math.max) — every bail position is by definition somewhere the
+        // decoder did reach, so the highest one seen is the best estimate of the true end.
+        if (!reached && (video.ended || targetSec >= (video.duration || 0) - EXPORT_TAIL_TOLERANCE_SEC)) {
+          reachableEndSec.set(video, Math.max(lastMediaTime, reachableEndSec.get(video) ?? 0));
+        }
+        // Stop the track the instant this wait is done deciding, win or bail — the
+        // segment loop's own pause() call right after Promise.all(waits) is too late to
+        // prevent drift accumulated *during* this wait itself, which is exactly what a
+        // stalled target used to do: play() sped up 4x for the full length of whichever
+        // timeout fired, racing arbitrarily far past the requested position before the
+        // loop ever got a chance to pause it.
+        video.pause();
+        resolve();
+      }
+      // A target time can turn out to be unreachable near a clip's tail end — a source
+      // file's reported duration is frequently an overestimate of what's actually
+      // decodable (the same webm quirk documented in mediaProtocol.ts re: duration:
+      // Infinity), so the last output frame or two can ask for a position the decoder
+      // never actually produces. Rather than always burning the full hard timeout above
+      // while the video keeps playing forward in the background — up to ~16 simulated
+      // seconds of drift at 4x over 4 real seconds, dumped into a single captured frame
+      // as a jarring jump — bail out as soon as decode visibly stops making forward
+      // progress at all. 4x playback comfortably sustains a new frame every well under
+      // 400ms for ordinary screen-recording content (see MAX_EXPORT_PLAYBACK_RATE's own
+      // comment), so a gap that long with no advance means genuinely stuck, not just slow.
+      function armStallTimer() {
+        if (stallTimer) clearTimeout(stallTimer);
+        stallTimer = setTimeout(() => finish(false), 400);
+      }
+      // requestVideoFrameCallback's own mediaTime — the exact timestamp of the frame that
+      // was actually decoded and presented — rather than video.currentTime, which is a
+      // live-updating estimate of "now" that can silently outrun what's actually been
+      // decoded when playing forward at a high rate (see MAX_EXPORT_PLAYBACK_RATE):
+      // currentTime reads "caught up" a beat before a same-timestamp frame is genuinely
+      // ready, so drawing on that signal alone can repeat one decoded frame across several
+      // output frames, then jump once decode actually catches up — a stutter that's easy
+      // to miss at 1x scale but glaring wherever the frame's magnified (a zoom block).
+      const check = (_now: number, metadata: VideoFrameCallbackMetadata) => {
+        if (settled) return;
+        if (metadata.mediaTime >= targetSec || video.ended) {
+          finish(metadata.mediaTime >= targetSec);
+          return;
+        }
+        if (metadata.mediaTime > lastMediaTime) {
+          lastMediaTime = metadata.mediaTime;
+          armStallTimer();
+        }
+        if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(check);
+        else requestAnimationFrame(fallbackCheck);
+      };
+      const fallbackCheck = () => {
+        if (settled) return;
+        if (video.currentTime >= targetSec || video.ended) {
+          finish(video.currentTime >= targetSec);
+          return;
+        }
+        if (video.currentTime > lastMediaTime) {
+          lastMediaTime = video.currentTime;
+          armStallTimer();
+        }
+        requestAnimationFrame(fallbackCheck);
+      };
+      armStallTimer();
+      if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(check);
+      else fallbackCheck();
+    });
+  }
+
+  // Renders export's entire audio track in one deterministic, non-realtime pass via
+  // OfflineAudioContext — completely decoupled from the frame-stepped video capture (see
+  // exportVideo), and the only way to get synthesized click sounds into the export at
+  // all: playClickSound's envelopes are pinned to a live AudioContext's real-time clock,
+  // which has no meaning during non-realtime rendering. Mirrors the live draw loop's own
+  // audio rules: the source audio comes from whichever element/clips list actually
+  // carries it (the separate camera file's own cameraClips if there is one, else the
+  // screen file's clips — see mutedRef's declaration), muted by the Mute toggle; clicks
+  // are always keyed to the screen recording's own source clock (the cursor track is
+  // always tied to screenFilePath, camera or not) and skipped entirely when the screen
+  // recording has a real cursor baked into its pixels, exactly like the live click
+  // detection this mirrors (see cursorBakedInRef's own doc comment). Returns null when
+  // there's nothing to render (muted, no click sound, no clicks) rather than encoding a
+  // silent WAV nobody needs. `decodeAudio` (the caller's ffmpeg-backed decoder — see
+  // exportVideo's own opts) is what actually turns the source file into something
+  // decodeAudioData can reliably read in full; decoding the raw source directly here
+  // doesn't work; see decodeAudio's own doc comment for why.
+  async function renderExportAudio(
+    totalMs: number,
+    decodeAudio: (filePath: string) => Promise<ArrayBuffer>
+  ): Promise<ArrayBuffer | null> {
+    const screenVideo = screenVideoRef.current;
+    if (!screenVideo || !screenVideo.duration) return null;
+    const sourceDurationMs = screenVideo.duration * 1000;
+    // Only for click timing below — audio itself is no longer clip-gated at all (see its
+    // own comment further down).
+    const clips = effectiveClips(timelineRef.current.clips, sourceDurationMs);
+
+    const muted = mutedRef.current;
+    const cur = cursorRef.current;
+    const track = cursorTrackRef.current;
+    const clicks = !cursorBakedInRef.current && cur.clickSound ? (track?.metadata.clicks ?? []) : [];
+
+    if (muted && clicks.length === 0) return null;
+
+    const SAMPLE_RATE = 44100;
+    const numSamples = Math.max(1, Math.ceil((totalMs / 1000) * SAMPLE_RATE));
+    const offlineCtx = new OfflineAudioContext(2, numSamples, SAMPLE_RATE);
+
+    if (!muted) {
+      // cameraFilePath's own audio, if there's a camera track; otherwise a screen-only
+      // recording's separately-captured audio.webm, if there is one (see audioFilePath's
+      // own doc comment); otherwise screenFilePath itself, for the case where it already
+      // has audio muxed directly into it (the non-native screen-capture fallback).
+      const sourceAudioPath = cameraFilePath ?? audioFilePath ?? screenFilePath;
+      try {
+        const wavBytes = await decodeAudio(sourceAudioPath);
+        const decoded = await offlineCtx.decodeAudioData(wavBytes);
+        // One continuous, unedited buffer source spanning the whole export — not gated by
+        // either track's own clips. Neither the Camera track's pieces (see cameraClips's
+        // own independent-editing comment) nor the screen Clips track's own cuts/gaps are
+        // something the user is actually editing *audio* by touching: a gap on either
+        // track just means blank visual background for that stretch (see the draw loop's
+        // own "plays as real, silent background" comment) — real elapsed time nothing
+        // stops the underlying recording's own audio from continuing straight through, on
+        // both counts. edited-ms and raw source-ms are the same clock for audio's purposes
+        // specifically because of that: it's the one track never subject to remapping.
+        const durSec = Math.min(decoded.duration, totalMs / 1000);
+        if (durSec > 0) {
+          const src = offlineCtx.createBufferSource();
+          src.buffer = decoded;
+          src.connect(offlineCtx.destination);
+          src.start(0, 0, durSec);
+        }
+      } catch {
+        // No audio track on the source file, or it failed to decode — export just ends
+        // up silent (still worth rendering click sounds below, if any are due).
+      }
+    }
+
+    for (const clickT of clicks) {
+      const editedMs = sourceToEditedMs(clips, clickT);
+      if (editedMs === null || editedMs < 0 || editedMs >= totalMs) continue;
+      scheduleClickEnvelope(offlineCtx, offlineCtx.destination, cur.clickSoundStyle, editedMs / 1000);
+    }
+
+    const rendered = await offlineCtx.startRendering();
+    return encodeWavPcm16(rendered);
+  }
+
+  /** JPEG-encodes the canvas's current pixels — the per-frame payload streamed to the
+   *  caller's onFrame (see exportVideo) instead of assembling a video client-side. JPEG,
+   *  not PNG: it's the format ffmpeg's image2pipe+mjpeg demuxer expects on the other end,
+   *  it's fast to encode (matters here — this runs once per output frame), and its lossy-
+   *  ness is inconsequential since the main process's ffmpeg pass always re-encodes to
+   *  H.264 afterward anyway (see startImagePipeExport) — this is only ever a transport
+   *  format between the two, never the final delivered quality. */
+  function canvasToJpegArrayBuffer(canvas: HTMLCanvasElement): Promise<ArrayBuffer> {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            reject(new Error("Failed to encode export frame"));
+            return;
+          }
+          blob.arrayBuffer().then(resolve, reject);
+        },
+        "image/jpeg",
+        0.92
+      );
+    });
+  }
+
+  // Renders the export frame-by-frame, entirely decoupled from real/wall-clock time — the
+  // opposite of a live playback capture (which is bound to take at least as long as the
+  // recording itself, however fast the machine is). For each output frame, the segment
+  // loop below places both video elements at that frame's exact resolved source position,
+  // draw() (the very same per-frame rendering the live preview uses — see isExportingRef's
+  // branch in it) paints it, and the result is JPEG-encoded and handed to the caller's
+  // onFrame — which, in ExportDialog, streams it straight into a main-process ffmpeg
+  // process rather than this component assembling any video itself (see
+  // startImagePipeExport's own doc comment for why: a live JPEG stream into
+  // image2pipe+mjpeg is unambiguous about frame timing in a way a browser video encoder,
+  // it turns out, isn't reliably under load). Audio is rendered as a wholly separate,
+  // fully offline pass up front (see renderExportAudio) and handed to beginExport before
+  // any frame work starts, since the caller's ffmpeg process needs it as an input the
+  // moment it spawns.
+  function exportVideo(opts: {
+    fps: number;
+    onProgress?: (fraction: number) => void;
+    decodeAudio: (filePath: string) => Promise<ArrayBuffer>;
+    beginExport: (info: { durationSecs: number; audioWavBytes: ArrayBuffer | null }) => Promise<boolean>;
+    onFrame: (jpegBytes: ArrayBuffer) => Promise<void>;
+  }): { promise: Promise<void>; cancel: () => void } {
     const canvas = canvasRef.current;
     const screenVideo = screenVideoRef.current;
     if (!canvas || !screenVideo || !screenVideo.duration) {
@@ -1627,91 +2156,147 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       cancelled = true;
     };
 
-    const promise = (async (): Promise<ExportCaptureResult> => {
+    const promise = (async (): Promise<void> => {
       const cameraVideo = cameraVideoRef.current;
       screenVideo.pause();
       cameraVideo?.pause();
       isPlayingRef.current = false;
       setPlaying(false);
-      seekToEditedMs(0);
-      // Let the draw loop settle on the rewound position for a couple of frames before
-      // capture starts, so the recording's first frame isn't whatever was on screen right
-      // before the seek.
-      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-      if (cancelled) throw new ExportCancelledError();
 
       const sourceDurationMs = screenVideo.duration * 1000;
       const clips = effectiveClips(timelineRef.current.clips, sourceDurationMs);
-      const cameraClips = effectiveClips(timelineRef.current.cameraClips, sourceDurationMs);
+      // See the live draw loop's identical computation for why this isn't sourceDurationMs.
+      const cameraSourceDurationMs = cameraDurationMsRef.current ?? sourceDurationMs;
+      const cameraClips = effectiveClips(timelineRef.current.cameraClips, cameraSourceDurationMs);
       const totalMs = Math.max(totalClipsExtentMs(clips), totalClipsExtentMs(cameraClips));
       if (totalMs <= 0) throw new Error("There's nothing on the timeline to export.");
 
-      const canvasStream = canvas.captureStream(opts.fps);
-      // Same source the Mute toggle already governs (see mutedRef's declaration above) —
-      // whichever element actually carries the recorded audio.
-      const audioSource = (cameraFilePath ? cameraVideo : screenVideo) as
-        | (HTMLVideoElement & { captureStream?: () => MediaStream })
-        | null;
-      const hasAudio = !mutedRef.current && !!audioSource?.captureStream;
-      const tracks: MediaStreamTrack[] = [...canvasStream.getVideoTracks()];
-      if (hasAudio && audioSource?.captureStream) tracks.push(...audioSource.captureStream().getAudioTracks());
-
-      const recorder = new MediaRecorder(new MediaStream(tracks), {
-        mimeType: pickExportMimeType(),
-        videoBitsPerSecond: 16_000_000,
-      });
-      const chunks: Blob[] = [];
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-      const stopped = new Promise<Blob>((resolve) => {
-        recorder.onstop = () => resolve(new Blob(chunks, { type: "video/webm" }));
-      });
-
-      // Piggybacks on the draw loop's own per-frame time callback (rather than polling)
-      // to both report progress and detect "reached the end" — the same condition the
-      // loop itself uses to stop playback at the end of the timeline (see its own
-      // `editedMsRef.current >= totalMs` check).
-      const previousOnTimeUpdate = onTimeUpdateRef.current;
-      let reachedEnd = false;
-      onTimeUpdateRef.current = (currentMs, durationMs, srcDurationMs) => {
-        previousOnTimeUpdate?.(currentMs, durationMs, srcDurationMs);
-        opts.onProgress?.(durationMs > 0 ? Math.min(1, currentMs / durationMs) : 0);
-        if (durationMs > 0 && currentMs >= durationMs - 1 && !isPlayingRef.current) reachedEnd = true;
-      };
-
-      recorder.start(250);
-      isPlayingRef.current = true;
-      setPlaying(true);
-      if (activeClipIdRef.current !== null) screenVideo.play().catch(() => {});
-      if (activeCameraClipIdRef.current !== null) cameraVideo?.play().catch(() => {});
-
-      try {
-        await new Promise<void>((resolve) => {
-          const tick = () => {
-            if (cancelled || reachedEnd) {
-              resolve();
-              return;
-            }
-            requestAnimationFrame(tick);
-          };
-          tick();
-        });
-      } finally {
-        onTimeUpdateRef.current = previousOnTimeUpdate;
-      }
-
-      screenVideo.pause();
-      cameraVideo?.pause();
-      isPlayingRef.current = false;
-      setPlaying(false);
-
-      if (recorder.state !== "inactive") recorder.stop();
-      const blob = await stopped;
-      canvasStream.getTracks().forEach((t) => t.stop());
-
+      const audioWavBytes = await renderExportAudio(totalMs, opts.decodeAudio);
       if (cancelled) throw new ExportCancelledError();
-      return { blob, durationSecs: totalMs / 1000, width: canvas.width, height: canvas.height, hasAudio };
+
+      const proceed = await opts.beginExport({ durationSecs: totalMs / 1000, audioWavBytes });
+      if (!proceed || cancelled) throw new ExportCancelledError();
+
+      isExportingRef.current = true;
+      // Both videos get played forward (sped up) during capture — audio is already fully
+      // rendered separately by this point (see above) and never needed from these
+      // elements directly, so mute them for the duration regardless of the live Mute
+      // toggle, or an unmuted export would blast sped-up audio out the speakers.
+      const origScreenMuted = screenVideo.muted;
+      const origCameraMuted = cameraVideo?.muted;
+      screenVideo.muted = true;
+      if (cameraVideo) cameraVideo.muted = true;
+      try {
+        const frameDurationMs = 1000 / opts.fps;
+        const totalFrames = Math.max(1, Math.round((totalMs / 1000) * opts.fps));
+        const breakpoints = exportSegmentBreaks(totalMs, clips, cameraClips);
+
+        let screenClipId: string | null = null;
+        let cameraClipId: string | null = null;
+        let screenClip: TimelineClip | null = null;
+        let cameraClip: TimelineClip | null = null;
+        let segIdx = 0;
+        // Per-export, per-element "this is as far as it decodes" record — see
+        // waitUntilSourceTime, which both fills and consults it. Deliberately not hoisted
+        // out of this export run: it's an observation about how a particular element
+        // behaved just now, not a durable fact about the file.
+        const reachableEndSec = new Map<HTMLVideoElement, number>();
+
+        for (let i = 0; i < totalFrames && !cancelled; i++) {
+          const targetMs = Math.min(totalMs, i * frameDurationMs);
+          while (segIdx < breakpoints.length - 2 && targetMs >= breakpoints[segIdx + 1]) segIdx++;
+
+          // Entering a new segment — re-resolve each track and, only for whichever one's
+          // resolved clip actually changed, seek it once; a track whose clip is unchanged
+          // from the previous segment is left alone, still wherever it already got to.
+          // Not (re)started playing here — waitUntilSourceTime below is what actually
+          // calls play(), and only when the frozen/just-seeked position doesn't already
+          // satisfy this exact frame's target, so a seek that happens to land exactly on
+          // (or past) what's needed doesn't get an immediately-pointless play() call.
+          const segStart = breakpoints[segIdx];
+          const screenResolved = resolveClipAt(clips, segStart);
+          const cameraResolved = resolveClipAt(cameraClips, segStart);
+          if ((screenResolved?.clip.id ?? null) !== screenClipId) {
+            screenClipId = screenResolved?.clip.id ?? null;
+            screenClip = screenResolved?.clip ?? null;
+            if (screenResolved) {
+              await seekAndWait(screenVideo, screenResolved.sourceMs / 1000);
+              if (cancelled) break;
+              screenVideo.playbackRate = MAX_EXPORT_PLAYBACK_RATE;
+            } else {
+              screenVideo.pause();
+            }
+          }
+          if ((cameraResolved?.clip.id ?? null) !== cameraClipId) {
+            cameraClipId = cameraResolved?.clip.id ?? null;
+            cameraClip = cameraResolved?.clip ?? null;
+            if (cameraVideo) {
+              if (cameraResolved) {
+                await seekAndWait(cameraVideo, cameraResolved.sourceMs / 1000);
+                if (cancelled) break;
+                cameraVideo.playbackRate = MAX_EXPORT_PLAYBACK_RATE;
+              } else {
+                cameraVideo.pause();
+              }
+            }
+          }
+
+          // Resuming (if needed at all) is now waitUntilSourceTime's own call — it only
+          // actually plays a track when the frozen position doesn't already satisfy this
+          // frame's target, rather than unconditionally every frame (see its own comment).
+          const waits: Promise<void>[] = [];
+          if (screenClip) {
+            waits.push(waitUntilSourceTime(screenVideo, (screenClip.sourceStart + (targetMs - screenClip.timelineStart)) / 1000, reachableEndSec));
+          }
+          if (cameraClip && cameraVideo) {
+            waits.push(
+              waitUntilSourceTime(cameraVideo, (cameraClip.sourceStart + (targetMs - cameraClip.timelineStart)) / 1000, reachableEndSec)
+            );
+          }
+          if (waits.length > 0) await Promise.all(waits);
+          // Freeze both tracks the instant this frame's target is reached — everything
+          // from here down (draw, JPEG-encode, the IPC round trip to hand the frame off)
+          // takes real wall-clock time, and a *playing* video keeps advancing through all
+          // of it. Nothing paced that against real time (this loop deliberately doesn't
+          // run at 1x), so real, uncut source content kept racing ahead of the frame
+          // sequence meant to represent it — compressing footage that should span the
+          // full export into however many frames the video took to outrun this loop, most
+          // visibly seen as every click's ripple/sound bunching up in the first couple of
+          // output seconds instead of landing at its actual recorded timestamp.
+          screenVideo.pause();
+          cameraVideo?.pause();
+          if (cancelled) break;
+
+          editedMsRef.current = targetMs;
+          activeClipIdRef.current = screenClipId;
+          activeCameraClipIdRef.current = cameraClipId;
+          drawFrameRef.current?.();
+
+          const jpegBytes = await canvasToJpegArrayBuffer(canvas);
+          if (cancelled) break;
+          await opts.onFrame(jpegBytes);
+          opts.onProgress?.(i / totalFrames);
+        }
+        screenVideo.pause();
+        cameraVideo?.pause();
+
+        if (cancelled) throw new ExportCancelledError();
+        opts.onProgress?.(1);
+      } finally {
+        isExportingRef.current = false;
+        screenVideo.pause();
+        screenVideo.playbackRate = 1;
+        screenVideo.muted = origScreenMuted;
+        if (cameraVideo) {
+          cameraVideo.pause();
+          cameraVideo.playbackRate = 1;
+          cameraVideo.muted = origCameraMuted ?? cameraVideo.muted;
+        }
+        // The draw-loop effect's own rAF self-scheduling stood down for the duration of
+        // the capture (see draw()'s isExportingRef guard) — kick it back into motion now
+        // that live preview is in charge of this canvas again.
+        if (drawFrameRef.current) rafRef.current = requestAnimationFrame(drawFrameRef.current);
+      }
     })();
 
     return { promise, cancel };
@@ -1724,7 +2309,13 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     togglePlay() {
       togglePlay();
     },
-    exportVideo(opts: { fps: number; onProgress?: (fraction: number) => void }) {
+    exportVideo(opts: {
+      fps: number;
+      onProgress?: (fraction: number) => void;
+      decodeAudio: (filePath: string) => Promise<ArrayBuffer>;
+      beginExport: (info: { durationSecs: number; audioWavBytes: ArrayBuffer | null }) => Promise<boolean>;
+      onFrame: (jpegBytes: ArrayBuffer) => Promise<void>;
+    }) {
       return exportVideo(opts);
     },
   }));

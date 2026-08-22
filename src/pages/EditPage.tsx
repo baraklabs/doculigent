@@ -906,6 +906,7 @@ export function EditPage() {
                   ref={compositorRef}
                   screenFilePath={(media!.screenFilePath ?? media!.singleFilePath)!}
                   cameraFilePath={media!.cameraFilePath ?? undefined}
+                  audioFilePath={media!.audioFilePath ?? undefined}
                   cursorMetadataPath={media!.cursorMetadataPath}
                   cursorIconsDir={media!.cursorIconsDir}
                   cursorBakedIn={media!.cursorBakedIn}
@@ -951,6 +952,7 @@ export function EditPage() {
                 tool={tool}
                 onToolChange={setTool}
                 cameraHidden={camera.hidden}
+                hasCamera={!!media!.cameraFilePath}
                 cursorMetadataPath={media!.cursorMetadataPath}
                 autoZoomOnLoad={project ? project.timeline === undefined : false}
               />

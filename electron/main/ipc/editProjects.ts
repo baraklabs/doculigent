@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -16,18 +17,26 @@ import type {
 } from "@shared/types/models";
 import { NotFoundError } from "@shared/ipc/errors";
 import * as store from "../native/editProjectStore";
-import { FfmpegCancelledError, transcodeExport } from "../native/ffmpeg";
+import { convertToWav, FfmpegCancelledError, type ImagePipeExportHandle, startImagePipeExport } from "../native/ffmpeg";
 
-interface ExportVideoInput {
-  webmBytes: ArrayBuffer;
+interface ExportBeginInput {
   title: string;
   durationSecs: number;
   width: number;
   height: number;
   fps: number;
+  audioWavBytes: ArrayBuffer | null;
 }
 
-const pendingExports = new Map<string, AbortController>();
+interface PendingExport {
+  abort: AbortController;
+  handle: ImagePipeExportHandle;
+  filePath: string;
+  tempWav: string | null;
+  durationSecs: number;
+}
+
+const pendingExports = new Map<string, PendingExport>();
 
 // Deleting a project's source files can race an Edit page that still has that exact
 // project open — its `<video>` elements hold the file open via an active `media://`
@@ -143,9 +152,27 @@ export function registerEditProjectsIpc(): void {
     }
   );
 
+  // See decodeAudioToWav's own doc comment (shared/types/api.ts) — routes a source file's
+  // audio through ffmpeg rather than leaving the renderer to decode it directly.
+  ipcMain.handle(Channels.editProjects.decodeAudioToWav, async (_event, filePath: string): Promise<ArrayBuffer> => {
+    const tempWav = path.join(os.tmpdir(), `decode-${randomUUID()}.wav`);
+    try {
+      await convertToWav(filePath, tempWav);
+      const buf = await fs.readFile(tempWav);
+      return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+    } finally {
+      await fs.rm(tempWav, { force: true });
+    }
+  });
+
+  // Streaming export — see startImagePipeExport's own doc comment for why. exportBegin
+  // opens the save dialog and spawns ffmpeg with its stdin held open, waiting for frames;
+  // the renderer then streams one JPEG per exportFrame call (awaited in sequence, which is
+  // this pipeline's own backpressure); exportEnd closes stdin and waits for ffmpeg to
+  // finish writing the file. Call order is always exportBegin → exportFrame × N → exportEnd.
   ipcMain.handle(
-    Channels.editProjects.export,
-    async (event, exportId: string, input: ExportVideoInput): Promise<{ canceled: boolean; filePath?: string }> => {
+    Channels.editProjects.exportBegin,
+    async (event, exportId: string, input: ExportBeginInput): Promise<{ canceled: boolean }> => {
       const safeTitle = input.title.replace(/[\\/:*?"<>|]+/g, " ").trim() || "Untitled project";
       const result = await dialog.showSaveDialog({
         title: "Export video",
@@ -154,42 +181,59 @@ export function registerEditProjectsIpc(): void {
       });
       if (result.canceled || !result.filePath) return { canceled: true };
 
-      const tempWebm = path.join(os.tmpdir(), `export-${exportId}.webm`);
-      await fs.writeFile(tempWebm, Buffer.from(input.webmBytes));
+      const tempWav = input.audioWavBytes ? path.join(os.tmpdir(), `export-${exportId}.wav`) : null;
+      if (tempWav && input.audioWavBytes) await fs.writeFile(tempWav, Buffer.from(input.audioWavBytes));
+
       const abort = new AbortController();
-      pendingExports.set(exportId, abort);
+      const handle = startImagePipeExport(
+        result.filePath,
+        tempWav,
+        input.width,
+        input.height,
+        input.fps,
+        (secondsDone) => {
+          if (event.sender.isDestroyed() || input.durationSecs <= 0) return;
+          const percent = Math.max(0, Math.min(99, Math.round((secondsDone / input.durationSecs) * 100)));
+          event.sender.send(Channels.editProjects.exportProgress, { exportId, percent });
+        },
+        abort.signal
+      );
+      pendingExports.set(exportId, { abort, handle, filePath: result.filePath, tempWav, durationSecs: input.durationSecs });
+      return { canceled: false };
+    }
+  );
+
+  ipcMain.handle(Channels.editProjects.exportFrame, async (_event, exportId: string, jpegBytes: ArrayBuffer): Promise<void> => {
+    const pending = pendingExports.get(exportId);
+    if (!pending) throw new NotFoundError(`export ${exportId}`);
+    await pending.handle.writeFrame(Buffer.from(jpegBytes));
+  });
+
+  ipcMain.handle(
+    Channels.editProjects.exportEnd,
+    async (_event, exportId: string): Promise<{ canceled: boolean; filePath?: string }> => {
+      const pending = pendingExports.get(exportId);
+      if (!pending) throw new NotFoundError(`export ${exportId}`);
       try {
-        await transcodeExport(
-          tempWebm,
-          result.filePath,
-          input.width,
-          input.height,
-          input.fps,
-          (secondsDone) => {
-            if (event.sender.isDestroyed() || input.durationSecs <= 0) return;
-            const percent = Math.max(0, Math.min(99, Math.round((secondsDone / input.durationSecs) * 100)));
-            event.sender.send(Channels.editProjects.exportProgress, { exportId, percent });
-          },
-          abort.signal
-        );
-        return { canceled: false, filePath: result.filePath };
+        await pending.handle.finish();
+        return { canceled: false, filePath: pending.filePath };
       } catch (e) {
         if (e instanceof FfmpegCancelledError) {
-          await fs.rm(result.filePath, { force: true });
+          await fs.rm(pending.filePath, { force: true });
           return { canceled: true };
         }
         throw e;
       } finally {
         pendingExports.delete(exportId);
-        await fs.rm(tempWebm, { force: true });
+        if (pending.tempWav) await fs.rm(pending.tempWav, { force: true });
       }
     }
   );
 
   ipcMain.handle(Channels.editProjects.exportCancel, async (_event, exportId: string): Promise<boolean> => {
-    const abort = pendingExports.get(exportId);
-    if (!abort) return false;
-    abort.abort();
+    const pending = pendingExports.get(exportId);
+    if (!pending) return false;
+    pending.abort.abort();
     return true;
   });
 }

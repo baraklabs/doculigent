@@ -525,6 +525,12 @@ export interface EditProjectMedia {
   /** Absolute path to the single composited video otherwise (burned-in, or no
    *  separate camera at all) — null if the source has no playable video. */
   singleFilePath: string | null;
+  /** Absolute path to a screen-only recording's own separately-captured mic/system
+   *  audio — set only when there's no cameraFilePath to carry it instead (screenFilePath/
+   *  singleFilePath's own native capture is always video-only in that case). Null
+   *  whenever cameraFilePath is set, or when the underlying source already has audio
+   *  muxed directly into its single file. */
+  audioFilePath: string | null;
   /** Absolute path to the recorded cursor track's metadata JSON, when present —
    *  screenFilePath never has the cursor burned in, so the editor renders it live. */
   cursorMetadataPath: string | null;

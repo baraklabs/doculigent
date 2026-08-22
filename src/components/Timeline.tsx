@@ -46,6 +46,11 @@ interface TimelineProps {
   /** The Camera tab's global "hidden" toggle — while on, per-segment camera visibility
    *  is moot, so the Camera track goes non-interactive rather than editing dead settings. */
   cameraHidden: boolean;
+  /** False for a recording with no separate camera file at all — the Camera track then
+   *  has nothing real to edit (effectiveClips' empty-array default would otherwise still
+   *  draw a full-width piece there, implying a camera track that doesn't exist), so it
+   *  renders inert with no piece drawn, keeping only the row's own "Camera" label. */
+  hasCamera: boolean;
   /** Same recorded-cursor-track file PreviewCompositor reads for its live cursor overlay —
    *  fetched independently here just for its `clicks` timestamps, to drive the "auto zoom
    *  on clicks" magic button below. */
@@ -179,6 +184,7 @@ export function Timeline({
   tool,
   onToolChange,
   cameraHidden,
+  hasCamera,
   cursorMetadataPath,
   autoZoomOnLoad,
 }: TimelineProps) {
@@ -1566,15 +1572,25 @@ export function Timeline({
         <div
           className={`tl-track tl-track-camera${tool === "cut" ? " tl-track-cut-mode" : ""}${cameraHidden ? " disabled" : ""}`}
           ref={cameraTrackRef}
-          onPointerDown={handleCameraTrackPointerDown}
-          onPointerMove={handleCameraTrackPointerMove}
-          onPointerUp={handleMarqueeUp}
-          onPointerLeave={handleCameraTrackPointerLeave}
-          title={cameraHidden ? "Camera is hidden in the Camera tab — enable it there to edit this track" : undefined}
+          onPointerDown={hasCamera ? handleCameraTrackPointerDown : undefined}
+          onPointerMove={hasCamera ? handleCameraTrackPointerMove : undefined}
+          onPointerUp={hasCamera ? handleMarqueeUp : undefined}
+          onPointerLeave={hasCamera ? handleCameraTrackPointerLeave : undefined}
+          title={
+            !hasCamera
+              ? "This recording has no separate camera track"
+              : cameraHidden
+                ? "Camera is hidden in the Camera tab — enable it there to edit this track"
+                : undefined
+          }
         >
-          {renderCameraPieces()}
-          {cutGuide?.track === "camera" && (
-            <div className="tl-cut-guide" style={{ left: `${msToPct(cutGuide.ms, durationMs)}%` }} />
+          {!hasCamera ? null : (
+            <>
+              {renderCameraPieces()}
+              {cutGuide?.track === "camera" && (
+                <div className="tl-cut-guide" style={{ left: `${msToPct(cutGuide.ms, durationMs)}%` }} />
+              )}
+            </>
           )}
         </div>
       </div>

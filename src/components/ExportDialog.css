@@ -40,6 +40,7 @@
 .export-dialog-spin { color: var(--accent); animation: export-dialog-spin 900ms linear infinite; }
 @keyframes export-dialog-spin { to { transform: rotate(360deg); } }
 .export-dialog-progress-label { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+.export-dialog-elapsed { margin: -6px 0 0; font-size: 9.5px; color: var(--muted); opacity: .75; }
 .export-dialog-progress-pct { font-size: 12px; color: var(--muted); }
 .export-dialog-progress .progress-bar-track { width: 100%; }
 .export-dialog-progress .edit-topbar-btn { margin-top: 4px; }

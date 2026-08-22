@@ -358,6 +358,7 @@ const NO_MEDIA: EditProjectMedia = {
   screenFilePath: null,
   cameraFilePath: null,
   singleFilePath: null,
+  audioFilePath: null,
   cursorMetadataPath: null,
   cursorIconsDir: null,
   cursorBakedIn: false,
@@ -427,6 +428,10 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
       screenFilePath,
       cameraFilePath,
       singleFilePath: null,
+      // A separate audio.webm is only ever written for a screen-only recording (see
+      // buildEditProjectMaterials in electron/main/ipc/recording.ts) — mutually exclusive
+      // with camera.webm, which is what carries audio whenever a camera track exists.
+      audioFilePath: null,
       cursorMetadataPath: hasCursor ? cursorMetaPath : null,
       cursorIconsDir: hasCursor ? path.join(recDir, "metadata", "cursor-icons") : null,
       cursorBakedIn,
@@ -440,6 +445,15 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
   const singleFileCandidate = recordingFilePath ?? (fs.existsSync(screenFilePath) ? screenFilePath : null);
   // Audio-only sources (meeting recordings, imported audio files) have no video at all.
   const isVideoFile = !!singleFileCandidate && /\.(mp4|mov|mkv|avi|webm|m4v|wmv|flv)$/i.test(singleFileCandidate);
+  // A screen-only Advanced recording's own mic/system audio, kept in a separate file
+  // (see buildEditProjectMaterials) since screen.mp4 (native gdigrab capture) is always
+  // video-only — without this, a screen-only project (no camera.webm to carry audio
+  // either) would have no audio source anywhere in the editor/export pipeline at all.
+  // Only meaningful for that "recording"-source, screen-only case (recordingFilePath is
+  // null there, so singleFileCandidate falls through to screenFilePath); a "video"/"file"
+  // source's own single file already has any audio muxed in directly.
+  const audioOnlyPath = path.join(recDir, "metadata", "audio.webm");
+  const audioFilePath = !recordingFilePath && fs.existsSync(audioOnlyPath) ? audioOnlyPath : null;
   // Position tracking (cursor.json) runs regardless of platform, independent of whether
   // screen/camera were split into their own files — only icon *capture* is Windows-only,
   // and that already degrades to a synthetic fallback arrow (see native/cursorIcon.ts).
@@ -452,6 +466,7 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
     screenFilePath: null,
     cameraFilePath: null,
     singleFilePath: isVideoFile ? singleFileCandidate : null,
+    audioFilePath,
     cursorMetadataPath: hasCursor ? cursorMetaPath : null,
     cursorIconsDir: hasCursor ? path.join(recDir, "metadata", "cursor-icons") : null,
     cursorBakedIn,
