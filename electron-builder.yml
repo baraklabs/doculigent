@@ -41,6 +41,12 @@ mac:
   extendInfo:
     NSCameraUsageDescription: Doculigent uses your camera for the optional camera bubble overlay while recording.
     NSMicrophoneUsageDescription: Doculigent uses your microphone to record voice-over alongside your screen recording.
+    # Required from macOS 14.2+ for desktopCapturer's system-audio loopback capture (see
+    # desktopAudioConstraints in src/services/recording/constraints.ts, used by the
+    # Meeting tab's "system sound" source) — without it that capture silently fails on
+    # 14.2+. Electron itself only started requiring this key as of the v39 breaking
+    # change; harmless to declare on older macOS too.
+    NSAudioCaptureUsageDescription: Doculigent captures system audio for the optional "system sound" recording source.
   target:
     - target: dmg
       arch:
