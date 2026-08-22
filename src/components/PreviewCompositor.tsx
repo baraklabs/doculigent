@@ -741,7 +741,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   const cameraDurationMsRef = useRef<number | null>(null);
   // The actual recorded audio (mic/system, talking, etc.) whenever it doesn't just live
   // directly on screenVideo itself — a separate camera track's own file, or a screen-only
-  // recording's own separately-captured audio.webm (see audioFilePath's own doc comment).
+  // recording's own separately-captured audio.wav (see audioFilePath's own doc comment).
   // Never drawn from, only ever played, so a plain <audio> element rather than a second
   // hidden <video> — and deliberately decoupled from cameraVideoRef's own play/pause (see
   // its doc comment), so hiding/deleting a Camera piece never silences this. Kept in sync
@@ -981,7 +981,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
 
   // Which element actually carries the recorded audio (mic/system, talking, etc.):
   // audioOnlyRef when there's one (a separate camera track, or a screen-only recording's
-  // own separately-captured audio.webm — see audioOnlyRef's own doc comment), else
+  // own separately-captured audio.wav — see audioOnlyRef's own doc comment), else
   // screenVideoRef itself for the case where it's already the fully-muxed file (the
   // non-native screen-capture fallback). Never cameraVideoRef — see its own doc comment
   // for why that element is muted and visual-only now.
@@ -1051,7 +1051,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     // The actual audio source whenever it doesn't just live directly on screenVideo
     // itself: the camera file (if there's a separate camera track — see cameraVideo's own
     // doc comment for why that element no longer carries its own audio), else a
-    // screen-only recording's own separately-captured audio.webm, if there is one (see
+    // screen-only recording's own separately-captured audio.wav, if there is one (see
     // EditProjectMedia.audioFilePath). Always synced to *screenVideo's* position/play-
     // state, never the Camera track's (see the draw loop's own sync block) — audio should
     // track the master (screen) timeline's cuts, not the independently-editable camera
@@ -2080,7 +2080,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
 
     if (!muted) {
       // cameraFilePath's own audio, if there's a camera track; otherwise a screen-only
-      // recording's separately-captured audio.webm, if there is one (see audioFilePath's
+      // recording's separately-captured audio.wav, if there is one (see audioFilePath's
       // own doc comment); otherwise screenFilePath itself, for the case where it already
       // has audio muxed directly into it (the non-native screen-capture fallback).
       const sourceAudioPath = cameraFilePath ?? audioFilePath ?? screenFilePath;

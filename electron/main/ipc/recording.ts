@@ -197,12 +197,16 @@ async function buildEditProjectMaterials(
       // ffmpeg pass at all, so choosing H.264 here never costs an extra re-encode.
       await fs.writeFile(path.join(metaDir, `camera.${input.sideClip.ext}`), Buffer.from(input.sideClip.bytes));
     } else if (input.sideClip) {
-      // Audio-only side clip (mic/system audio, no camera video) — kept for completeness,
-      // though full editor support for an audio-only Advanced project's sound track isn't
-      // wired up yet. Always webm in practice (pickMimeType only tries H.264/MP4 for a
-      // video-carrying stream — see RecordingService.ts), but named off `ext` regardless
-      // rather than assuming that stays true forever.
-      await fs.writeFile(path.join(metaDir, `audio.${input.sideClip.ext}`), Buffer.from(input.sideClip.bytes));
+      // Audio-only side clip (mic/system audio, no camera video). RecordingService's
+      // MediaRecorder always produces webm here (pickMimeType only tries H.264/MP4 for a
+      // video-carrying stream), so it's converted to a real audio/wav file rather than kept
+      // as webm — a plain PCM WAV is what the rest of the audio pipeline already expects for
+      // camera-less audio (see registerRecordingIpc's saveAudio handler, which does the same
+      // conversion for Meeting-tab audio-only recordings).
+      const tempAudioPath = path.join(os.tmpdir(), `${id}-side-audio.${input.sideClip.ext}`);
+      cleanupPaths.push(tempAudioPath);
+      await fs.writeFile(tempAudioPath, Buffer.from(input.sideClip.bytes));
+      await convertToWav(tempAudioPath, path.join(metaDir, "audio.wav"));
     }
   } else {
     // Camera-only capture — a single already-composited stream (see RecordingService's

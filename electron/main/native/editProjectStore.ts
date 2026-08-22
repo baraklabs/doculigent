@@ -418,11 +418,12 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
 
   if (!recDir) return NO_MEDIA;
 
-  // Camera/audio side clips are written as `.mp4` whenever RecordingService's MediaRecorder
+  // Camera side clips are written as `.mp4` whenever RecordingService's MediaRecorder
   // captured real H.264/AAC (preferred — see pickMimeType), `.webm` for the VP9/Opus
-  // fallback (see buildEditProjectMaterials) — check both rather than assuming one.
+  // fallback; the audio-only side clip (no camera) is always converted to `.wav` (see
+  // buildEditProjectMaterials) — check all three rather than assuming one.
   function resolveMetaFile(dir: string, base: string): string | null {
-    for (const ext of ["mp4", "webm"]) {
+    for (const ext of ["mp4", "webm", "wav"]) {
       const candidate = path.join(dir, `${base}.${ext}`);
       if (fs.existsSync(candidate)) return candidate;
     }
@@ -440,9 +441,9 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
       screenFilePath,
       cameraFilePath,
       singleFilePath: null,
-      // A separate audio.webm is only ever written for a screen-only recording (see
+      // A separate audio.wav is only ever written for a screen-only recording (see
       // buildEditProjectMaterials in electron/main/ipc/recording.ts) — mutually exclusive
-      // with camera.webm, which is what carries audio whenever a camera track exists.
+      // with camera.webm/camera.mp4, which is what carries audio whenever a camera track exists.
       audioFilePath: null,
       cursorMetadataPath: hasCursor ? cursorMetaPath : null,
       cursorIconsDir: hasCursor ? path.join(recDir, "metadata", "cursor-icons") : null,
