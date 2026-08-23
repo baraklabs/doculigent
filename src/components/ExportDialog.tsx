@@ -138,14 +138,18 @@ export function ExportDialog({ open, onClose, compositorRef, layoutFormat, title
     setErrorMessage(null);
     setElapsedSecs(0);
 
-    // Streaming export — PreviewCompositor renders and JPEG-encodes each frame itself,
-    // handing them to onFrame one at a time; this component's only job is turning those
-    // into the actual main-process IPC calls that stream them into ffmpeg (see
-    // startImagePipeExport). beginExport fires once, after audio's been fully rendered
-    // (offline) but before any frame work starts, since the ffmpeg process needs that
-    // audio file to exist the moment it spawns.
+    // Streaming export — PreviewCompositor renders and encodes each frame itself, handing
+    // them to onFrame one at a time; this component's only job is turning those into the
+    // actual main-process IPC calls that stream them into ffmpeg (see
+    // startImagePipeExport). Which encoding that is — WebCodecs H.264, or JPEG on the
+    // fallback — is the compositor's call, reported back through beginExport's
+    // `frameFormat` so the main process spawns the matching pipeline. beginExport fires
+    // once, after audio's been fully rendered (offline) but before any frame work starts,
+    // since the ffmpeg process needs that audio file to exist the moment it spawns.
     const { promise, cancel } = compositor.exportVideo({
       fps,
+      width,
+      height,
       onProgress: setProgress,
       decodeAudio: (filePath) => window.api.editProjects.decodeAudioToWav(filePath),
       beginExport: async (info) => {
@@ -156,12 +160,15 @@ export function ExportDialog({ open, onClose, compositorRef, layoutFormat, title
           height,
           fps,
           audioWavBytes: info.audioWavBytes,
+          frameFormat: info.frameFormat,
+          sourceWidth: info.sourceWidth,
+          sourceHeight: info.sourceHeight,
         });
         if (begun.canceled) return false;
         startElapsedTimer();
         return true;
       },
-      onFrame: (jpegBytes) => window.api.editProjects.exportFrame(exportId, jpegBytes),
+      onFrame: (frameBytes) => window.api.editProjects.exportFrame(exportId, frameBytes),
     });
     cancelCaptureRef.current = cancel;
 

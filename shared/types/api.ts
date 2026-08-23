@@ -211,12 +211,12 @@ export interface DoculigentApi {
      *  produced webm has no proper duration/seek index and that API doesn't reliably
      *  decode the whole thing; ffmpeg has no such trouble with the same file. */
     decodeAudioToWav(filePath: string): Promise<ArrayBuffer>;
-    // Streaming export — PreviewCompositor renders and streams one JPEG frame at a time
+    // Streaming export — PreviewCompositor renders and streams one frame at a time
     // (exportFrame) straight into an ffmpeg process the main process keeps running for the
     // whole export (spawned in exportBegin, fed via stdin, closed in exportEnd), rather
     // than assembling a whole video client-side first. Call order is always
     // exportBegin → exportFrame × N (awaited in sequence — that's also this pipeline's
-    // backpressure against ffmpeg's own encode throughput) → exportEnd.
+    // backpressure against ffmpeg's own throughput) → exportEnd.
     exportBegin(
       exportId: string,
       input: {
@@ -228,12 +228,21 @@ export interface DoculigentApi {
         /** WAV-encoded, rendered entirely offline by PreviewCompositor's renderExportAudio —
          *  null when there's nothing to mix in (muted, no click sound due, no source audio). */
         audioWavBytes: ArrayBuffer | null;
+        /** "h264" when the renderer encodes each frame itself with WebCodecs and ffmpeg
+         *  only muxes (`-c:v copy`); "mjpeg" for the JPEG-per-frame fallback used when a
+         *  VideoEncoder can't be configured for this output size. */
+        frameFormat: "h264" | "mjpeg";
+        /** Pixel size of the frames that will actually arrive — equal to width/height on
+         *  the h264 path, the compositor's fixed canvas size on the mjpeg one. */
+        sourceWidth: number;
+        sourceHeight: number;
       }
     ): Promise<{ canceled: boolean }>;
-    /** One JPEG-encoded frame (from canvas.toBlob), in output order. Resolves once ffmpeg
-     *  has accepted it (may wait on its own stdin backpressure) — never drops a frame the
-     *  way the old MediaRecorder-based capture silently could under load. */
-    exportFrame(exportId: string, jpegBytes: ArrayBuffer): Promise<void>;
+    /** One frame's bytes, in output order — an Annex-B H.264 access unit from WebCodecs,
+     *  or a whole JPEG on the mjpeg fallback. Resolves once ffmpeg has accepted it (may
+     *  wait on its own stdin backpressure) — never drops a frame the way the old
+     *  MediaRecorder-based capture silently could under load. */
+    exportFrame(exportId: string, frameBytes: ArrayBuffer): Promise<void>;
     exportEnd(exportId: string): Promise<{ canceled: boolean; filePath?: string }>;
     exportCancel(exportId: string): Promise<boolean>;
     onExportProgress(callback: (progress: { exportId: string; percent: number }) => void): () => void;

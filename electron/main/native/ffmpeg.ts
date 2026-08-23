@@ -65,11 +65,12 @@ function run(args: string[], onProgress?: ProgressHandler, signal?: AbortSignal)
 }
 
 export interface ImagePipeExportHandle {
-  /** Writes one JPEG-encoded frame, in output order. Resolves once ffmpeg's stdin has
+  /** Writes one frame's bytes, in output order — a whole JPEG on the "mjpeg" path, one
+   *  Annex-B H.264 access unit on the "h264" path. Resolves once ffmpeg's stdin has
    *  actually accepted it (waiting on its own internal 'drain' if the pipe is momentarily
    *  full) — awaiting this in sequence is what gives the renderer's frame-producing loop
-   *  backpressure against ffmpeg's real encode throughput, rather than racing ahead of it. */
-  writeFrame(jpeg: Buffer): Promise<void>;
+   *  backpressure against ffmpeg's real throughput, rather than racing ahead of it. */
+  writeFrame(frame: Buffer): Promise<void>;
   /** Closes stdin (signaling "no more frames") and resolves once ffmpeg has finished
    *  encoding everything already written and exited cleanly — rejects with
    *  FfmpegCancelledError if the process was aborted via `signal` first. */
@@ -77,6 +78,22 @@ export interface ImagePipeExportHandle {
 }
 
 export type H264Encoder = "h264_videotoolbox" | "h264_nvenc" | "h264_qsv" | "h264_amf" | "h264_mf" | "libx264";
+
+/** How the renderer hands each finished frame to this process.
+ *
+ *  "h264" is the fast path: the renderer encodes the frame itself with WebCodecs
+ *  (VideoEncoder, hardware-backed) and streams an Annex-B H.264 elementary stream, so
+ *  ffmpeg only has to *mux* it (`-c:v copy`) alongside the rendered audio — no decode and
+ *  no re-encode here at all. That matters because the old path's per-frame
+ *  `canvas.toBlob("image/jpeg")` measured ~50ms on a 1080p canvas and does not
+ *  parallelize, which was single-handedly ~100% of export wall-clock time (ffmpeg itself
+ *  was idling at ~155fps of spare capacity). WebCodecs does the same job in ~15ms and
+ *  emits ~21KB chunks instead of ~150KB JPEGs.
+ *
+ *  "mjpeg" is the original JPEG-per-frame pipeline, kept as the fallback for machines
+ *  where VideoEncoder can't be configured for the requested output size (see
+ *  PreviewCompositor's probe) — correctness path, not the expected one. */
+export type ExportFrameFormat = "h264" | "mjpeg";
 
 interface EncoderCacheEntry {
   platform: string;
@@ -268,9 +285,28 @@ function videoEncoderArgs(encoder: H264Encoder, width: number, height: number, f
   }
 }
 
+/** Mux-only args for the "h264" frame format — stdin already carries a finished Annex-B
+ *  H.264 stream at the requested output size, so there is deliberately no `-vf scale` and
+ *  no video encoder here: scaling happened on the renderer's canvas before encoding, and
+ *  re-encoding an already-encoded stream would only cost time and a generation of
+ *  quality. `-r` on the *input* is what gives a raw elementary stream (which carries no
+ *  container timestamps of its own) its frame timing. */
+function buildMuxArgs(audioWavPath: string | null, fps: number, outputMp4Path: string): string[] {
+  const args = ["-progress", "pipe:1", "-nostats", "-y", "-f", "h264", "-r", String(fps), "-i", "pipe:0"];
+  if (audioWavPath) args.push("-i", audioWavPath);
+  args.push("-map", "0:v");
+  if (audioWavPath) args.push("-map", "1:a");
+  args.push("-c:v", "copy");
+  if (audioWavPath) args.push("-c:a", "aac", "-b:a", "192k", "-shortest");
+  else args.push("-an");
+  args.push("-movflags", "+faststart", outputMp4Path);
+  return args;
+}
+
 function buildExportArgs(
   encoder: H264Encoder,
   audioWavPath: string | null,
+  source: { width: number; height: number },
   width: number,
   height: number,
   fps: number,
@@ -280,7 +316,15 @@ function buildExportArgs(
   if (audioWavPath) args.push("-i", audioWavPath);
   args.push("-map", "0:v");
   if (audioWavPath) args.push("-map", "1:a");
-  args.push("-vf", `scale=${width}:${height}:flags=lanczos`, "-r", String(fps), ...videoEncoderArgs(encoder, width, height, fps));
+  // Only scale when the incoming frames aren't already the requested size. The compositor
+  // canvas is a fixed 1920x1080 (or 1080x1920 for "reel"), so at the default export
+  // resolution this filter was a no-op that still cost a full lanczos pass per frame.
+  // Bicubic rather than lanczos when it *is* needed: visually equivalent after the H.264
+  // encode that follows, and materially cheaper.
+  if (source.width !== width || source.height !== height) {
+    args.push("-vf", `scale=${width}:${height}:flags=bicubic`);
+  }
+  args.push("-r", String(fps), ...videoEncoderArgs(encoder, width, height, fps));
   if (audioWavPath) args.push("-c:a", "aac", "-b:a", "192k", "-shortest");
   else args.push("-an");
   args.push("-movflags", "+faststart", outputMp4Path);
@@ -346,7 +390,7 @@ async function spawnWithFallback(
 }
 
 function extractInputResolution(stderrText: string): string {
-  const match = stderrText.match(/Video: mjpeg[^\n]*?(\d{2,5})x(\d{2,5})/);
+  const match = stderrText.match(/Video: (?:mjpeg|h264)[^\n]*?(\d{2,5})x(\d{2,5})/);
   return match ? `${match[1]}x${match[2]}` : "unknown";
 }
 
@@ -357,7 +401,7 @@ function extractInputResolution(stderrText: string): string {
  *  ffmpeg's own encode) — real measured time, not an estimate; `outputBitrateKbps` is
  *  computed from the actual encoded file (probeDuration + fs.stat), not assumed. */
 async function logExportBenchmark(info: {
-  encoderUsed: H264Encoder;
+  encoderUsed: H264Encoder | "webcodecs_h264";
   outputWidth: number;
   outputHeight: number;
   fps: number;
@@ -404,25 +448,40 @@ async function logExportBenchmark(info: {
   }
 }
 
-/** Starts an ffmpeg process that assembles a video directly from a live stream of JPEG
- *  frames (PreviewCompositor's exportVideo — the SAME per-frame rendering the preview
- *  itself uses, streamed straight in rather than round-tripped through a browser video
- *  encoder first) muxed with an already-fully-rendered audio file (see renderExportAudio
- *  — a separate, deterministic offline pass; there is no live audio input here). No
- *  intermediate video file, and no ambiguity about frame timing the way the previous
- *  MediaRecorder-based capture had: `image2pipe`+`mjpeg` demuxes exactly the JPEGs it's
- *  given, in order, one per `1/fps` of output — there's nothing to coalesce or drop, and
- *  Node's own stdin backpressure (see writeFrame) means nothing gets silently discarded
- *  under load either, unlike CanvasCaptureMediaStreamTrack.requestFrame().
+/** Starts an ffmpeg process that assembles a video directly from a live stream of frames
+ *  produced by PreviewCompositor's exportVideo (the SAME per-frame rendering the preview
+ *  itself uses), muxed with an already-fully-rendered audio file (see renderExportAudio —
+ *  a separate, deterministic offline pass; there is no live audio input here). No
+ *  intermediate video file either way.
  *
- *  Video encoder is resolved via detectH264Encoder (hardware first, per-platform, with a
- *  real probe encode — see its own doc comment) and falls back to libx264 automatically,
- *  both if the probe found nothing usable and if the hardware encoder still fails once
- *  actually spawned for this export (see spawnWithFallback). Output is always MP4 + H.264
- *  + AAC either way — only which H.264 encoder does the work changes. */
+ *  `frameFormat` picks which of two pipelines runs:
+ *
+ *  - "h264" (the fast path): the renderer already encoded each frame with WebCodecs at
+ *    the final output size, so ffmpeg only muxes (`-c:v copy`) — no decode, no re-encode,
+ *    no encoder detection, and nothing here that can become the bottleneck. This exists
+ *    because per-frame `canvas.toBlob("image/jpeg")` measured ~50ms on a 1080p canvas and
+ *    does not parallelize, which was essentially all of export wall-clock time while
+ *    ffmpeg sat idle with ~155fps of spare capacity.
+ *
+ *  - "mjpeg" (fallback): the original JPEG-per-frame pipeline, used when the renderer
+ *    couldn't configure a VideoEncoder for the requested size. `image2pipe`+`mjpeg`
+ *    demuxes exactly the JPEGs it's given, in order, one per `1/fps` of output — there's
+ *    nothing to coalesce or drop, and Node's own stdin backpressure (see writeFrame)
+ *    means nothing gets silently discarded under load either, unlike
+ *    CanvasCaptureMediaStreamTrack.requestFrame(). Its video encoder is resolved via
+ *    detectH264Encoder (hardware first, per-platform, with a real probe encode) and falls
+ *    back to libx264 automatically, both if the probe found nothing usable and if the
+ *    hardware encoder still fails once actually spawned (see spawnWithFallback).
+ *
+ *  `source` is the pixel size of the frames actually arriving on stdin, which is only
+ *  ever different from `width`x`height` on the mjpeg path (where the compositor canvas is
+ *  a fixed size regardless of the chosen export resolution) — it's what decides whether a
+ *  scale filter is worth inserting at all. Output is MP4 + H.264 + AAC in every case. */
 export async function startImagePipeExport(
   outputMp4Path: string,
   audioWavPath: string | null,
+  frameFormat: ExportFrameFormat,
+  source: { width: number; height: number },
   width: number,
   height: number,
   fps: number,
@@ -430,14 +489,23 @@ export async function startImagePipeExport(
   signal?: AbortSignal
 ): Promise<ImagePipeExportHandle> {
   const exportStartedAt = Date.now();
-  const detected = await detectH264Encoder();
-  const primaryArgs = buildExportArgs(detected, audioWavPath, width, height, fps, outputMp4Path);
-  const { spawned, encoderUsed } = await spawnWithFallback(detected, primaryArgs, () =>
-    buildExportArgs("libx264", audioWavPath, width, height, fps, outputMp4Path)
-  );
+  // The mux path has no video encoder of its own to detect or fall back from — the
+  // renderer's WebCodecs encoder already did that work, so `encoderUsed` here only ever
+  // describes who encoded, for the benchmark line.
+  const detected = frameFormat === "h264" ? null : await detectH264Encoder();
+  const primaryArgs =
+    detected === null
+      ? buildMuxArgs(audioWavPath, fps, outputMp4Path)
+      : buildExportArgs(detected, audioWavPath, source, width, height, fps, outputMp4Path);
+  const { spawned, encoderUsed } =
+    detected === null
+      ? { spawned: spawnFfmpegProcess(primaryArgs), encoderUsed: "webcodecs_h264" as const }
+      : await spawnWithFallback(detected, primaryArgs, () =>
+          buildExportArgs("libx264", audioWavPath, source, width, height, fps, outputMp4Path)
+        );
   const { proc, stderrTailRef, exited } = spawned;
   logNative(
-    `[ffmpeg] export started: encoder=${encoderUsed} hardware=${encoderUsed !== "libx264"} output=${width}x${height}@${fps} args=${primaryArgs.join(" ")}`
+    `[ffmpeg] export started: format=${frameFormat} encoder=${encoderUsed} output=${width}x${height}@${fps} args=${primaryArgs.join(" ")}`
   );
 
   if (onProgress) {
@@ -468,13 +536,13 @@ export async function startImagePipeExport(
     if (code !== 0) throw new Error(`ffmpeg exited with code ${code}: ${stderrTailRef.current}`);
   });
 
-  function writeFrame(jpeg: Buffer): Promise<void> {
+  function writeFrame(frame: Buffer): Promise<void> {
     return new Promise((resolve, reject) => {
       if (proc.exitCode !== null || proc.signalCode !== null || proc.stdin.destroyed) {
         reject(new Error("ffmpeg process is no longer accepting frames"));
         return;
       }
-      const ok = proc.stdin.write(jpeg, (err) => {
+      const ok = proc.stdin.write(frame, (err) => {
         if (err) reject(err);
       });
       if (ok) resolve();

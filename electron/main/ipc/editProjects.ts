@@ -17,7 +17,13 @@ import type {
 } from "@shared/types/models";
 import { NotFoundError } from "@shared/ipc/errors";
 import * as store from "../native/editProjectStore";
-import { convertToWav, FfmpegCancelledError, type ImagePipeExportHandle, startImagePipeExport } from "../native/ffmpeg";
+import {
+  convertToWav,
+  type ExportFrameFormat,
+  FfmpegCancelledError,
+  type ImagePipeExportHandle,
+  startImagePipeExport,
+} from "../native/ffmpeg";
 
 interface ExportBeginInput {
   title: string;
@@ -26,6 +32,16 @@ interface ExportBeginInput {
   height: number;
   fps: number;
   audioWavBytes: ArrayBuffer | null;
+  /** Which pipeline the renderer is about to stream into — "h264" when it managed to
+   *  configure a WebCodecs VideoEncoder for this output size (the fast path: ffmpeg only
+   *  muxes), "mjpeg" when it fell back to encoding JPEGs on the canvas. Decided by the
+   *  renderer, since it's the side that knows whether the probe succeeded. */
+  frameFormat: ExportFrameFormat;
+  /** Pixel size of the frames that will actually arrive. Equals width/height on the h264
+   *  path; on the mjpeg path it's the compositor's fixed canvas size, which is what lets
+   *  the main process skip a pointless scale filter when they already match. */
+  sourceWidth: number;
+  sourceHeight: number;
 }
 
 interface PendingExport {
@@ -188,6 +204,8 @@ export function registerEditProjectsIpc(): void {
       const handle = await startImagePipeExport(
         result.filePath,
         tempWav,
+        input.frameFormat,
+        { width: input.sourceWidth, height: input.sourceHeight },
         input.width,
         input.height,
         input.fps,
@@ -203,10 +221,10 @@ export function registerEditProjectsIpc(): void {
     }
   );
 
-  ipcMain.handle(Channels.editProjects.exportFrame, async (_event, exportId: string, jpegBytes: ArrayBuffer): Promise<void> => {
+  ipcMain.handle(Channels.editProjects.exportFrame, async (_event, exportId: string, frameBytes: ArrayBuffer): Promise<void> => {
     const pending = pendingExports.get(exportId);
     if (!pending) throw new NotFoundError(`export ${exportId}`);
-    await pending.handle.writeFrame(Buffer.from(jpegBytes));
+    await pending.handle.writeFrame(Buffer.from(frameBytes));
   });
 
   ipcMain.handle(

@@ -219,7 +219,7 @@ const api: DoculigentApi = {
     },
     decodeAudioToWav: (filePath) => ipcRenderer.invoke(Channels.editProjects.decodeAudioToWav, filePath),
     exportBegin: (exportId, input) => ipcRenderer.invoke(Channels.editProjects.exportBegin, exportId, input),
-    exportFrame: (exportId, jpegBytes) => ipcRenderer.invoke(Channels.editProjects.exportFrame, exportId, jpegBytes),
+    exportFrame: (exportId, frameBytes) => ipcRenderer.invoke(Channels.editProjects.exportFrame, exportId, frameBytes),
     exportEnd: (exportId) => ipcRenderer.invoke(Channels.editProjects.exportEnd, exportId),
     exportCancel: (exportId) => ipcRenderer.invoke(Channels.editProjects.exportCancel, exportId),
     onExportProgress: (callback) => {

@@ -81,32 +81,44 @@ export interface PreviewCompositorHandle {
   seekMs: (ms: number) => void;
   togglePlay: () => void;
   /** Renders the export frame-by-frame (same camera/background/cursor/zoom/cuts drawing
-   *  the live preview uses) and streams it straight out via the two callbacks below,
-   *  rather than assembling a video client-side — the caller (ExportDialog) is what
-   *  actually knows how to turn a stream of frames + a rendered audio track into a file
-   *  (piping them into a main-process ffmpeg process — see startImagePipeExport), this
-   *  just drives that process with the right data at the right time. `fps` sets the
-   *  output frame rate; final export resolution/scaling is handled by the caller's own
-   *  ffmpeg pass, since this always renders at the canvas's own native pixel size. Returns
-   *  a cancelable handle rather than a bare promise so a long export can be aborted
-   *  mid-flight. */
+   *  the live preview uses) and streams it straight out via the callbacks below, rather
+   *  than assembling a video client-side — the caller (ExportDialog) is what actually
+   *  knows how to turn a stream of frames + a rendered audio track into a file (feeding
+   *  them to a main-process ffmpeg process — see startImagePipeExport), this just drives
+   *  that process with the right data at the right time.
+   *
+   *  `fps`/`width`/`height` are the real output settings: frames are rendered on a canvas
+   *  of fixed native size, then encoded at `width`x`height` by the h264 sink (which
+   *  scales, because the `-c:v copy` mux downstream cannot). On the mjpeg fallback the
+   *  canvas size is streamed as-is and ffmpeg scales instead — `beginExport` is told which
+   *  of the two is happening. Returns a cancelable handle rather than a bare promise so a
+   *  long export can be aborted mid-flight. */
   exportVideo: (opts: {
     fps: number;
+    width: number;
+    height: number;
     onProgress?: (fraction: number) => void;
     /** Runs a source file through ffmpeg and returns its audio as WAV bytes — used by the
      *  offline audio render (see renderExportAudio) instead of decoding the raw source
      *  file directly in the browser, which doesn't reliably decode a MediaRecorder-
      *  produced webm's full length (no proper duration/seek index in that container). */
     decodeAudio: (filePath: string) => Promise<ArrayBuffer>;
-    /** Called once, after audio has been fully rendered offline and before any frame is
-     *  produced — the caller uses this to open its save dialog / spawn whatever process
-     *  will receive the frames (see onFrame). Resolving false (e.g. the save dialog was
-     *  dismissed) cancels before any frame work begins. */
-    beginExport: (info: { durationSecs: number; audioWavBytes: ArrayBuffer | null }) => Promise<boolean>;
-    /** One JPEG-encoded frame (from canvas.toBlob), in output order — awaited before the
-     *  next frame is produced, which is also this pipeline's backpressure against
-     *  whatever's consuming them downstream. */
-    onFrame: (jpegBytes: ArrayBuffer) => Promise<void>;
+    /** Called once, after audio has been fully rendered offline and after the frame sink
+     *  has been chosen, but before any frame is produced — the caller uses this to open
+     *  its save dialog / spawn whatever process will receive the frames (see onFrame),
+     *  which needs `frameFormat` to know which pipeline to set up. Resolving false (e.g.
+     *  the save dialog was dismissed) cancels before any frame work begins. */
+    beginExport: (info: {
+      durationSecs: number;
+      audioWavBytes: ArrayBuffer | null;
+      frameFormat: "h264" | "mjpeg";
+      sourceWidth: number;
+      sourceHeight: number;
+    }) => Promise<boolean>;
+    /** One frame's bytes, in output order — an Annex-B H.264 access unit, or a whole JPEG
+     *  on the mjpeg fallback. Awaited before the next frame is handed over, which is this
+     *  pipeline's backpressure against whatever's consuming them downstream. */
+    onFrame: (frameBytes: ArrayBuffer) => Promise<void>;
   }) => { promise: Promise<void>; cancel: () => void };
 }
 
@@ -450,6 +462,55 @@ function drawBackdrop(
     ctx.fillRect(0, 0, w, h);
   }
   ctx.restore();
+}
+
+interface BackdropCache {
+  canvas: HTMLCanvasElement;
+  key: string;
+}
+
+/** drawBackdrop's result, memoized into an offscreen canvas and blitted per frame.
+ *
+ *  The backdrop is static for the whole of an export (and for long stretches of live
+ *  editing), but re-deriving it every frame was not free: with a background blur set,
+ *  `ctx.filter = blur(...)` over a full 1920x1080 fill measured ~40ms per frame — on top
+ *  of, and in the same main-thread budget as, the per-frame encode. Blitting a cached
+ *  bitmap instead is ~1.7ms. Rendering into a same-sized offscreen canvas and drawing it
+ *  1:1 keeps the output pixel-identical, blur's edge falloff at the canvas borders
+ *  included.
+ *
+ *  The key covers everything drawBackdrop actually reads — the settings object plus the
+ *  resolved backdrop image's identity and its decoded size, since the same `src` renders
+ *  differently (or not at all) before it has loaded. */
+function drawBackdropCached(
+  ctx: CanvasRenderingContext2D,
+  bg: BackgroundEditSettings,
+  backdropImg: HTMLImageElement | null,
+  w: number,
+  h: number,
+  cacheRef: React.MutableRefObject<BackdropCache | null>
+): void {
+  const key = `${JSON.stringify(bg)}|${backdropImg?.src ?? ""}|${backdropImg?.naturalWidth ?? 0}x${backdropImg?.naturalHeight ?? 0}|${w}x${h}`;
+  let cache = cacheRef.current;
+  if (!cache || cache.key !== key) {
+    const off = cache?.canvas ?? document.createElement("canvas");
+    if (off.width !== w || off.height !== h) {
+      off.width = w;
+      off.height = h;
+    }
+    const offCtx = off.getContext("2d");
+    // No offscreen context available (vanishingly unlikely) — just draw straight to the
+    // real canvas, exactly as this did before the cache existed.
+    if (!offCtx) {
+      drawBackdrop(ctx, bg, backdropImg, w, h);
+      return;
+    }
+    offCtx.clearRect(0, 0, w, h);
+    drawBackdrop(offCtx, bg, backdropImg, w, h);
+    cache = { canvas: off, key };
+    cacheRef.current = cache;
+  }
+  ctx.drawImage(cache.canvas, 0, 0);
 }
 
 /** The camera bubble's size for a given reference box — sizePct is always a % of that
@@ -902,6 +963,8 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         : null;
 
   const bgImageRef = useRef<HTMLImageElement | null>(null);
+  // Memoized backdrop bitmap — see drawBackdropCached.
+  const backdropCacheRef = useRef<BackdropCache | null>(null);
   useEffect(() => {
     bgImageRef.current = null;
     if (!backdropImageUrl) return;
@@ -1168,7 +1231,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
 
-      drawBackdrop(ctx, bg, bgImageRef.current, canvas.width, canvas.height);
+      drawBackdropCached(ctx, bg, bgImageRef.current, canvas.width, canvas.height, backdropCacheRef);
 
       // Clips — each has its own independent timelineStart and can freely overlap another
       // (the last one in the array wins wherever they overlap); a stretch nothing covers
@@ -2119,13 +2182,17 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     return encodeWavPcm16(rendered);
   }
 
-  /** JPEG-encodes the canvas's current pixels — the per-frame payload streamed to the
-   *  caller's onFrame (see exportVideo) instead of assembling a video client-side. JPEG,
-   *  not PNG: it's the format ffmpeg's image2pipe+mjpeg demuxer expects on the other end,
-   *  it's fast to encode (matters here — this runs once per output frame), and its lossy-
-   *  ness is inconsequential since the main process's ffmpeg pass always re-encodes to
-   *  H.264 afterward anyway (see startImagePipeExport) — this is only ever a transport
-   *  format between the two, never the final delivered quality. */
+  /** JPEG-encodes the canvas's current pixels — the per-frame payload for the mjpeg
+   *  fallback sink only (see createMjpegFrameSink). JPEG, not PNG: it's the format
+   *  ffmpeg's image2pipe+mjpeg demuxer expects on the other end, and its lossyness is
+   *  inconsequential since ffmpeg re-encodes to H.264 afterward on that path anyway.
+   *
+   *  This call is also precisely why that path is now only a fallback: measured on a
+   *  1920x1080 canvas it costs ~50ms per frame, it barely gets cheaper at lower quality
+   *  settings, and it does not parallelize (eight concurrent calls still average
+   *  ~50ms/frame) — it was single-handedly essentially all of export wall-clock time,
+   *  while ffmpeg idled with ~155fps of spare capacity. The h264 sink below does the same
+   *  job in ~15ms. */
   function canvasToJpegArrayBuffer(canvas: HTMLCanvasElement): Promise<ArrayBuffer> {
     return new Promise((resolve, reject) => {
       canvas.toBlob(
@@ -2140,6 +2207,172 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         0.92
       );
     });
+  }
+
+  /** Where each rendered output frame goes. Two implementations — createH264FrameSink
+   *  (the fast path) and createMjpegFrameSink (the fallback) — so the export loop itself
+   *  doesn't have to care which pipeline is running. */
+  interface ExportFrameSink {
+    /** Tells the main process which ffmpeg pipeline to spawn (see exportBegin). */
+    frameFormat: "h264" | "mjpeg";
+    /** Pixel size of what actually gets streamed: the target size on the h264 path (the
+     *  sink scales), the raw canvas size on the mjpeg one (ffmpeg scales). */
+    sourceWidth: number;
+    sourceHeight: number;
+    /** Hands the canvas's current pixels over as output frame `index`. Awaiting this is
+     *  the loop's backpressure; it does not imply the frame has reached ffmpeg yet. */
+    submit: (index: number) => Promise<void>;
+    /** Resolves once every submitted frame has been flushed through to onFrame. */
+    finish: () => Promise<void>;
+    close: () => void;
+  }
+
+  /** Mirrors the main process's own estimateBitrateKbps so both pipelines target the same
+   *  quality — the renderer just needs it in bits/sec rather than kbit/sec. */
+  function estimateExportBitrate(width: number, height: number, fps: number): number {
+    return Math.max(1_500_000, Math.round(width * height * fps * 0.08));
+  }
+
+  const EXPORT_KEYFRAME_INTERVAL_SECS = 2;
+  // How far the encoder and the IPC hand-off are each allowed to run ahead before submit()
+  // stops accepting new frames. Deep enough that neither starves waiting on the render
+  // loop, shallow enough that a cancel takes effect promptly and memory stays flat.
+  const EXPORT_ENCODER_QUEUE_LIMIT = 8;
+  const EXPORT_SEND_QUEUE_LIMIT = 16;
+
+  /** The fast sink: encodes each frame to H.264 here in the renderer via WebCodecs
+   *  (hardware-backed where available) and streams Annex-B access units, so the main
+   *  process only has to mux them (`-c:v copy`) — no JPEG encode here, no decode and no
+   *  re-encode there. ~15ms/frame against canvas.toBlob's ~50ms, at ~21KB per frame
+   *  against ~150KB.
+   *
+   *  Scaling happens here rather than in ffmpeg, since a copy-mux can't scale: when the
+   *  requested export size differs from the compositor's fixed canvas, frames go through
+   *  a scratch canvas at the target size first.
+   *
+   *  Chromium's AVC encoder emits exactly one chunk per submitted frame, in presentation
+   *  order, carrying the timestamps it was given — verified directly, and load-bearing,
+   *  since a raw elementary stream has no timestamps of its own and the mux assigns them
+   *  positionally from `-r`. Returns null (caller falls back to mjpeg) when WebCodecs is
+   *  missing or can't be configured for this size. */
+  async function createH264FrameSink(
+    canvas: HTMLCanvasElement,
+    width: number,
+    height: number,
+    fps: number,
+    onFrame: (bytes: ArrayBuffer) => Promise<void>
+  ): Promise<ExportFrameSink | null> {
+    if (typeof VideoEncoder === "undefined") return null;
+    const config: VideoEncoderConfig = {
+      codec: "avc1.640028", // H.264 High @ 4.0 — the same profile the ffmpeg path targets
+      width,
+      height,
+      bitrate: estimateExportBitrate(width, height, fps),
+      framerate: fps,
+      avc: { format: "annexb" },
+      latencyMode: "quality",
+    };
+    try {
+      const support = await VideoEncoder.isConfigSupported(config);
+      if (!support.supported) return null;
+    } catch {
+      return null;
+    }
+
+    let failure: Error | null = null;
+    const fail = (e: unknown) => {
+      failure ??= e instanceof Error ? e : new Error(String(e));
+    };
+    // Chunks reach onFrame strictly in order via this chain — ffmpeg's stdin is one byte
+    // stream, so two frames must never be in flight to it at once.
+    let sendChain: Promise<void> = Promise.resolve();
+    let pendingSends = 0;
+
+    const encoder = new VideoEncoder({
+      output: (chunk) => {
+        const bytes = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(bytes);
+        pendingSends += 1;
+        sendChain = sendChain
+          .then(() => onFrame(bytes.buffer))
+          .catch(fail)
+          .finally(() => {
+            pendingSends -= 1;
+          });
+      },
+      error: fail,
+    });
+    encoder.configure(config);
+
+    const needsScale = canvas.width !== width || canvas.height !== height;
+    const scratch = needsScale ? document.createElement("canvas") : null;
+    let scratchCtx: CanvasRenderingContext2D | null = null;
+    if (scratch) {
+      scratch.width = width;
+      scratch.height = height;
+      scratchCtx = scratch.getContext("2d");
+      if (!scratchCtx) {
+        encoder.close();
+        return null;
+      }
+      scratchCtx.imageSmoothingQuality = "high";
+    }
+
+    const keyFrameEvery = Math.max(1, Math.round(fps * EXPORT_KEYFRAME_INTERVAL_SECS));
+
+    return {
+      frameFormat: "h264",
+      sourceWidth: width,
+      sourceHeight: height,
+      async submit(index: number) {
+        if (failure) throw failure;
+        if (scratchCtx) scratchCtx.drawImage(canvas, 0, 0, width, height);
+        const frame = new VideoFrame(scratch ?? canvas, {
+          timestamp: Math.round((index * 1_000_000) / fps),
+          duration: Math.round(1_000_000 / fps),
+        });
+        try {
+          encoder.encode(frame, { keyFrame: index % keyFrameEvery === 0 });
+        } finally {
+          frame.close();
+        }
+        while (!failure && (encoder.encodeQueueSize > EXPORT_ENCODER_QUEUE_LIMIT || pendingSends > EXPORT_SEND_QUEUE_LIMIT)) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        if (failure) throw failure;
+      },
+      async finish() {
+        if (failure) throw failure;
+        await encoder.flush();
+        await sendChain;
+        if (failure) throw failure;
+      },
+      close() {
+        try {
+          if (encoder.state !== "closed") encoder.close();
+        } catch {
+          // Already torn down (a cancel mid-flush) — nothing left to release.
+        }
+      },
+    };
+  }
+
+  /** The fallback sink: the original JPEG-per-frame pipeline, unchanged. */
+  function createMjpegFrameSink(canvas: HTMLCanvasElement, onFrame: (bytes: ArrayBuffer) => Promise<void>): ExportFrameSink {
+    return {
+      frameFormat: "mjpeg",
+      sourceWidth: canvas.width,
+      sourceHeight: canvas.height,
+      async submit() {
+        await onFrame(await canvasToJpegArrayBuffer(canvas));
+      },
+      async finish() {
+        // Nothing buffered — submit() already awaited each frame all the way out.
+      },
+      close() {
+        // No encoder to release.
+      },
+    };
   }
 
   // Renders the export frame-by-frame, entirely decoupled from real/wall-clock time — the
@@ -2158,10 +2391,20 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   // moment it spawns.
   function exportVideo(opts: {
     fps: number;
+    /** Final output size. Needed here (rather than only in the caller) because the h264
+     *  sink encodes at exactly this size — a `-c:v copy` mux downstream can't rescale. */
+    width: number;
+    height: number;
     onProgress?: (fraction: number) => void;
     decodeAudio: (filePath: string) => Promise<ArrayBuffer>;
-    beginExport: (info: { durationSecs: number; audioWavBytes: ArrayBuffer | null }) => Promise<boolean>;
-    onFrame: (jpegBytes: ArrayBuffer) => Promise<void>;
+    beginExport: (info: {
+      durationSecs: number;
+      audioWavBytes: ArrayBuffer | null;
+      frameFormat: "h264" | "mjpeg";
+      sourceWidth: number;
+      sourceHeight: number;
+    }) => Promise<boolean>;
+    onFrame: (frameBytes: ArrayBuffer) => Promise<void>;
   }): { promise: Promise<void>; cancel: () => void } {
     const canvas = canvasRef.current;
     const screenVideo = screenVideoRef.current;
@@ -2192,8 +2435,27 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       const audioWavBytes = await renderExportAudio(totalMs, opts.decodeAudio);
       if (cancelled) throw new ExportCancelledError();
 
-      const proceed = await opts.beginExport({ durationSecs: totalMs / 1000, audioWavBytes });
-      if (!proceed || cancelled) throw new ExportCancelledError();
+      // Resolved before beginExport, since which sink we got is what decides which ffmpeg
+      // pipeline the main process spawns.
+      const sink =
+        (await createH264FrameSink(canvas, opts.width, opts.height, opts.fps, opts.onFrame)) ??
+        createMjpegFrameSink(canvas, opts.onFrame);
+      if (cancelled) {
+        sink.close();
+        throw new ExportCancelledError();
+      }
+
+      const proceed = await opts.beginExport({
+        durationSecs: totalMs / 1000,
+        audioWavBytes,
+        frameFormat: sink.frameFormat,
+        sourceWidth: sink.sourceWidth,
+        sourceHeight: sink.sourceHeight,
+      });
+      if (!proceed || cancelled) {
+        sink.close();
+        throw new ExportCancelledError();
+      }
 
       isExportingRef.current = true;
       // Both videos get played forward (sped up) during capture — audio is already fully
@@ -2219,6 +2481,13 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         // out of this export run: it's an observation about how a particular element
         // behaved just now, not a durable fact about the file.
         const reachableEndSec = new Map<HTMLVideoElement, number>();
+
+        // Per-phase wall-clock totals, logged once at the end (see the summary below).
+        // Cheap enough to leave in permanently — four performance.now() reads per frame —
+        // and it's what turns "export felt slow" into a number pointing at a phase,
+        // without having to re-derive the whole pipeline's cost breakdown by hand.
+        const phaseMs = { wait: 0, draw: 0, encode: 0 };
+        const loopStartedAt = performance.now();
 
         for (let i = 0; i < totalFrames && !cancelled; i++) {
           const targetMs = Math.min(totalMs, i * frameDurationMs);
@@ -2271,7 +2540,9 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
               waitUntilSourceTime(cameraVideo, (cameraClip.sourceStart + (targetMs - cameraClip.timelineStart)) / 1000, reachableEndSec)
             );
           }
+          const waitStartedAt = performance.now();
           if (waits.length > 0) await Promise.all(waits);
+          phaseMs.wait += performance.now() - waitStartedAt;
           // Freeze both tracks the instant this frame's target is reached — everything
           // from here down (draw, JPEG-encode, the IPC round trip to hand the frame off)
           // takes real wall-clock time, and a *playing* video keeps advancing through all
@@ -2288,19 +2559,38 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
           editedMsRef.current = targetMs;
           activeClipIdRef.current = screenClipId;
           activeCameraClipIdRef.current = cameraClipId;
+          const drawStartedAt = performance.now();
           drawFrameRef.current?.();
+          phaseMs.draw += performance.now() - drawStartedAt;
 
-          const jpegBytes = await canvasToJpegArrayBuffer(canvas);
+          const encodeStartedAt = performance.now();
+          await sink.submit(i);
+          phaseMs.encode += performance.now() - encodeStartedAt;
           if (cancelled) break;
-          await opts.onFrame(jpegBytes);
           opts.onProgress?.(i / totalFrames);
         }
         screenVideo.pause();
         cameraVideo?.pause();
 
         if (cancelled) throw new ExportCancelledError();
+        // Drains whatever the encoder and the IPC chain still hold — on the h264 path the
+        // loop above deliberately runs ahead of both, so frames are still in flight here.
+        const flushStartedAt = performance.now();
+        await sink.finish();
+        const flushMs = performance.now() - flushStartedAt;
+
+        const loopMs = performance.now() - loopStartedAt;
+        const per = (ms: number) => (ms / Math.max(1, totalFrames)).toFixed(1);
+        console.info(
+          `[export] ${sink.frameFormat} ${sink.sourceWidth}x${sink.sourceHeight}@${opts.fps} ` +
+            `frames=${totalFrames} total=${(loopMs / 1000).toFixed(1)}s ` +
+            `(${(loopMs / Math.max(1, totalMs)).toFixed(2)}x realtime) — per frame: ` +
+            `wait ${per(phaseMs.wait)}ms, draw ${per(phaseMs.draw)}ms, encode ${per(phaseMs.encode)}ms, ` +
+            `flush ${(flushMs / 1000).toFixed(1)}s total`
+        );
         opts.onProgress?.(1);
       } finally {
+        sink.close();
         isExportingRef.current = false;
         screenVideo.pause();
         screenVideo.playbackRate = 1;
@@ -2329,10 +2619,18 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     },
     exportVideo(opts: {
       fps: number;
+      width: number;
+      height: number;
       onProgress?: (fraction: number) => void;
       decodeAudio: (filePath: string) => Promise<ArrayBuffer>;
-      beginExport: (info: { durationSecs: number; audioWavBytes: ArrayBuffer | null }) => Promise<boolean>;
-      onFrame: (jpegBytes: ArrayBuffer) => Promise<void>;
+      beginExport: (info: {
+        durationSecs: number;
+        audioWavBytes: ArrayBuffer | null;
+        frameFormat: "h264" | "mjpeg";
+        sourceWidth: number;
+        sourceHeight: number;
+      }) => Promise<boolean>;
+      onFrame: (frameBytes: ArrayBuffer) => Promise<void>;
     }) {
       return exportVideo(opts);
     },
