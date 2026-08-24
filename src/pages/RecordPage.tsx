@@ -235,18 +235,36 @@ export function RecordPage() {
     const shouldShow = overlay.showCamera && captureMode !== "camera";
     if (!shouldShow) {
       window.api.cameraBubble.close().catch(() => {});
-      recordingService.cancelPrewarmedCamera();
       return;
     }
     window.api.cameraBubble
       .open({ mirror: overlay.mirrorCamera, cameraDeviceId: overlay.cameraDeviceId, blur: overlay.cameraBlur })
       .catch(() => {});
+    // Deliberately NOT keyed on `recording` — cameraBubble.open() unconditionally
+    // re-protects the window (see openCameraBubbleWindow's own setContentProtection(true)
+    // calls), which is correct for a genuine open/reconfigure but was firing again the
+    // instant `recording` flipped true, silently undoing the setContentProtected(false)
+    // RecordingService.start() had just made for Quick mode — the bubble showed up in the
+    // capture's first frame (protection still off) and then vanished for the rest of the
+    // recording (this re-open put it right back on), while staying visible on screen the
+    // whole time (content protection never hides the window itself, only what screen
+    // capture/sharing can see). The prewarm effect below still needs `recording` in its own
+    // deps; it just must never be the thing that re-triggers this open() call.
+  }, [overlay.showCamera, overlay.mirrorCamera, overlay.cameraDeviceId, overlay.cameraBlur, captureMode]);
+
+  useEffect(() => {
+    const shouldShow = overlay.showCamera && captureMode !== "camera";
+    if (!shouldShow) {
+      recordingService.cancelPrewarmedCamera();
+      return;
+    }
     // Kicks off RecordingService's own (separate — see prewarmCamera's own doc comment,
     // the bubble runs in a different renderer process and its stream can't be handed over)
-    // getUserMedia() as soon as the bubble itself opens, well ahead of "Start recording,"
-    // so that real cold-acquisition latency is spent during setup instead of after the user
-    // has already clicked start. Not once already recording — RecordingService owns the
-    // live stream for the active recording at that point, no second one needed until it ends.
+    // getUserMedia() as soon as the bubble itself is showing, well ahead of "Start
+    // recording," so that real cold-acquisition latency is spent during setup instead of
+    // after the user has already clicked start. Not once already recording —
+    // RecordingService owns the live stream for the active recording at that point, no
+    // second one needed until it ends.
     if (!recording) {
       recordingService.prewarmCamera(overlay.cameraDeviceId);
     } else {
