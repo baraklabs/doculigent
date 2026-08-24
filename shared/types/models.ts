@@ -582,10 +582,11 @@ export interface SaveRecordingSideClip {
   hasVideo: boolean;
   hasAudio: boolean;
   /** Actual container of `bytes`, as chosen by RecordingService's pickMimeType — "mp4" when
-   *  the renderer's MediaRecorder produced real H.264/AAC (preferred whenever
+   *  the renderer's MediaRecorder produced real H.264 (preferred on Windows/Linux whenever
    *  MediaRecorder.isTypeSupported confirms it's available), "webm" for the VP9/Opus
-   *  fallback. Lets the main process write the matching file extension and skip a redundant
-   *  transcode when the clip is already H.264. */
+   *  fallback, which is also what macOS always records for video (see pickMimeType's own
+   *  comment for why). Lets the main process pick the matching file extension and skip a
+   *  redundant transcode when the clip is already H.264. */
   ext: "mp4" | "webm";
 }
 

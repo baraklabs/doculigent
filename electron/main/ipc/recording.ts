@@ -9,6 +9,7 @@ import type {
   RecordingSaveResult,
   SaveAudioInput,
   SaveRecordingInput,
+  SaveRecordingSideClip,
   Video,
 } from "@shared/types/models";
 import {
@@ -167,6 +168,56 @@ async function buildFinalMp4(
   }
 }
 
+/** Lands the camera side clip in `metadata/` as what the editor will open as its camera
+ *  track (see getEditProjectMedia, which resolves whichever extension actually exists).
+ *
+ *  A WebM clip is written verbatim: it's a self-contained Matroska stream and nothing
+ *  downstream wants it changed. An MP4 one is not, and used to be — which is what made
+ *  Advanced-mode camera video freeze a few seconds in while its audio kept playing.
+ *  MediaRecorder hands back a *fragmented* MP4 (`ftyp moov moof mdat ... mfra`) whose
+ *  `moov` carries no sample table and no real duration, so anything reading it has to walk
+ *  the fragments to find frames at all. This was the one MediaRecorder output in the app
+ *  that never saw an ffmpeg pass — Quick Recording's own mp4 goes through `copyToMp4`, the
+ *  audio-only side clip through `convertToWav`, the non-native screen track through
+ *  `transcodeScreenRecording` — and so the only one that reached a player still fragmented.
+ *  `-c copy` rewrites those same already-encoded frames into an ordinary progressive mp4
+ *  with a real `moov` index: no re-encode, hundreds of times realtime, and exactly the
+ *  shape the editor's seek-driven preview and export path expect.
+ *
+ *  macOS additionally doesn't record H.264/MP4 for the camera at all any more (see
+ *  RecordingService's isMacOS) — there the fragmented file was losing video outright rather
+ *  than merely being awkward to index, which no amount of remuxing afterward can recover.
+ *
+ *  A failed ffmpeg pass falls back to the verbatim write it replaced: a fragmented camera
+ *  track is a far better outcome than no camera track at all. */
+async function writeCameraTrack(
+  id: string,
+  sideClip: SaveRecordingSideClip,
+  metaDir: string,
+  signal: AbortSignal,
+  cleanupPaths: string[]
+): Promise<void> {
+  if (sideClip.ext !== "mp4") {
+    await fs.writeFile(path.join(metaDir, `camera.${sideClip.ext}`), Buffer.from(sideClip.bytes));
+    return;
+  }
+
+  const rawCameraPath = path.join(os.tmpdir(), `${id}-camera-raw.mp4`);
+  cleanupPaths.push(rawCameraPath);
+  await fs.writeFile(rawCameraPath, Buffer.from(sideClip.bytes));
+  const cameraPath = path.join(metaDir, "camera.mp4");
+  try {
+    // No onProgress: the screen track's own pass drives the save-progress bar, and a second
+    // reporter against the same id would only fight it for the same percentage.
+    await copyToMp4(rawCameraPath, cameraPath, undefined, signal);
+  } catch (e) {
+    if (e instanceof FfmpegCancelledError) throw e;
+    console.error("[recording] camera track normalize failed — writing raw MediaRecorder output", e);
+    logNative(`[recording] camera normalize failed: id=${id} error=${String(e)}`);
+    await fs.writeFile(cameraPath, Buffer.from(sideClip.bytes));
+  }
+}
+
 /** The Advanced-mode counterpart to `buildFinalMp4` — produces the same
  *  `metadata/screen.mp4` (+ `metadata/camera.webm`, if a camera side clip was recorded)
  *  but never composites them into a single video. `cursor.json`/`camera.json` are already
@@ -191,11 +242,7 @@ async function buildEditProjectMaterials(
     await resolveScreenTrack(id, input, path.join(metaDir, "screen.mp4"), onProgress, signal, cleanupPaths);
 
     if (input.sideClip?.hasVideo) {
-      // Written verbatim, whatever the container — camera.mp4 when MediaRecorder produced
-      // real H.264/AAC, camera.webm otherwise (see getEditProjectMedia, which resolves
-      // whichever extension actually exists). Either way this is a raw byte write, no
-      // ffmpeg pass at all, so choosing H.264 here never costs an extra re-encode.
-      await fs.writeFile(path.join(metaDir, `camera.${input.sideClip.ext}`), Buffer.from(input.sideClip.bytes));
+      await writeCameraTrack(id, input.sideClip, metaDir, signal, cleanupPaths);
     } else if (input.sideClip) {
       // Audio-only side clip (mic/system audio, no camera video). RecordingService's
       // MediaRecorder always produces webm here (pickMimeType only tries H.264/MP4 for a

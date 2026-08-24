@@ -33,15 +33,33 @@ const H264_MP4_CANDIDATES = [
 ];
 const VP9_WEBM_CANDIDATES = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
 
-/** `hasVideo: false` (the mic/system-audio-only side clip — see startSideClip) skips the
- *  H.264/MP4 candidates entirely and keeps the original VP9/WebM-only behavior: those
- *  candidates all name an H.264 *video* codec, and constructing a MediaRecorder for an
- *  audio-only MediaStream against a video-codec mimeType is exactly the kind of mismatch
+function isMacOS(): boolean {
+  return window.api.system.platform === "darwin";
+}
+
+/** macOS never takes the H.264/MP4 branch, video or not. Chromium's MP4 MediaRecorder
+ *  output is a *fragmented* MP4 — `ftyp moov moof mdat moof mdat ... mfra`, one fragment
+ *  per keyframe interval, ~3.4s of media each — and on macOS only that first fragment's
+ *  video turns out to be usable: the picture stops on the frame about three seconds in,
+ *  while the audio muxed into those very same fragments plays all the way to the end.
+ *  That's the Advanced-mode camera freeze introduced in v1.3.1, which is exactly when this
+ *  function started preferring H.264/MP4 over the VP9/WebM v1.2.1 recorded (and which
+ *  never showed it). `MediaRecorder.isTypeSupported` answers true for every H.264
+ *  candidate on macOS regardless, so there's nothing to feature-detect — the platform
+ *  itself is the check. Windows/Linux keep H.264 (hardware-encoded, so materially cheaper
+ *  to produce while a recording is running, and confirmed working there), and what they
+ *  produce is rewritten out of fragmented form on its way to disk anyway — see
+ *  ipc/recording.ts's writeCameraTrack.
+ *
+ *  `hasVideo: false` (the mic/system-audio-only side clip — see startSideClip) skips the
+ *  H.264/MP4 candidates on every platform and keeps the original VP9/WebM-only behavior:
+ *  those candidates all name an H.264 *video* codec, and constructing a MediaRecorder for
+ *  an audio-only MediaStream against a video-codec mimeType is exactly the kind of mismatch
  *  isTypeSupported doesn't validate (it checks codec/container support in the abstract, not
  *  against a specific stream's actual tracks) — safest not to touch a path that already
  *  works. */
 function pickMimeType(hasVideo: boolean): MimeChoice {
-  if (hasVideo) {
+  if (hasVideo && !isMacOS()) {
     const h264 = H264_MP4_CANDIDATES.find((c) => MediaRecorder.isTypeSupported(c));
     if (h264) return { mimeType: h264, ext: "mp4" };
   }
@@ -552,6 +570,7 @@ class RecordingService {
     this.recorder.ondataavailable = (e) => {
       if (e.data.size > 0) this.chunks.push(e.data);
     };
+    this.recorder.onerror = (e) => console.error("[RecordingService] camera-only recorder error", e);
     this.recorder.start();
     console.log("[RecordingService] camera-only recorder started", { mimeType, ext });
     this.tick();
@@ -586,6 +605,7 @@ class RecordingService {
     this.sideRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) this.sideChunks.push(e.data);
     };
+    this.sideRecorder.onerror = (e) => console.error("[RecordingService] sideRecorder error", e);
     this.sideRecorder.start();
     // How far into the screen recording's own timeline this clip's t=0 falls — see
     // EditProjectMedia.sideClipStartOffsetMs. screenStartedAtMs is null only for
