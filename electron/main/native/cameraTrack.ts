@@ -3,6 +3,7 @@ import path from "node:path";
 import { app } from "electron";
 import type { CameraTrackMetadata, CameraTrackPoint } from "@shared/types/models";
 import { getCameraBubbleBounds } from "../cameraBubbleWindow";
+import { captureTimelineMs } from "./screenCapture";
 
 const SAMPLE_RATE_HZ = 20;
 const SAMPLE_INTERVAL_MS = Math.round(1000 / SAMPLE_RATE_HZ);
@@ -46,15 +47,25 @@ export function stopCameraTrack(): void {
 export async function writeCameraMetadata(recordingId: string, recordingDir: string): Promise<void> {
   const captured = track;
   track = null;
-  console.log("[cameraTrack] writeCameraMetadata", { points: captured?.points.length ?? 0 });
-  if (!captured || captured.points.length === 0) return;
+  if (!captured) return;
+
+  // Re-anchor onto the video's own timeline, same reasoning and mechanism as
+  // cursorTrack.ts's writeCursorMetadata — points were stamped as Date.now() offsets from
+  // this tracker's own start, not the video's first captured frame.
+  const points: CameraTrackPoint[] = [];
+  for (const p of captured.points) {
+    const t = captureTimelineMs(captured.startedAt + p.t);
+    if (t !== null) points.push({ ...p, t });
+  }
+  console.log("[cameraTrack] writeCameraMetadata", { points: points.length });
+  if (points.length === 0) return;
 
   const metadata: CameraTrackMetadata = {
     appVersion: app.getVersion(),
     recordingId,
     createdAt: new Date().toISOString(),
     sampleRateHz: SAMPLE_RATE_HZ,
-    points: captured.points,
+    points,
   };
 
   try {

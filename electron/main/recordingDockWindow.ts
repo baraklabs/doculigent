@@ -298,3 +298,10 @@ export function hideMainWindowForDock(): void {
 export function isMainWindowVisibleForDock(): boolean {
   return !!mainWindowRef && !mainWindowRef.isDestroyed() && mainWindowRef.isVisible();
 }
+
+/** Bounds of the main window, only when it's actually on screen -- used to keep clicks on
+ *  Doculigent's own UI out of the recorded click track (see cursorTrack.ts). */
+export function getMainWindowBounds(): Electron.Rectangle | null {
+  if (!mainWindowRef || mainWindowRef.isDestroyed() || !mainWindowRef.isVisible()) return null;
+  return mainWindowRef.getBounds();
+}

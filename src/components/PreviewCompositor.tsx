@@ -34,6 +34,14 @@ interface PreviewCompositorProps {
    *  track to carry audio instead. Always shares screenFilePath's own clip list (there's
    *  no independent editing for it) — see the draw loop's audio-only sync. */
   audioFilePath?: string;
+  /** How many ms into screenFilePath's own timeline cameraFilePath/audioFilePath's own t=0
+   *  actually falls — see EditProjectMedia.sideClipStartOffsetMs. Drives both the Camera
+   *  track's default (unedited) clip position and the audio-only element's live-preview/
+   *  export sync — without it, that side clip's video and audio both visibly lead the
+   *  screen content by exactly this much (it was recorded by a separate MediaRecorder,
+   *  started after screen capture is already rolling and after camera/mic getUserMedia
+   *  resolves). Null/undefined treated as 0 (no measurement, or genuinely no side clip). */
+  sideClipStartOffsetMs?: number | null;
   /** Recorded cursor track — screenFilePath never has the cursor burned in, so it's
    *  rendered live here from the same track used to burn it into the final export. */
   cursorMetadataPath?: string | null;
@@ -766,6 +774,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     screenFilePath,
     cameraFilePath,
     audioFilePath,
+    sideClipStartOffsetMs,
     cursorMetadataPath,
     cursorIconsDir,
     cursorBakedIn,
@@ -989,6 +998,16 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     cursorBakedInRef.current = !!cursorBakedIn;
     console.log("[PreviewCompositor] cursorBakedIn prop", { cursorBakedIn, screenFilePath });
   }, [cursorBakedIn, screenFilePath]);
+
+  // How far into screenFilePath's own timeline the Camera track's source file (and the
+  // audio-only element, when there's no camera) actually starts — see this prop's own doc
+  // comment. Read from the draw loop/export via a ref, same pattern as cursorBakedInRef,
+  // rather than a dependency, since it's static for a given project and shouldn't force
+  // those closures to be rebuilt.
+  const sideClipOffsetMsRef = useRef(sideClipStartOffsetMs ?? 0);
+  useEffect(() => {
+    sideClipOffsetMsRef.current = sideClipStartOffsetMs ?? 0;
+  }, [sideClipStartOffsetMs]);
 
   const layoutRef = useRef(layout);
   useEffect(() => {
@@ -1259,7 +1278,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       // position, which is what actually surfaced this (see waitUntilSourceTime's own
       // stall-timeout comment).
       const cameraSourceDurationMs = cameraDurationMsRef.current ?? sourceDurationMs;
-      const cameraClips = effectiveClips(timelineState.cameraClips, cameraSourceDurationMs);
+      const cameraClips = effectiveClips(timelineState.cameraClips, cameraSourceDurationMs, sideClipOffsetMsRef.current);
       let currentMs = 0;
       let totalMs = totalClipsExtentMs(cameraClips);
       let showScreenContent = false;
@@ -1350,10 +1369,18 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         // this element's live playback.
         const audioOnly = audioOnlyRef.current;
         if (audioOnly) {
-          const audioTargetSec = currentMs / 1000;
-          if (Math.abs(audioOnly.currentTime - audioTargetSec) > 0.15) audioOnly.currentTime = audioTargetSec;
-          if (!isPlayingRef.current && !audioOnly.paused) audioOnly.pause();
-          else if (isPlayingRef.current && audioOnly.paused) audioOnly.play().catch(() => {});
+          // audioOnly's own t=0 falls sideClipOffsetMsRef.current ms into currentMs's
+          // clock (see this ref's own doc comment) — before that point there's no audio to
+          // play yet, so pause rather than clamp to 0 and play whatever's actually first.
+          const offsetMs = sideClipOffsetMsRef.current;
+          if (currentMs < offsetMs) {
+            if (!audioOnly.paused) audioOnly.pause();
+          } else {
+            const audioTargetSec = (currentMs - offsetMs) / 1000;
+            if (Math.abs(audioOnly.currentTime - audioTargetSec) > 0.15) audioOnly.currentTime = audioTargetSec;
+            if (!isPlayingRef.current && !audioOnly.paused) audioOnly.pause();
+            else if (isPlayingRef.current && audioOnly.paused) audioOnly.play().catch(() => {});
+          }
         }
       }
 
@@ -1386,8 +1413,11 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       // active zoom block can center its crop on the cursor's actual position instead of
       // the screen's static center — "zoom into where the action is," not just "zoom into
       // the middle." Hoisted out here (rather than sampled again down in the cursor-draw
-      // step) so both share one binary search per frame. `cursorTMs` is source time — the
-      // same clock screenVideo.currentTime and the recorded track both run on.
+      // step) so both share one binary search per frame. `cursorTMs` is source time, and
+      // the track's own `t` values are written on exactly that clock — ms from the screen
+      // recording's first captured frame, with paused spans excluded, resolved at save time
+      // by the capture clock in electron/main/native/screenCapture.ts — so the two are
+      // directly comparable here with no offset to correct for.
       const track = cursorTrackRef.current;
       const cursorTMs = screenVideo.currentTime * 1000;
       // `pos` is null when the cursor hasn't moved recently (see `visible` below) — `point`
@@ -1881,7 +1911,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     const clips = effectiveClips(timelineRef.current.clips, sourceDurationMs);
     // See the draw loop's identical computation for why this isn't sourceDurationMs.
     const cameraSourceDurationMs = cameraDurationMsRef.current ?? sourceDurationMs;
-    const cameraClips = effectiveClips(timelineRef.current.cameraClips, cameraSourceDurationMs);
+    const cameraClips = effectiveClips(timelineRef.current.cameraClips, cameraSourceDurationMs, sideClipOffsetMsRef.current);
     const totalMs = Math.max(totalClipsExtentMs(clips), totalClipsExtentMs(cameraClips));
     editedMsRef.current = Math.max(0, Math.min(totalMs, editedMs));
     const resolved = resolveClipAt(clips, editedMsRef.current);
@@ -2147,24 +2177,29 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       // own doc comment); otherwise screenFilePath itself, for the case where it already
       // has audio muxed directly into it (the non-native screen-capture fallback).
       const sourceAudioPath = cameraFilePath ?? audioFilePath ?? screenFilePath;
+      // Only cameraFilePath/audioFilePath are a separate side clip with their own start
+      // offset (see sideClipOffsetMsRef's doc comment) — the screenFilePath fallback is
+      // one file, muxed with itself, trivially at offset 0.
+      const startSec = cameraFilePath || audioFilePath ? Math.max(0, sideClipOffsetMsRef.current / 1000) : 0;
       try {
         const wavBytes = await decodeAudio(sourceAudioPath);
         const decoded = await offlineCtx.decodeAudioData(wavBytes);
-        // One continuous, unedited buffer source spanning the whole export — not gated by
-        // either track's own clips. Neither the Camera track's pieces (see cameraClips's
-        // own independent-editing comment) nor the screen Clips track's own cuts/gaps are
-        // something the user is actually editing *audio* by touching: a gap on either
-        // track just means blank visual background for that stretch (see the draw loop's
-        // own "plays as real, silent background" comment) — real elapsed time nothing
-        // stops the underlying recording's own audio from continuing straight through, on
-        // both counts. edited-ms and raw source-ms are the same clock for audio's purposes
-        // specifically because of that: it's the one track never subject to remapping.
-        const durSec = Math.min(decoded.duration, totalMs / 1000);
+        // One continuous, unedited buffer source spanning the whole export (from startSec
+        // on) — not gated by either track's own clips. Neither the Camera track's pieces
+        // (see cameraClips's own independent-editing comment) nor the screen Clips track's
+        // own cuts/gaps are something the user is actually editing *audio* by touching: a
+        // gap on either track just means blank visual background for that stretch (see the
+        // draw loop's own "plays as real, silent background" comment) — real elapsed time
+        // nothing stops the underlying recording's own audio from continuing straight
+        // through, on both counts. edited-ms and raw source-ms are the same clock for
+        // audio's purposes specifically because of that: it's the one track never subject
+        // to remapping, past the fixed startSec shift.
+        const durSec = Math.min(decoded.duration, Math.max(0, totalMs / 1000 - startSec));
         if (durSec > 0) {
           const src = offlineCtx.createBufferSource();
           src.buffer = decoded;
           src.connect(offlineCtx.destination);
-          src.start(0, 0, durSec);
+          src.start(startSec, 0, durSec);
         }
       } catch {
         // No audio track on the source file, or it failed to decode — export just ends
@@ -2428,7 +2463,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       const clips = effectiveClips(timelineRef.current.clips, sourceDurationMs);
       // See the live draw loop's identical computation for why this isn't sourceDurationMs.
       const cameraSourceDurationMs = cameraDurationMsRef.current ?? sourceDurationMs;
-      const cameraClips = effectiveClips(timelineRef.current.cameraClips, cameraSourceDurationMs);
+      const cameraClips = effectiveClips(timelineRef.current.cameraClips, cameraSourceDurationMs, sideClipOffsetMsRef.current);
       const totalMs = Math.max(totalClipsExtentMs(clips), totalClipsExtentMs(cameraClips));
       if (totalMs <= 0) throw new Error("There's nothing on the timeline to export.");
 

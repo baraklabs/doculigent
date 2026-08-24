@@ -102,6 +102,16 @@ class RecordingService {
   private sideHasAudio = false;
   private sideExt: "mp4" | "webm" = "webm";
 
+  // Wall-clock (Date.now(), not performance.now() — needs to compare directly against the
+  // main process's own capture clock) origin of the screen recording's t=0, and how many ms
+  // after it the side clip's own separate MediaRecorder actually started — see
+  // EditProjectMedia.sideClipStartOffsetMs for why this exists and how it's used. Null
+  // until (if ever) set: screenStartedAtMs stays null for captureMode "camera" (no screen
+  // capture at all), sideClipStartOffsetMs stays null whenever startSideClip never actually
+  // starts a recorder (no camera, no mic/system audio either).
+  private screenStartedAtMs: number | null = null;
+  private sideClipStartOffsetMs: number | null = null;
+
   listCaptureTargets(): Promise<CaptureTarget[]> {
     return window.api.capture.listTargets();
   }
@@ -142,6 +152,8 @@ class RecordingService {
     this.overlay = captureMode === "camera" ? { ...overlay, showCamera: false } : overlay;
     this.mode = mode;
     this.cameraDegraded = false;
+    this.screenStartedAtMs = null;
+    this.sideClipStartOffsetMs = null;
 
     if (captureMode !== "camera" && window.api.system.platform === "darwin") {
       const permission = await window.api.capture.getPermissionStatus();
@@ -178,6 +190,22 @@ class RecordingService {
       );
       this.nativeCapture = captureResult.available;
       contentProtected = captureResult.contentProtected;
+      this.screenStartedAtMs = captureResult.startedAtMs;
+
+      // Started here rather than further down with the rest of the start sequence, because
+      // the screen is already being recorded from the line above and everything between
+      // here and there — camera and mic getUserMedia, above all, which is routinely a
+      // second or more — is footage the tracker would otherwise have no samples for,
+      // leaving the recording's opening seconds with a frozen cursor. The samples
+      // themselves are stamped in wall-clock time and mapped onto the video's own timeline
+      // at write time (see native/screenCapture.ts's capture clock), so starting early
+      // costs nothing in sync; starting late costs coverage.
+      //
+      // Advanced-only: Quick's native capture backend composites the real cursor itself
+      // (see the hideCursor comment above), so there's nothing to track for it.
+      if (mode === "advanced") {
+        window.api.cursor.startCapture(targetId, this.areaRect).catch(() => {});
+      }
     } else {
       this.nativeCapture = false;
     }
@@ -243,13 +271,9 @@ class RecordingService {
 
     this.startedAt = performance.now();
 
-    // Cursor tracking is Advanced-only — Quick's native capture backend composites the
-    // cursor itself (see hideCursor comment above), nothing left to track for it. Camera
-    // position tracking stays Advanced-only too, same reasoning as it always has: Quick
-    // burns the bubble in directly via the native capture, no tracking needed.
-    if (captureMode !== "camera" && mode === "advanced") {
-      window.api.cursor.startCapture(targetId, this.areaRect).catch(() => {});
-    }
+    // Camera position tracking stays Advanced-only, same reasoning as it always has: Quick
+    // burns the bubble in directly via the native capture, no tracking needed. (Cursor
+    // tracking starts earlier, right after the screen capture itself — see above.)
     if (this.overlay.showCamera && mode === "advanced") {
       window.api.cameraBubble.startTrack().catch(() => {});
     }
@@ -311,6 +335,11 @@ class RecordingService {
     };
     this.rawScreenRecorder.onerror = (e) => console.error("[RecordingService] rawScreenRecorder error", e);
     this.rawScreenRecorder.start();
+    // No main-process capture clock for this path (native capture didn't run at all — see
+    // screenCapture.start()'s startedAtMs) — this recorder's own start is screen t=0
+    // instead, same Date.now() clock startSideClip compares its own recorder's start
+    // against.
+    this.screenStartedAtMs = Date.now();
     console.log("[RecordingService] rawScreenRecorder started", { mimeType, ext });
   }
 
@@ -365,7 +394,16 @@ class RecordingService {
       if (e.data.size > 0) this.sideChunks.push(e.data);
     };
     this.sideRecorder.start();
-    console.log("[RecordingService] side clip recorder started", { mimeType, ext, hasVideo: this.sideHasVideo });
+    // How far into the screen recording's own timeline this clip's t=0 falls — see
+    // EditProjectMedia.sideClipStartOffsetMs. screenStartedAtMs is null only for
+    // captureMode "camera", which never reaches startSideClip at all (see start()).
+    this.sideClipStartOffsetMs = this.screenStartedAtMs !== null ? Date.now() - this.screenStartedAtMs : null;
+    console.log("[RecordingService] side clip recorder started", {
+      mimeType,
+      ext,
+      hasVideo: this.sideHasVideo,
+      sideClipStartOffsetMs: this.sideClipStartOffsetMs,
+    });
   }
 
   // Camera-only mode's own recorder — the only remaining caller, now that the screen
@@ -438,6 +476,8 @@ class RecordingService {
     this.areaRect = null;
     this.paused = false;
     this.pausedAccumMs = 0;
+    this.screenStartedAtMs = null;
+    this.sideClipStartOffsetMs = null;
   }
 
   async stop(title: string, source: "record" | "meeting", mode: "quick" | "advanced" = "quick"): Promise<{ id: string }> {
@@ -469,6 +509,8 @@ class RecordingService {
     this.areaRect = null;
     this.paused = false;
     this.pausedAccumMs = 0;
+    this.screenStartedAtMs = null;
+    this.sideClipStartOffsetMs = null;
     return result;
   }
 
@@ -511,7 +553,16 @@ class RecordingService {
     if (this.nativeCapture) {
       const { available, filePath } = await window.api.screenCapture.stop();
       if (!available || !filePath) throw new Error("native screen capture stopped with no output file");
-      return window.api.recording.save({ screenFilePath: filePath, sideClip, overlay, durationSecs, title, source, mode });
+      return window.api.recording.save({
+        screenFilePath: filePath,
+        sideClip,
+        sideClipStartOffsetMs: this.sideClipStartOffsetMs,
+        overlay,
+        durationSecs,
+        title,
+        source,
+        mode,
+      });
     }
 
     const rawScreenBlobType = this.rawScreenExt === "mp4" ? "video/mp4" : "video/webm";
@@ -534,6 +585,7 @@ class RecordingService {
       screenExt: this.rawScreenExt,
       areaRect: this.areaRect,
       sideClip,
+      sideClipStartOffsetMs: this.sideClipStartOffsetMs,
       overlay,
       durationSecs,
       title,

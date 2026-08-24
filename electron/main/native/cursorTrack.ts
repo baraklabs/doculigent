@@ -11,6 +11,7 @@ import {
   sampleCursorShape,
   FALLBACK_ICON,
 } from "./cursorIcon";
+import { captureTimelineMs } from "./screenCapture";
 
 const SAMPLE_RATE_HZ = 60;
 const SAMPLE_INTERVAL_MS = Math.round(1000 / SAMPLE_RATE_HZ);
@@ -124,6 +125,25 @@ export async function writeCursorMetadata(recordingId: string, recordingDir: str
     const iconsDir = path.join(metaDir, "cursor-icons");
     await fs.mkdir(iconsDir, { recursive: true });
 
+    // Points/clicks were stamped as Date.now() offsets from this tracker's own start
+    // (startCursorTrack fires as soon as the renderer asks for it, well before the
+    // recording's real t=0 — see RecordingService.start()), not from the video's first
+    // captured frame. Re-anchor each one onto the video's own timeline here via the main
+    // process's capture clock (see native/screenCapture.ts), now that recording has
+    // stopped and the whole mapping is known, and drop anything that lands before the
+    // video started or inside a paused span — otherwise the synthetic cursor drawn in the
+    // editor visibly leads the picture, most obviously during a drag.
+    const points: CursorTrackPoint[] = [];
+    for (const p of captured.points) {
+      const t = captureTimelineMs(captured.startedAt + p.t);
+      if (t !== null) points.push({ ...p, t });
+    }
+    const clicks: number[] = [];
+    for (const c of captured.clicks) {
+      const t = captureTimelineMs(captured.startedAt + c);
+      if (t !== null) clicks.push(t);
+    }
+
     const icons: CursorIconAsset[] = [];
     for (let i = 0; i < captured.icons.length; i++) {
       const entry = captured.icons[i];
@@ -145,8 +165,8 @@ export async function writeCursorMetadata(recordingId: string, recordingDir: str
       capture: captured.capture,
       sampleRateHz: SAMPLE_RATE_HZ,
       icons,
-      points: captured.points,
-      clicks: captured.clicks,
+      points,
+      clicks,
     };
     await fs.writeFile(path.join(metaDir, "cursor.json"), JSON.stringify(metadata), "utf-8");
     console.log("[cursorTrack] wrote cursor.json", {

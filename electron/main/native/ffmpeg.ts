@@ -805,18 +805,30 @@ export function copyVideoTranscodeAudio(
   );
 }
 
+/** `offsetMs` — how many ms after screenPath's own t=0 audioPath's own t=0 actually falls
+ *  (see EditProjectMedia.sideClipStartOffsetMs): audioPath is always a *separate*
+ *  MediaRecorder, started after screen capture is already rolling and after mic/system
+ *  getUserMedia resolves, so muxing it in unshifted plays its content hundreds of ms to
+ *  seconds too early relative to the picture. `-itsoffset` on the audio input delays its
+ *  timestamps by exactly that much before the mux, rather than shifting the video — the
+ *  video's own timestamps (and everything timed against them: the synthetic cursor
+ *  track, chapter/seek positions) stay the source of truth. */
 export function muxScreenWithAudio(
   screenPath: string,
   audioPath: string,
   outputMp4Path: string,
+  offsetMs: number,
   onProgress?: ProgressHandler,
   signal?: AbortSignal
 ): Promise<void> {
+  const offsetSecs = Math.max(0, offsetMs) / 1000;
   return run(
     [
       "-y",
       "-i",
       screenPath,
+      "-itsoffset",
+      offsetSecs.toFixed(3),
       "-i",
       audioPath,
       "-map",

@@ -1,12 +1,20 @@
 import type { TimelineClip } from "../types/models";
 
 /** An empty `clips` array means "not edited yet" — one clip spanning the whole recording,
- *  at timeline position 0. Everything below takes the *effective* list (this, if `clips`
- *  is empty) so callers never need their own special-case for the unedited state. */
-export function effectiveClips(clips: TimelineClip[], sourceDurationMs: number): TimelineClip[] {
+ *  at timeline position `defaultTimelineStart` (0 for the Clips/screen track, which
+ *  defines the shared clock; the Camera track passes its recorded
+ *  EditProjectMedia.sideClipStartOffsetMs instead, since that source file's own t=0 falls
+ *  that far into the screen recording's timeline, not at its start). Everything below
+ *  takes the *effective* list (this, if `clips` is empty) so callers never need their own
+ *  special-case for the unedited state. */
+export function effectiveClips(
+  clips: TimelineClip[],
+  sourceDurationMs: number,
+  defaultTimelineStart = 0
+): TimelineClip[] {
   if (clips.length > 0) return clips;
   if (sourceDurationMs <= 0) return [];
-  return [{ id: "__default", sourceStart: 0, sourceEnd: sourceDurationMs, timelineStart: 0 }];
+  return [{ id: "__default", sourceStart: 0, sourceEnd: sourceDurationMs, timelineStart: defaultTimelineStart }];
 }
 
 /** The edited timeline's own length — the rightmost edge of any clip's timeline span, not

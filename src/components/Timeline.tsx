@@ -51,6 +51,11 @@ interface TimelineProps {
    *  draw a full-width piece there, implying a camera track that doesn't exist), so it
    *  renders inert with no piece drawn, keeping only the row's own "Camera" label. */
   hasCamera: boolean;
+  /** How far into `sourceDurationMs` the Camera track's own recorded source file actually
+   *  starts — see EditProjectMedia.sideClipStartOffsetMs. Used as the unedited Camera
+   *  track's default piece position (see cameraClipsList), so a fresh project's timeline
+   *  reflects where that footage actually begins instead of implying it starts at 0. */
+  cameraStartOffsetMs?: number | null;
   /** Same recorded-cursor-track file PreviewCompositor reads for its live cursor overlay —
    *  fetched independently here just for its `clicks` timestamps, to drive the "auto zoom
    *  on clicks" magic button below. */
@@ -185,6 +190,7 @@ export function Timeline({
   onToolChange,
   cameraHidden,
   hasCamera,
+  cameraStartOffsetMs,
   cursorMetadataPath,
   autoZoomOnLoad,
 }: TimelineProps) {
@@ -750,7 +756,7 @@ export function Timeline({
     onChange({ ...timeline, cameraClips: next });
   }
   function cameraClipsList(): TimelineClip[] {
-    return effectiveClips(timeline.cameraClips, sourceDurationMs);
+    return effectiveClips(timeline.cameraClips, sourceDurationMs, cameraStartOffsetMs ?? 0);
   }
   function handleCameraClipBodyPointerDown(e: React.PointerEvent<HTMLDivElement>, clip: TimelineClip) {
     if (tool === "cut") return; // let it bubble to the track's cut-mode split handler below

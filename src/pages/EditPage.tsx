@@ -907,6 +907,7 @@ export function EditPage() {
                   screenFilePath={(media!.screenFilePath ?? media!.singleFilePath)!}
                   cameraFilePath={media!.cameraFilePath ?? undefined}
                   audioFilePath={media!.audioFilePath ?? undefined}
+                  sideClipStartOffsetMs={media!.sideClipStartOffsetMs}
                   cursorMetadataPath={media!.cursorMetadataPath}
                   cursorIconsDir={media!.cursorIconsDir}
                   cursorBakedIn={media!.cursorBakedIn}
@@ -953,6 +954,7 @@ export function EditPage() {
                 onToolChange={setTool}
                 cameraHidden={camera.hidden}
                 hasCamera={!!media!.cameraFilePath}
+                cameraStartOffsetMs={media!.sideClipStartOffsetMs}
                 cursorMetadataPath={media!.cursorMetadataPath}
                 autoZoomOnLoad={project ? project.timeline === undefined : false}
               />

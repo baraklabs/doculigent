@@ -103,6 +103,78 @@ type ActiveCapture = FfmpegCapture | SckCapture | WgcCapture | PipeWireCapture;
 
 let active: ActiveCapture | null = null;
 
+/** Wall-clock -> recorded-timeline mapping for the capture that is, or just was, running.
+ *
+ *  The screen recording's own t=0 is the instant its backend captured its first frame,
+ *  which is emphatically not when the renderer considers the recording started: the
+ *  capture backend is spawned first, and camera/mic acquisition (getUserMedia, hundreds of
+ *  ms to seconds) happens after it, before the cursor/camera trackers are even started.
+ *  Paused spans don't exist in the recorded file at all, either. So a tracker timestamping
+ *  its own samples against its own start, in wall-clock ms, drifts ahead of the picture by
+ *  that startup gap plus every pause -- which is exactly the synthetic cursor arriving at
+ *  the drop point before the window it is supposedly dragging does.
+ *
+ *  Trackers (native/cursorTrack.ts, native/cameraTrack.ts) therefore keep raw Date.now()
+ *  timestamps while recording and convert them through captureTimelineMs() when they
+ *  serialize, once the capture has stopped and the whole mapping is known. Deliberately
+ *  NOT cleared by stopScreenCapture: cursor.json/camera.json are written after it (see
+ *  registerRecordingIpc's save handler) and still have to resolve against it. The next
+ *  startScreenCapture resets it instead. */
+interface CaptureClock {
+  /** Date.now() at the first captured frame; null until a backend reports capturing. */
+  startedAt: number | null;
+  /** Wall-clock spans absent from the recording because it was paused. `to` stays null
+   *  while still paused. */
+  pauses: { from: number; to: number | null }[];
+}
+
+let clock: CaptureClock = { startedAt: null, pauses: [] };
+
+function clockReset(): void {
+  clock = { startedAt: null, pauses: [] };
+}
+
+/** Called the moment a backend actually starts producing frames: the first call fixes the
+ *  recording's t=0, later ones close the pause span whose resume just landed. */
+function clockCapturing(): void {
+  const now = Date.now();
+  if (clock.startedAt === null) {
+    clock.startedAt = now;
+    return;
+  }
+  const open = clock.pauses[clock.pauses.length - 1];
+  if (open && open.to === null) open.to = now;
+}
+
+function clockPaused(): void {
+  if (clock.startedAt === null) return;
+  const open = clock.pauses[clock.pauses.length - 1];
+  if (open && open.to === null) return;
+  clock.pauses.push({ from: Date.now(), to: null });
+}
+
+/** Date.now() of the recording's first captured frame, or null when no native capture ran
+ *  (a window target, or any platform/backend that fell back to getDisplayMedia). Trackers
+ *  read null as "this recording has a real cursor baked into its pixels, don't write a
+ *  synthetic track for it" -- the same condition recordMeta.json's cursorBakedIn records. */
+export function captureStartedAt(): number | null {
+  return clock.startedAt;
+}
+
+/** Maps a wall-clock instant onto the recorded video's own timeline, in ms from its first
+ *  frame. Null when no frame exists for that instant at all: before capture started, or
+ *  inside a paused span. */
+export function captureTimelineMs(at: number): number | null {
+  if (clock.startedAt === null || at < clock.startedAt) return null;
+  let pausedBefore = 0;
+  for (const pause of clock.pauses) {
+    if (at < pause.from) break;
+    if (pause.to === null || at < pause.to) return null;
+    pausedBefore += pause.to - pause.from;
+  }
+  return at - clock.startedAt - pausedBefore;
+}
+
 // Returns both the matched monitor's rect (for gdigrab's -offset_x/-offset_y/-video_size)
 // and its 0-based index within `monitors` (for WGC's Monitor::from_index — the Rust
 // helper enumerates via the identical EnumDisplayMonitors Win32 call listPhysicalMonitors
@@ -615,23 +687,66 @@ function macArgs(capture: FfmpegCapture, outputPath: string): string[] {
   ];
 }
 
-function spawnSegment(capture: FfmpegCapture): Promise<Segment | null> {
+/** `onCapturing` fires when this segment's ffmpeg has actually opened the capture device
+ *  and is about to pull frames from it. Anchored on the "Input #0, gdigrab/avfoundation"
+ *  header because ffmpeg only prints that once the device is open, which puts it within a
+ *  frame or two of the recording's real t=0. The `spawn` event is not: process launch plus
+ *  device init is 100-300ms of video that doesn't exist yet, and anything timestamped
+ *  against it lands that far ahead of the picture. */
+/** Resolves only once ffmpeg is actually capturing (its "Input #0" header, or the 4s
+ *  fallback below), not merely spawned — the caller (startScreenCapture/
+ *  resumeScreenCapture) awaits this before returning `true`/anchoring downstream state, so
+ *  resolving early on process "spawn" let `captureStartedAt()` still read null at that
+ *  point (process launch plus device init is 100-300ms ffmpeg needs before it's even
+ *  opened the capture device, well before "Input #0" prints). Confirmed live: every
+ *  recording using this path had EditProjectMedia.sideClipStartOffsetMs come back null,
+ *  because RecordingService reads screenCapture.start()'s startedAtMs synchronously right
+ *  after the call resolves — exactly the window this raced. */
+function spawnSegment(capture: FfmpegCapture, onCapturing: () => void): Promise<Segment | null> {
   const outputPath = path.join(os.tmpdir(), `doculigent-screen-${randomUUID()}.mp4`);
   const args = process.platform === "darwin" ? macArgs(capture, outputPath) : winArgs(capture, outputPath);
 
   const proc = spawn(ffmpegPath, args, { stdio: ["pipe", "ignore", "pipe"] });
   let stderr = "";
-  proc.stderr?.on("data", (d: Buffer) => {
-    stderr += d.toString();
-    if (stderr.length > 4000) stderr = stderr.slice(-4000);
-  });
   proc.once("close", (code) => {
     if (code !== 0 && code !== null) console.error(`[screenCapture] ffmpeg segment exited ${code}:`, stderr.slice(-1000));
   });
 
   return new Promise((resolve) => {
-    proc.once("spawn", () => resolve({ proc, outputPath }));
-    proc.once("error", () => resolve(null));
+    let settled = false;
+    let capturing = false;
+    const segment: Segment = { proc, outputPath };
+    const finish = (result: Segment | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(anchorTimer);
+      resolve(result);
+    };
+    const markCapturing = () => {
+      if (capturing) return;
+      capturing = true;
+      onCapturing();
+      finish(segment);
+    };
+    // Safety net only. ffmpeg always prints that header at its default log level (no
+    // -loglevel is passed anywhere here), so this firing at all means something is badly
+    // wrong with the capture -- log it and still resolve successfully (the segment/process
+    // itself may be fine) rather than let the trackers silently write nothing forever.
+    const anchorTimer = setTimeout(() => {
+      if (capturing) return;
+      logNative("[screenCapture] ffmpeg never printed its input header - capture clock anchored late");
+      markCapturing();
+    }, 4000);
+    proc.stderr?.on("data", (d: Buffer) => {
+      stderr += d.toString();
+      if (stderr.includes("Input #0")) markCapturing();
+      if (stderr.length > 4000) stderr = stderr.slice(-4000);
+    });
+    proc.once("error", () => finish(null));
+    // Died before ever reaching "Input #0"/the 4s fallback -- a real failure, not just the
+    // ordinary end-of-segment close finishSegment/finishWgcSegment trigger (which only ever
+    // happens after this promise has already settled with a real segment).
+    proc.once("exit", () => finish(null));
   });
 }
 
@@ -692,7 +807,13 @@ export async function startScreenCapture(
   area?: AreaRect,
   mode: "quick" | "advanced" = "advanced"
 ): Promise<boolean> {
-  if (active || !canCaptureTarget(targetId)) return false;
+  if (active) return false;
+  // Reset before the canCaptureTarget bail-out, not after: a window target (or any other
+  // target no native backend can capture) records through the getDisplayMedia fallback
+  // instead, and the clock has to read as "no native capture" for this recording rather
+  // than still holding the previous one's mapping.
+  clockReset();
+  if (!canCaptureTarget(targetId)) return false;
 
   if (process.platform === "win32" && mode === "quick") {
     const helperPath = await resolveWindowsCaptureHelperPath();
@@ -712,6 +833,9 @@ export async function startScreenCapture(
         };
         const segment = await spawnWgcSegment(helperPath, capture);
         if (segment) {
+          // The helper only resolves after its own "Recording started" handshake, so this
+          // is the first frame, not merely the spawn.
+          clockCapturing();
           capture.current = segment;
           active = capture;
           return true;
@@ -729,6 +853,7 @@ export async function startScreenCapture(
         const outputPath = path.join(os.tmpdir(), `doculigent-screen-${randomUUID()}.mp4`);
         const capture = await startPipeWireCapture(helperPath, outputPath, FPS);
         if (capture) {
+          clockCapturing();
           active = capture;
           return true;
         }
@@ -766,6 +891,7 @@ export async function startScreenCapture(
           showsCursor: !hideCursor,
         });
         if (capture) {
+          clockCapturing();
           active = capture;
           return true;
         }
@@ -785,7 +911,7 @@ export async function startScreenCapture(
       macDeviceIndex,
       macArea: area ?? null,
     };
-    const segment = await spawnSegment(capture);
+    const segment = await spawnSegment(capture, clockCapturing);
     if (!segment) return false;
     capture.current = segment;
     active = capture;
@@ -805,7 +931,7 @@ export async function startScreenCapture(
     : displayRect;
 
   const capture: FfmpegCapture = { kind: "ffmpeg", winRect, hideCursor, isArea: !!area, current: null, segments: [] };
-  const segment = await spawnSegment(capture);
+  const segment = await spawnSegment(capture, clockCapturing);
   if (!segment) return false;
   capture.current = segment;
   active = capture;
@@ -816,11 +942,17 @@ export async function pauseScreenCapture(): Promise<boolean> {
   if (!active) return false;
   if (active.kind === "sck" || active.kind === "pipewire") {
     active.proc.stdin?.write("pause\n");
+    clockPaused();
     return true;
   }
   if (!active.current) return false;
   const segment = active.current;
   active.current = null;
+  // Marked before the flush, not after it: the backend stops grabbing frames as soon as it
+  // sees the stop command, while finishSegment/finishWgcSegment go on waiting for the muxer
+  // to finalize the file. Counting that flush as recorded time would put everything after
+  // the pause out of step by it.
+  clockPaused();
   if (active.kind === "wgc") await finishWgcSegment(segment);
   else await finishSegment(segment);
   active.segments.push(segment.outputPath);
@@ -831,6 +963,7 @@ export async function resumeScreenCapture(): Promise<boolean> {
   if (!active) return false;
   if (active.kind === "sck" || active.kind === "pipewire") {
     active.proc.stdin?.write("resume\n");
+    clockCapturing();
     return true;
   }
   if (active.current) return false;
@@ -839,10 +972,13 @@ export async function resumeScreenCapture(): Promise<boolean> {
     if (!helperPath) return false;
     const segment = await spawnWgcSegment(helperPath, active);
     if (!segment) return false;
+    clockCapturing();
     active.current = segment;
     return true;
   }
-  const segment = await spawnSegment(active);
+  // ffmpeg anchors itself off its own stderr (see spawnSegment) rather than here -- the new
+  // segment isn't capturing yet at the moment its process spawns.
+  const segment = await spawnSegment(active, clockCapturing);
   if (!segment) return false;
   active.current = segment;
   return true;
@@ -878,6 +1014,7 @@ export async function discardScreenCapture(): Promise<void> {
   if (!active) return;
   const capture = active;
   active = null;
+  clockReset();
 
   if (capture.kind === "sck" || capture.kind === "pipewire") {
     if (!capture.proc.killed) capture.proc.kill();
@@ -892,6 +1029,7 @@ export async function discardScreenCapture(): Promise<void> {
 
 export function killPendingScreenCapture(): void {
   if (!active) return;
+  clockReset();
   if (active.kind === "sck" || active.kind === "pipewire") {
     if (!active.proc.killed) active.proc.kill();
   } else if (active.current && !active.current.proc.killed) {

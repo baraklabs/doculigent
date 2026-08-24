@@ -150,7 +150,7 @@ async function buildFinalMp4(
     const audioPath = path.join(os.tmpdir(), `${id}-side.webm`);
     cleanupPaths.push(audioPath);
     await fs.writeFile(audioPath, Buffer.from(input.sideClip.bytes));
-    await muxScreenWithAudio(tempScreenPath, audioPath, finalMp4, onProgress, signal);
+    await muxScreenWithAudio(tempScreenPath, audioPath, finalMp4, input.sideClipStartOffsetMs ?? 0, onProgress, signal);
     return;
   }
 
@@ -228,7 +228,11 @@ async function buildEditProjectMaterials(
 
   await fs.writeFile(
     path.join(metaDir, "recordMeta.json"),
-    JSON.stringify({ overlay: input.overlay, cursorBakedIn: !!input.screenBytes })
+    JSON.stringify({
+      overlay: input.overlay,
+      cursorBakedIn: !!input.screenBytes,
+      sideClipStartOffsetMs: input.sideClipStartOffsetMs ?? null,
+    })
   );
 }
 

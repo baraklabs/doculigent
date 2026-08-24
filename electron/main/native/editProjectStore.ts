@@ -362,6 +362,7 @@ const NO_MEDIA: EditProjectMedia = {
   cursorMetadataPath: null,
   cursorIconsDir: null,
   cursorBakedIn: false,
+  sideClipStartOffsetMs: null,
   recordedCamera: null,
 };
 
@@ -377,6 +378,7 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
   let recordedOverlay: OverlayConfig | null = null;
   let recordedBubbleConfig: CameraBubbleConfig | null = null;
   let cursorBakedIn = false;
+  let sideClipStartOffsetMs: number | null = null;
 
   if (project.source.kind === "video" && project.source.videoId) {
     const video = getVideo(project.source.videoId);
@@ -408,9 +410,11 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
       const meta = JSON.parse(fs.readFileSync(path.join(recDir, "metadata", "recordMeta.json"), "utf-8")) as {
         overlay?: OverlayConfig;
         cursorBakedIn?: boolean;
+        sideClipStartOffsetMs?: number | null;
       };
       recordedOverlay = meta.overlay ?? null;
       cursorBakedIn = !!meta.cursorBakedIn;
+      sideClipStartOffsetMs = meta.sideClipStartOffsetMs ?? null;
     } catch {
       // No recordMeta.json (or unreadable) — proceed with the defaults above.
     }
@@ -448,6 +452,7 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
       cursorMetadataPath: hasCursor ? cursorMetaPath : null,
       cursorIconsDir: hasCursor ? path.join(recDir, "metadata", "cursor-icons") : null,
       cursorBakedIn,
+      sideClipStartOffsetMs,
       recordedCamera: recordedOverlay ? recordedCameraSettings(recordedOverlay, recDir, recordedBubbleConfig) : null,
     };
   }
@@ -483,6 +488,9 @@ export function getEditProjectMedia(id: string): EditProjectMedia {
     cursorMetadataPath: hasCursor ? cursorMetaPath : null,
     cursorIconsDir: hasCursor ? path.join(recDir, "metadata", "cursor-icons") : null,
     cursorBakedIn,
+    // Only meaningful when there's actually a side-clip audio file to place — screenFilePath
+    // itself (audioFilePath null) has no separate clock to offset against.
+    sideClipStartOffsetMs: audioFilePath ? sideClipStartOffsetMs : null,
     recordedCamera: null,
   };
 }

@@ -542,6 +542,16 @@ export interface EditProjectMedia {
    *  synthetic cursor track on top of one of these would show two cursors, so the editor
    *  skips that render (and any style/replacement it'd otherwise offer) entirely here. */
   cursorBakedIn: boolean;
+  /** How many ms into the screen recording's own timeline cameraFilePath/audioFilePath's
+   *  own t=0 actually falls — recorded once, at save time (see RecordingService's
+   *  screenStartedAtMs/sideClipStartOffsetMs), because that side clip is always started by
+   *  a *separate* MediaRecorder, after screen capture is already rolling and after
+   *  camera/mic getUserMedia (hundreds of ms to seconds) resolves. Null when there's no
+   *  side clip at all (cameraFilePath and audioFilePath both null) or for a project with
+   *  no such measurement (predates this field). The editor's default Camera-track clip and
+   *  its audio-only playback both start from this offset instead of 0 — without it, the
+   *  camera bubble and its audio visibly lead the screen content by exactly this much. */
+  sideClipStartOffsetMs: number | null;
   /** The camera bubble config actually used at record time, mapped to edit-settings
    *  shape — used as the Camera tab's starting point (and Reset target) instead of a
    *  generic default, so untouched projects preview exactly as they were recorded. */
@@ -592,6 +602,12 @@ export interface SaveRecordingInput {
   screenExt?: "mp4" | "webm";
   areaRect?: AreaRect | null;
   sideClip?: SaveRecordingSideClip;
+  /** How many ms after the screen recording's own t=0 (see RecordingService's
+   *  screenStartedAtMs, resolved from screenCapture.start()'s startedAtMs) the sideClip's
+   *  own recorder actually started — see EditProjectMedia.sideClipStartOffsetMs, which
+   *  this becomes. Undefined when there's no sideClip, or no native/fallback screen clock
+   *  to measure it against (e.g. captureMode "camera", which has no sideClip either). */
+  sideClipStartOffsetMs?: number | null;
   overlay: OverlayConfig;
   durationSecs: number;
   title: string;

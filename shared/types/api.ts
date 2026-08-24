@@ -75,7 +75,7 @@ export interface DoculigentApi {
       hideCursor: boolean,
       area?: AreaRect,
       mode?: "quick" | "advanced"
-    ): Promise<{ available: boolean; contentProtected: boolean }>;
+    ): Promise<{ available: boolean; contentProtected: boolean; startedAtMs: number | null }>;
     stop(): Promise<{ available: boolean; filePath?: string }>;
     pause(): Promise<boolean>;
     resume(): Promise<boolean>;
