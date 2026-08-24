@@ -89,6 +89,17 @@ export function getCameraBubbleBounds(): CameraBubbleBounds | null {
   return lastBounds;
 }
 
+/** Bounds of the camera bubble, only when it's actually visible on screen -- used to keep
+ *  clicks on it out of the recorded click track (see cursorTrack.ts). Deliberately not
+ *  getCameraBubbleBounds: that one falls back to lastBounds even while hidden (e.g. during
+ *  the content-protection-unsafe window in RecordingService.start()), and a click landing
+ *  in that same screen spot while the bubble is hidden is a real click on whatever's
+ *  actually visible underneath, not on the bubble. */
+export function getCameraBubbleBoundsIfVisible(): CameraBubbleBounds | null {
+  if (!win || win.isDestroyed() || !win.isVisible()) return null;
+  return win.getBounds();
+}
+
 export function getCameraBubbleConfig(): CameraBubbleConfig {
   return lastConfig;
 }

@@ -112,6 +112,23 @@ class RecordingService {
   private screenStartedAtMs: number | null = null;
   private sideClipStartOffsetMs: number | null = null;
 
+  // Prewarm: kick camera/mic/system-audio acquisition off ahead of start() (e.g. as soon as
+  // the camera bubble opens, or as soon as a record countdown begins), so start()'s own
+  // Promise.all (see below) can consume an already-open — or at least already in-flight —
+  // stream instead of paying a cold getUserMedia()/device round-trip at record time. Purely
+  // a latency optimization: start() always awaits camera/mic/system-audio regardless (screen
+  // capture only begins once they're ready — see start()), so a missing or stale prewarm
+  // just falls back to acquiring fresh, same as if prewarming didn't exist. Each key is null
+  // when nothing's prewarmed (or the relevant device/setting means there's nothing to
+  // prewarm — muted mic, disabled system audio); a non-null key that doesn't match what
+  // start() actually needs (device changed since) is treated the same as no prewarm at all.
+  private prewarmedCameraKey: string | null = null;
+  private prewarmedCameraPromise: Promise<MediaStream> | null = null;
+  private prewarmedMicKey: string | null = null;
+  private prewarmedMicPromise: Promise<MediaStream> | null = null;
+  private prewarmedSystemAudioKey: string | null = null;
+  private prewarmedSystemAudioPromise: Promise<MediaStream> | null = null;
+
   listCaptureTargets(): Promise<CaptureTarget[]> {
     return window.api.capture.listTargets();
   }
@@ -136,6 +153,113 @@ class RecordingService {
     if (!this.overlay) return 0;
     const pausedMs = this.paused ? this.pausedAccumMs + (performance.now() - this.pauseStartedAt) : this.pausedAccumMs;
     return performance.now() - this.startedAt - pausedMs;
+  }
+
+  /** Starts acquiring the camera ahead of start() — see the prewarm fields' own doc comment.
+   *  Idempotent for an unchanged deviceId (blur/mirror never affect the raw getUserMedia
+   *  call, so they don't invalidate a prewarm); a changed deviceId tears down whatever was
+   *  prewarmed for the old one and starts over for the new one. */
+  prewarmCamera(deviceId: string | null): void {
+    const key = deviceId ?? "";
+    if (this.prewarmedCameraKey === key && this.prewarmedCameraPromise) return;
+    this.cancelPrewarmedCamera();
+    this.prewarmedCameraKey = key;
+    const promise = this.acquireCameraStream(deviceId);
+    this.prewarmedCameraPromise = promise;
+    promise.catch(() => {
+      // Self-heals a failed prewarm — clear it (if still current) so a later start() falls
+      // through to a fresh cold acquireCameraStream() call instead of replaying the same
+      // stale rejection forever.
+      if (this.prewarmedCameraPromise === promise) {
+        this.prewarmedCameraPromise = null;
+        this.prewarmedCameraKey = null;
+      }
+    });
+  }
+
+  /** Tears down an unconsumed camera prewarm — stops its tracks once/if it resolves, no-op
+   *  if nothing was prewarmed or it already failed. Call whenever whatever triggered
+   *  prewarmCamera goes away (bubble closed, device changed, component unmounted) before a
+   *  start() ever consumed it. */
+  cancelPrewarmedCamera(): void {
+    const promise = this.prewarmedCameraPromise;
+    this.prewarmedCameraPromise = null;
+    this.prewarmedCameraKey = null;
+    promise?.then(
+      (stream) => stream.getTracks().forEach((t) => t.stop()),
+      () => {}
+    );
+  }
+
+  /** Same idea as prewarmCamera, for the mic — keyed on (muted, deviceId) together; muted
+   *  means "nothing to prewarm," same as start()'s own mic handling. */
+  prewarmMic(mic: MicConfig): void {
+    if (mic.muted) {
+      this.cancelPrewarmedMic();
+      return;
+    }
+    const key = mic.deviceId ?? "";
+    if (this.prewarmedMicKey === key && this.prewarmedMicPromise) return;
+    this.cancelPrewarmedMic();
+    this.prewarmedMicKey = key;
+    const promise = navigator.mediaDevices.getUserMedia({
+      audio: mic.deviceId ? { deviceId: { exact: mic.deviceId } } : true,
+    });
+    this.prewarmedMicPromise = promise;
+    promise.catch(() => {
+      if (this.prewarmedMicPromise === promise) {
+        this.prewarmedMicPromise = null;
+        this.prewarmedMicKey = null;
+      }
+    });
+  }
+
+  cancelPrewarmedMic(): void {
+    const promise = this.prewarmedMicPromise;
+    this.prewarmedMicPromise = null;
+    this.prewarmedMicKey = null;
+    promise?.then(
+      (stream) => stream.getTracks().forEach((t) => t.stop()),
+      () => {}
+    );
+  }
+
+  /** Same idea as prewarmCamera, for system audio — keyed on (enabled, sourceId) together. */
+  prewarmSystemAudio(systemAudio: SystemAudioConfig): void {
+    if (!systemAudio.enabled || !systemAudio.sourceId) {
+      this.cancelPrewarmedSystemAudio();
+      return;
+    }
+    const key = systemAudio.sourceId;
+    if (this.prewarmedSystemAudioKey === key && this.prewarmedSystemAudioPromise) return;
+    this.cancelPrewarmedSystemAudio();
+    this.prewarmedSystemAudioKey = key;
+    const promise = getSystemAudioStream(systemAudio.sourceId);
+    this.prewarmedSystemAudioPromise = promise;
+    promise.catch(() => {
+      if (this.prewarmedSystemAudioPromise === promise) {
+        this.prewarmedSystemAudioPromise = null;
+        this.prewarmedSystemAudioKey = null;
+      }
+    });
+  }
+
+  cancelPrewarmedSystemAudio(): void {
+    const promise = this.prewarmedSystemAudioPromise;
+    this.prewarmedSystemAudioPromise = null;
+    this.prewarmedSystemAudioKey = null;
+    promise?.then(
+      (stream) => stream.getTracks().forEach((t) => t.stop()),
+      () => {}
+    );
+  }
+
+  /** Cancels every outstanding prewarm at once — used when leaving the record setup screen
+   *  entirely (unmount), where individual per-track cleanup isn't worth wiring separately. */
+  cancelAllPrewarmed(): void {
+    this.cancelPrewarmedCamera();
+    this.cancelPrewarmedMic();
+    this.cancelPrewarmedSystemAudio();
   }
 
   async start(
@@ -174,6 +298,67 @@ class RecordingService {
       await window.api.cameraBubble.setContentProtected(false).catch(() => {});
     }
 
+    // Hidden with the conservative default *before* camera/mic/system-audio acquisition
+    // (rather than right before screen capture, as it used to be) — screen capture itself
+    // now starts only after those are ready (see below), so this has to cover that whole
+    // stretch too. `contentProtected: false` always means "hide" here (see
+    // setCameraBubbleRecordingActive's shouldHide) regardless of what the real backend
+    // turns out to support, which is exactly the safe assumption to hold until screen
+    // capture actually starts and tells us the truth — revisited a few lines down.
+    await window.api.cameraBubble.setRecordingActive(true, false, showBubbleDirectly).catch(() => {});
+
+    // Camera/mic/system-audio acquisition are three independent OS/device round-trips —
+    // run them concurrently (rather than one after another) so this stretch costs whichever
+    // one is slowest, not their sum. Screen capture deliberately waits for all of this to
+    // settle (see below) rather than starting immediately, so every track's real first
+    // frame lands together — the tradeoff being that anything on screen during this stretch
+    // goes uncaptured, same as it would during the record countdown.
+    // Each obtain*Stream() consumes a matching prewarm (see prewarmCamera/prewarmMic/
+    // prewarmSystemAudio above) if one exists, falling back to a fresh cold acquisition
+    // otherwise — transparent either way to the rest of start().
+    const cameraPromise: Promise<void> =
+      captureMode === "camera" || this.overlay.showCamera
+        ? this.obtainCameraStream(overlay.cameraDeviceId).then(
+            (stream) => {
+              this.cameraStream = stream;
+            },
+            (e) => {
+              if (captureMode === "camera") throw e;
+              console.error("Camera stream unavailable for compositing into the recording — continuing without it:", e);
+              this.cameraStream = null;
+              this.cameraDegraded = true;
+            }
+          )
+        : Promise.resolve();
+    const micStreamPromise = this.obtainMicStream(mic);
+    const micPromise: Promise<void> = micStreamPromise
+      ? micStreamPromise.then((stream) => {
+          this.micStream = stream;
+        })
+      : Promise.resolve();
+    const systemAudioStreamPromise = this.obtainSystemAudioStream(systemAudio);
+    const systemAudioPromise: Promise<void> = systemAudioStreamPromise
+      ? systemAudioStreamPromise.then((stream) => {
+          this.systemAudioStream = stream;
+        })
+      : Promise.resolve();
+    await Promise.all([cameraPromise, micPromise, systemAudioPromise]);
+    this.audioTrack = this.resolveAudioTrack();
+    if (this.cameraStream) {
+      this.cameraVideoEl = document.createElement("video");
+      if (overlay.cameraBlur === "none") {
+        this.cameraVideoEl.srcObject = this.cameraStream;
+      } else {
+        this.cameraBlurHandle = applyCameraBlur(this.cameraStream, overlay.cameraBlur);
+        this.cameraVideoEl.srcObject = this.cameraBlurHandle.stream;
+      }
+      this.cameraVideoEl.muted = true;
+      await this.cameraVideoEl.play();
+    }
+
+    // Screen capture starts here — only now that camera/mic/system-audio are all settled
+    // (see the Promise.all above) — rather than at the top of start(), so its real first
+    // frame lands together with theirs instead of well ahead of them.
     let contentProtected = false;
     if (captureMode !== "camera") {
       // hideCursor is false for Quick — Quick's native capture backend composites the
@@ -192,19 +377,20 @@ class RecordingService {
       contentProtected = captureResult.contentProtected;
       this.screenStartedAtMs = captureResult.startedAtMs;
 
-      // Started here rather than further down with the rest of the start sequence, because
-      // the screen is already being recorded from the line above and everything between
-      // here and there — camera and mic getUserMedia, above all, which is routinely a
-      // second or more — is footage the tracker would otherwise have no samples for,
-      // leaving the recording's opening seconds with a frozen cursor. The samples
-      // themselves are stamped in wall-clock time and mapped onto the video's own timeline
-      // at write time (see native/screenCapture.ts's capture clock), so starting early
-      // costs nothing in sync; starting late costs coverage.
-      //
       // Advanced-only: Quick's native capture backend composites the real cursor itself
-      // (see the hideCursor comment above), so there's nothing to track for it.
+      // (see the hideCursor comment above), so there's nothing to track for it. Cursor
+      // tracking piggybacks directly on screen capture actually starting — there's no
+      // longer a coverage gap to race against, since screen capture no longer starts
+      // early either.
       if (mode === "advanced") {
         window.api.cursor.startCapture(targetId, this.areaRect).catch(() => {});
+      }
+
+      // The conservative "hide" default set before acquisition (see above) only needs
+      // revisiting when the real answer turns out to be the more permissive one — if
+      // it's still false, the bubble is already correctly hidden.
+      if (contentProtected) {
+        window.api.cameraBubble.setRecordingActive(true, true, showBubbleDirectly).catch(() => {});
       }
     } else {
       this.nativeCapture = false;
@@ -218,45 +404,6 @@ class RecordingService {
       showCamera: this.overlay.showCamera,
       areaRect: this.areaRect,
     });
-
-    // Awaited, and before any screen capture actually starts below — when contentProtected
-    // is false (and showBubbleDirectly is false too) this hides the camera bubble window
-    // outright (see setCameraBubbleRecordingActive), and that has to have already happened
-    // by the time startRawScreenRecording's getUserMedia(desktop) call grabs its first
-    // frame, or that frame (and however many follow until the hide takes effect) would
-    // still show the window.
-    await window.api.cameraBubble.setRecordingActive(true, contentProtected, showBubbleDirectly).catch(() => {});
-
-    if (captureMode === "camera" || this.overlay.showCamera) {
-      try {
-        this.cameraStream = await this.acquireCameraStream(overlay.cameraDeviceId);
-      } catch (e) {
-        if (captureMode === "camera") throw e;
-        console.error("Camera stream unavailable for compositing into the recording — continuing without it:", e);
-        this.cameraStream = null;
-        this.cameraDegraded = true;
-      }
-    }
-    if (!mic.muted) {
-      this.micStream = await navigator.mediaDevices.getUserMedia({
-        audio: mic.deviceId ? { deviceId: { exact: mic.deviceId } } : true,
-      });
-    }
-    if (systemAudio.enabled && systemAudio.sourceId) {
-      this.systemAudioStream = await getSystemAudioStream(systemAudio.sourceId);
-    }
-    this.audioTrack = this.resolveAudioTrack();
-    if (this.cameraStream) {
-      this.cameraVideoEl = document.createElement("video");
-      if (overlay.cameraBlur === "none") {
-        this.cameraVideoEl.srcObject = this.cameraStream;
-      } else {
-        this.cameraBlurHandle = applyCameraBlur(this.cameraStream, overlay.cameraBlur);
-        this.cameraVideoEl.srcObject = this.cameraBlurHandle.stream;
-      }
-      this.cameraVideoEl.muted = true;
-      await this.cameraVideoEl.play();
-    }
 
     if (captureMode === "camera") {
       await this.startCameraOnlyPipeline();
@@ -273,7 +420,7 @@ class RecordingService {
 
     // Camera position tracking stays Advanced-only, same reasoning as it always has: Quick
     // burns the bubble in directly via the native capture, no tracking needed. (Cursor
-    // tracking starts earlier, right after the screen capture itself — see above.)
+    // tracking starts right alongside screen capture itself — see above.)
     if (this.overlay.showCamera && mode === "advanced") {
       window.api.cameraBubble.startTrack().catch(() => {});
     }
@@ -288,6 +435,52 @@ class RecordingService {
     } catch {
       return navigator.mediaDevices.getUserMedia({ video: deviceConstraint });
     }
+  }
+
+  private obtainCameraStream(deviceId: string | null): Promise<MediaStream> {
+    const key = deviceId ?? "";
+    if (this.prewarmedCameraKey === key && this.prewarmedCameraPromise) {
+      const promise = this.prewarmedCameraPromise;
+      this.prewarmedCameraPromise = null;
+      this.prewarmedCameraKey = null;
+      return promise;
+    }
+    this.cancelPrewarmedCamera();
+    return this.acquireCameraStream(deviceId);
+  }
+
+  private obtainMicStream(mic: MicConfig): Promise<MediaStream> | null {
+    if (mic.muted) {
+      this.cancelPrewarmedMic();
+      return null;
+    }
+    const key = mic.deviceId ?? "";
+    if (this.prewarmedMicKey === key && this.prewarmedMicPromise) {
+      const promise = this.prewarmedMicPromise;
+      this.prewarmedMicPromise = null;
+      this.prewarmedMicKey = null;
+      return promise;
+    }
+    this.cancelPrewarmedMic();
+    return navigator.mediaDevices.getUserMedia({
+      audio: mic.deviceId ? { deviceId: { exact: mic.deviceId } } : true,
+    });
+  }
+
+  private obtainSystemAudioStream(systemAudio: SystemAudioConfig): Promise<MediaStream> | null {
+    if (!systemAudio.enabled || !systemAudio.sourceId) {
+      this.cancelPrewarmedSystemAudio();
+      return null;
+    }
+    const key = systemAudio.sourceId;
+    if (this.prewarmedSystemAudioKey === key && this.prewarmedSystemAudioPromise) {
+      const promise = this.prewarmedSystemAudioPromise;
+      this.prewarmedSystemAudioPromise = null;
+      this.prewarmedSystemAudioKey = null;
+      return promise;
+    }
+    this.cancelPrewarmedSystemAudio();
+    return getSystemAudioStream(systemAudio.sourceId);
   }
 
   private resolveAudioTrack(): MediaStreamTrack | null {

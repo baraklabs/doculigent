@@ -520,8 +520,15 @@ export function Timeline({
   function updateClips(next: TimelineClip[]) {
     onChange({ ...timeline, clips: next });
   }
+  // Shared by both tracks' default (unedited) pieces so they start *and* end together —
+  // see effectiveClips' own doc comment. Timeline.tsx doesn't know the Camera track's own
+  // real file duration (unlike PreviewCompositor, which does, via a loaded <video>
+  // element), so this assumes it's at least sourceDurationMs - the offset; good enough for
+  // where a freshly recorded project's pieces are drawn/dragged here, same approximation
+  // already accepted for cameraClipsList's own end cap below.
+  const alignedLengthMs = Math.max(0, sourceDurationMs - (cameraStartOffsetMs ?? 0));
   function clipsList(): TimelineClip[] {
-    return effectiveClips(timeline.clips, sourceDurationMs);
+    return effectiveClips(timeline.clips, sourceDurationMs, 0, alignedLengthMs, cameraStartOffsetMs ?? 0);
   }
   // A track's own pieces' edges (start and end) — what the *other* track's cut tool snaps
   // a new cut onto, so a Camera cut can land exactly where a Clips piece begins/ends (or
@@ -756,7 +763,9 @@ export function Timeline({
     onChange({ ...timeline, cameraClips: next });
   }
   function cameraClipsList(): TimelineClip[] {
-    return effectiveClips(timeline.cameraClips, sourceDurationMs, cameraStartOffsetMs ?? 0);
+    // Starts at 0, same as Clips now — see clipsList's own alignedLengthMs comment above,
+    // and effectiveClips' own doc comment for why both tracks share one end point too.
+    return effectiveClips(timeline.cameraClips, sourceDurationMs, 0, alignedLengthMs);
   }
   function handleCameraClipBodyPointerDown(e: React.PointerEvent<HTMLDivElement>, clip: TimelineClip) {
     if (tool === "cut") return; // let it bubble to the track's cut-mode split handler below
@@ -1092,9 +1101,11 @@ export function Timeline({
     // updateZooms/autoZoomFromClicks call — those would each read the same stale
     // `timeline` prop within this one synchronous handler, so only the last would stick
     // (same hazard as handleGroupDragMove/deleteSelectedPieces). Auto-zoom is computed
-    // against the *default* (uncut, full-length) clips, matching what a freshly recorded
-    // project gets — see autoZoomOnLoad.
-    const zooms = computeAutoZooms(effectiveClips(DEFAULT_TIMELINE_EDIT_SETTINGS.clips, sourceDurationMs));
+    // against the *default* (uncut, aligned-with-Camera) clips, matching what a freshly
+    // recorded project gets — see autoZoomOnLoad.
+    const zooms = computeAutoZooms(
+      effectiveClips(DEFAULT_TIMELINE_EDIT_SETTINGS.clips, sourceDurationMs, 0, alignedLengthMs, cameraStartOffsetMs ?? 0)
+    );
     onChange({ ...DEFAULT_TIMELINE_EDIT_SETTINGS, zooms });
   }
   function resetToOriginal() {
@@ -1228,7 +1239,9 @@ export function Timeline({
   }
 
   function autoZoomFromClicks() {
-    const zooms = computeAutoZooms(effectiveClips(timeline.clips, sourceDurationMs));
+    const zooms = computeAutoZooms(
+      effectiveClips(timeline.clips, sourceDurationMs, 0, alignedLengthMs, cameraStartOffsetMs ?? 0)
+    );
     if (zooms.length === 0) return;
     updateZooms(zooms);
     clearSelection();

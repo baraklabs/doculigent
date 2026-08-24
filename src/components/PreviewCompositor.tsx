@@ -1262,13 +1262,8 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       // raw source time, so those travel with the edited output, not with moved footage.
       const timelineState = timelineRef.current;
       const sourceDurationMs = (screenVideo.duration || 0) * 1000;
-      const clips = effectiveClips(timelineState.clips, sourceDurationMs);
-      // Computed up front (rather than down where the Camera track is otherwise resolved
-      // below) so its own rightmost edge can extend `totalMs` — a Camera piece dragged/
-      // trimmed past the end of the Clips track should grow the overall timeline to fit it,
-      // not get silently clipped off the end.
-      // Sized off the camera file's own duration, not the screen recording's — the two
-      // are separately captured and frequently differ by a couple of seconds (camera
+      // Sized off the camera file's own duration, not the screen recording's — the two are
+      // separately captured and frequently differ by a couple of seconds (camera
       // capture starting/stopping slightly off from screen capture), so an unedited
       // camera clip stretched to match the screen's length claims content that doesn't
       // exist in the camera file at all. Live playback just freezes on the camera's last
@@ -1278,7 +1273,21 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       // position, which is what actually surfaced this (see waitUntilSourceTime's own
       // stall-timeout comment).
       const cameraSourceDurationMs = cameraDurationMsRef.current ?? sourceDurationMs;
-      const cameraClips = effectiveClips(timelineState.cameraClips, cameraSourceDurationMs, sideClipOffsetMsRef.current);
+      // Both tracks' default (unedited) pieces share one edited length and both start at
+      // edited 0 — the shorter of "how much screen content is left once its own
+      // camera-less lead-in (sideClipOffsetMsRef) is trimmed off the front" and "how much
+      // camera content actually exists." Clips trims that lead-in off its own sourceStart
+      // (real footage, still recoverable via the trim handle — see effectiveClips' own doc
+      // comment); Camera no longer needs to start later to line up, since Clips now starts
+      // later in *source* terms instead.
+      const offsetMs = sideClipOffsetMsRef.current;
+      const alignedLengthMs = Math.min(Math.max(0, sourceDurationMs - offsetMs), cameraSourceDurationMs);
+      const clips = effectiveClips(timelineState.clips, sourceDurationMs, 0, alignedLengthMs, offsetMs);
+      // Computed up front (rather than down where the Camera track is otherwise resolved
+      // below) so its own rightmost edge can extend `totalMs` — a Camera piece dragged/
+      // trimmed past the end of the Clips track should grow the overall timeline to fit it,
+      // not get silently clipped off the end.
+      const cameraClips = effectiveClips(timelineState.cameraClips, cameraSourceDurationMs, 0, alignedLengthMs);
       let currentMs = 0;
       let totalMs = totalClipsExtentMs(cameraClips);
       let showScreenContent = false;
@@ -1908,10 +1917,12 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     const cameraVideo = cameraVideoRef.current;
     if (!screenVideo || !screenVideo.duration) return;
     const sourceDurationMs = screenVideo.duration * 1000;
-    const clips = effectiveClips(timelineRef.current.clips, sourceDurationMs);
-    // See the draw loop's identical computation for why this isn't sourceDurationMs.
+    // See the draw loop's identical computation for the reasoning behind all of this.
     const cameraSourceDurationMs = cameraDurationMsRef.current ?? sourceDurationMs;
-    const cameraClips = effectiveClips(timelineRef.current.cameraClips, cameraSourceDurationMs, sideClipOffsetMsRef.current);
+    const offsetMs = sideClipOffsetMsRef.current;
+    const alignedLengthMs = Math.min(Math.max(0, sourceDurationMs - offsetMs), cameraSourceDurationMs);
+    const clips = effectiveClips(timelineRef.current.clips, sourceDurationMs, 0, alignedLengthMs, offsetMs);
+    const cameraClips = effectiveClips(timelineRef.current.cameraClips, cameraSourceDurationMs, 0, alignedLengthMs);
     const totalMs = Math.max(totalClipsExtentMs(clips), totalClipsExtentMs(cameraClips));
     editedMsRef.current = Math.max(0, Math.min(totalMs, editedMs));
     const resolved = resolveClipAt(clips, editedMsRef.current);
@@ -2151,15 +2162,13 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   // doesn't work; see decodeAudio's own doc comment for why.
   async function renderExportAudio(
     totalMs: number,
+    // Only for click timing below (see its use at sourceToEditedMs) — audio itself is no
+    // longer clip-gated at all (see its own comment further down). Taken from the caller
+    // rather than recomputed here so it's guaranteed the exact same default/edited clips
+    // actually driving the video export, not a second, potentially drifting computation.
+    clips: TimelineClip[],
     decodeAudio: (filePath: string) => Promise<ArrayBuffer>
   ): Promise<ArrayBuffer | null> {
-    const screenVideo = screenVideoRef.current;
-    if (!screenVideo || !screenVideo.duration) return null;
-    const sourceDurationMs = screenVideo.duration * 1000;
-    // Only for click timing below — audio itself is no longer clip-gated at all (see its
-    // own comment further down).
-    const clips = effectiveClips(timelineRef.current.clips, sourceDurationMs);
-
     const muted = mutedRef.current;
     const cur = cursorRef.current;
     const track = cursorTrackRef.current;
@@ -2460,14 +2469,16 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       setPlaying(false);
 
       const sourceDurationMs = screenVideo.duration * 1000;
-      const clips = effectiveClips(timelineRef.current.clips, sourceDurationMs);
-      // See the live draw loop's identical computation for why this isn't sourceDurationMs.
+      // See the live draw loop's identical computation for the reasoning behind all of this.
       const cameraSourceDurationMs = cameraDurationMsRef.current ?? sourceDurationMs;
-      const cameraClips = effectiveClips(timelineRef.current.cameraClips, cameraSourceDurationMs, sideClipOffsetMsRef.current);
+      const offsetMs = sideClipOffsetMsRef.current;
+      const alignedLengthMs = Math.min(Math.max(0, sourceDurationMs - offsetMs), cameraSourceDurationMs);
+      const clips = effectiveClips(timelineRef.current.clips, sourceDurationMs, 0, alignedLengthMs, offsetMs);
+      const cameraClips = effectiveClips(timelineRef.current.cameraClips, cameraSourceDurationMs, 0, alignedLengthMs);
       const totalMs = Math.max(totalClipsExtentMs(clips), totalClipsExtentMs(cameraClips));
       if (totalMs <= 0) throw new Error("There's nothing on the timeline to export.");
 
-      const audioWavBytes = await renderExportAudio(totalMs, opts.decodeAudio);
+      const audioWavBytes = await renderExportAudio(totalMs, clips, opts.decodeAudio);
       if (cancelled) throw new ExportCancelledError();
 
       // Resolved before beginExport, since which sink we got is what decides which ffmpeg
@@ -2972,7 +2983,14 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     const screenVideo = screenVideoRef.current;
     if (!screenVideo || !screenVideo.duration) return;
     const sourceMs = screenVideo.currentTime * 1000;
-    const clips = effectiveClips(timelineRef.current.clips, screenVideo.duration * 1000);
+    const sourceDurationMs = screenVideo.duration * 1000;
+    // Same default-clip shape as the draw loop (see its own comment) — otherwise a cut on
+    // an unedited Clips track could split at a boundary that doesn't match what's actually
+    // shown/playing.
+    const cameraSourceDurationMs = cameraDurationMsRef.current ?? sourceDurationMs;
+    const offsetMs = sideClipOffsetMsRef.current;
+    const alignedLengthMs = Math.min(Math.max(0, sourceDurationMs - offsetMs), cameraSourceDurationMs);
+    const clips = effectiveClips(timelineRef.current.clips, sourceDurationMs, 0, alignedLengthMs, offsetMs);
     onTimelineChangeRef.current({ ...timelineRef.current, clips: splitClipAtSource(clips, sourceMs) });
   }
 

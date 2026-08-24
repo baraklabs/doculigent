@@ -12,6 +12,8 @@ import {
   FALLBACK_ICON,
 } from "./cursorIcon";
 import { captureTimelineMs } from "./screenCapture";
+import { getDockWindowBoundsIfVisible, getMainWindowBounds } from "../recordingDockWindow";
+import { getCameraBubbleBoundsIfVisible } from "../cameraBubbleWindow";
 
 const SAMPLE_RATE_HZ = 60;
 const SAMPLE_INTERVAL_MS = Math.round(1000 / SAMPLE_RATE_HZ);
@@ -85,6 +87,25 @@ function resolveIconIndex(t: ActiveTrack): number {
   return index;
 }
 
+function inside(x: number, y: number, b: { x: number; y: number; width: number; height: number } | null): boolean {
+  return !!b && x >= b.x && x < b.x + b.width && y >= b.y && y < b.y + b.height;
+}
+
+/** True for a click that shouldn't count as part of the recording — either it landed on
+ *  Doculigent's own floating UI (main window, recording dock, camera bubble — none of
+ *  which are the thing being recorded, even when one of them happens to be visible), or,
+ *  for a display/area capture, it landed on a monitor other than the one actually being
+ *  captured. Window-target captures have no known bounds to check against here (see
+ *  describeCapture) — `capture.bounds` is null for those, and inside(x, y, null) already
+ *  returns false, so this only ever excludes the Doculigent-UI cases for that kind. */
+function isOffRecordingClick(x: number, y: number, capture: CursorMetadata["capture"]): boolean {
+  if (inside(x, y, getMainWindowBounds())) return true;
+  if (inside(x, y, getDockWindowBoundsIfVisible())) return true;
+  if (inside(x, y, getCameraBubbleBoundsIfVisible())) return true;
+  if (capture.kind !== "window" && capture.bounds && !inside(x, y, capture.bounds)) return true;
+  return false;
+}
+
 export async function startCursorTrack(targetId: string, area: AreaRect | null = null): Promise<void> {
   stopCursorTrack();
   const capture = await describeCapture(targetId, area);
@@ -101,9 +122,12 @@ export async function startCursorTrack(targetId: string, area: AreaRect | null =
   timer = setInterval(() => {
     if (!track) return;
 
-    if (pollLeftButton().wasPressed) track.clicks.push(Date.now() - track.startedAt);
-
     const { x, y } = screen.getCursorScreenPoint();
+
+    if (pollLeftButton().wasPressed && !isOffRecordingClick(x, y, track.capture)) {
+      track.clicks.push(Date.now() - track.startedAt);
+    }
+
     const last = track.points[track.points.length - 1];
     if (last && last.x === x && last.y === y) return;
     track.points.push({ t: Date.now() - track.startedAt, x, y, icon: resolveIconIndex(track) });

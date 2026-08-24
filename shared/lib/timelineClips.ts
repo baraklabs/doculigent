@@ -1,20 +1,50 @@
 import type { TimelineClip } from "../types/models";
 
-/** An empty `clips` array means "not edited yet" — one clip spanning the whole recording,
- *  at timeline position `defaultTimelineStart` (0 for the Clips/screen track, which
- *  defines the shared clock; the Camera track passes its recorded
- *  EditProjectMedia.sideClipStartOffsetMs instead, since that source file's own t=0 falls
- *  that far into the screen recording's timeline, not at its start). Everything below
- *  takes the *effective* list (this, if `clips` is empty) so callers never need their own
- *  special-case for the unedited state. */
+/** An empty `clips` array means "not edited yet" — one clip spanning the whole recording
+ *  (or, once Clips/Camera need to line up — see `defaultSourceStart` below — the part of
+ *  it that's shared with the other track), at timeline position `defaultTimelineStart`
+ *  (0 for both the Clips/screen track and the Camera track: both start together on the
+ *  shared edited clock by default now — see `defaultSourceStart`). Everything below takes
+ *  the *effective* list (this, if `clips` is empty) so callers never need their own
+ *  special-case for the unedited state.
+ *
+ *  `maxTimelineEnd`, when given, caps how far past `defaultTimelineStart` the fabricated
+ *  default piece is allowed to reach — both the Clips and Camera tracks pass the same
+ *  shared "aligned length" here (the shorter of what's left in each file once
+ *  `defaultSourceStart` is trimmed off), so their default pieces always end together too,
+ *  not just start together.
+ *
+ *  `defaultSourceStart`, when given, is where in the *source* file the default piece
+ *  starts (still at edited position `defaultTimelineStart`) — the Clips/screen track
+ *  passes its recorded EditProjectMedia.sideClipStartOffsetMs here, trimming off its own
+ *  camera-less lead-in (the screen recording always starts before the camera file's own
+ *  t=0 — see sideClipStartOffsetMs's own doc comment) so it starts, on the edited
+ *  timeline, exactly where the Camera track's real content does. That lead-in remains
+ *  real, recoverable footage — same as any other trimmed clip, its sourceStart can be
+ *  dragged back out to 0 to reveal it — just not shown by default. */
 export function effectiveClips(
   clips: TimelineClip[],
   sourceDurationMs: number,
-  defaultTimelineStart = 0
+  defaultTimelineStart = 0,
+  maxTimelineEnd?: number,
+  defaultSourceStart = 0
 ): TimelineClip[] {
   if (clips.length > 0) return clips;
-  if (sourceDurationMs <= 0) return [];
-  return [{ id: "__default", sourceStart: 0, sourceEnd: sourceDurationMs, timelineStart: defaultTimelineStart }];
+  const availableMs = sourceDurationMs - defaultSourceStart;
+  if (availableMs <= 0) return [];
+  const cappedDurationMs =
+    maxTimelineEnd !== undefined
+      ? Math.min(availableMs, Math.max(0, maxTimelineEnd - defaultTimelineStart))
+      : availableMs;
+  if (cappedDurationMs <= 0) return [];
+  return [
+    {
+      id: "__default",
+      sourceStart: defaultSourceStart,
+      sourceEnd: defaultSourceStart + cappedDurationMs,
+      timelineStart: defaultTimelineStart,
+    },
+  ];
 }
 
 /** The edited timeline's own length — the rightmost edge of any clip's timeline span, not

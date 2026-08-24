@@ -305,3 +305,12 @@ export function getMainWindowBounds(): Electron.Rectangle | null {
   if (!mainWindowRef || mainWindowRef.isDestroyed() || !mainWindowRef.isVisible()) return null;
   return mainWindowRef.getBounds();
 }
+
+/** Bounds of the recording dock (the floating pause/stop/annotate bar shown while
+ *  recording), only when it's actually on screen -- same purpose as getMainWindowBounds:
+ *  clicking the dock to pause/stop/annotate is interacting with Doculigent's own UI, not
+ *  the thing being recorded, so it shouldn't show up as a click in the recorded track. */
+export function getDockWindowBoundsIfVisible(): Electron.Rectangle | null {
+  if (!win || win.isDestroyed() || !win.isVisible()) return null;
+  return win.getBounds();
+}

@@ -235,12 +235,24 @@ export function RecordPage() {
     const shouldShow = overlay.showCamera && captureMode !== "camera";
     if (!shouldShow) {
       window.api.cameraBubble.close().catch(() => {});
+      recordingService.cancelPrewarmedCamera();
       return;
     }
     window.api.cameraBubble
       .open({ mirror: overlay.mirrorCamera, cameraDeviceId: overlay.cameraDeviceId, blur: overlay.cameraBlur })
       .catch(() => {});
-  }, [overlay.showCamera, overlay.mirrorCamera, overlay.cameraDeviceId, overlay.cameraBlur, captureMode]);
+    // Kicks off RecordingService's own (separate — see prewarmCamera's own doc comment,
+    // the bubble runs in a different renderer process and its stream can't be handed over)
+    // getUserMedia() as soon as the bubble itself opens, well ahead of "Start recording,"
+    // so that real cold-acquisition latency is spent during setup instead of after the user
+    // has already clicked start. Not once already recording — RecordingService owns the
+    // live stream for the active recording at that point, no second one needed until it ends.
+    if (!recording) {
+      recordingService.prewarmCamera(overlay.cameraDeviceId);
+    } else {
+      recordingService.cancelPrewarmedCamera();
+    }
+  }, [overlay.showCamera, overlay.mirrorCamera, overlay.cameraDeviceId, overlay.cameraBlur, captureMode, recording]);
 
   useEffect(() => {
     return window.api.cameraBubble.onClosedByUser(() => {
@@ -251,6 +263,7 @@ export function RecordPage() {
   useEffect(() => {
     return () => {
       window.api.cameraBubble.close().catch(() => {});
+      recordingService.cancelAllPrewarmed();
     };
   }, []);
 
@@ -574,6 +587,19 @@ export function RecordPage() {
   }
 
   function handleStart() {
+    // Kicked off here rather than left to start() itself — mic/system-audio (and camera,
+    // as a fallback for whenever the bubble prewarm above didn't run: captureMode
+    // "camera", or the camera was only just turned on) get the whole countdown window
+    // (or, with no countdown, whatever's left before beginRecording's own start() call
+    // reaches its Promise.all) to acquire in, instead of only starting once the countdown
+    // finishes. obtainMicStream/obtainSystemAudioStream/obtainCameraStream in start()
+    // transparently consume whatever's ready by then and fall back to a cold acquisition
+    // for anything that isn't.
+    recordingService.prewarmMic(mic);
+    recordingService.prewarmSystemAudio(systemAudio);
+    if (captureMode === "camera" || overlay.showCamera) {
+      recordingService.prewarmCamera(overlay.cameraDeviceId);
+    }
     if (countdownSecs > 0) {
       window.api.recordingDock.open().catch((e) => console.error("Failed to open recording dock:", e));
       window.api.recordingDock.hideMainWindow().catch(() => {});
@@ -587,6 +613,12 @@ export function RecordPage() {
     setCountdownRemaining(null);
     window.api.recordingDock.close().catch(() => {});
     window.api.recordingDock.showMainWindow().catch(() => {});
+    // Mic/system-audio prewarms are only ever meant to bridge the countdown — cancel them so
+    // a cancelled countdown doesn't leave a mic session open indefinitely. Camera prewarm is
+    // left alone here: it's tied to the bubble (see the bubble-open effect above), which may
+    // still legitimately be open after cancelling.
+    recordingService.cancelPrewarmedMic();
+    recordingService.cancelPrewarmedSystemAudio();
   }
 
   async function handleStop() {
