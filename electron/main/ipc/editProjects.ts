@@ -209,7 +209,6 @@ export function registerEditProjectsIpc(): void {
         input.width,
         input.height,
         input.fps,
-        input.durationSecs,
         (secondsDone) => {
           if (event.sender.isDestroyed() || input.durationSecs <= 0) return;
           const percent = Math.max(0, Math.min(99, Math.round((secondsDone / input.durationSecs) * 100)));

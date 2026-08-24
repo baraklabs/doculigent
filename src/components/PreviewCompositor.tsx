@@ -1400,14 +1400,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       // piece boundary/gap crossing, same drift-tolerant approach as the screen clip
       // above, so the camera's own audio doesn't stutter from a re-seek every frame.
       const cameraVideo = cameraVideoRef.current;
-      const cameraResolvedRaw = resolveClipAt(cameraClips, currentMs);
-      // A clip (default-fabricated or a persisted user edit made before this file's own
-      // duration was known/correctly capped) can claim source content the camera file
-      // doesn't actually have. Treat "past the camera's real duration" the same as a
-      // genuine gap — hidden — rather than trusting the clip metadata and letting the
-      // video element clamp at its last real frame and just sit there.
-      const cameraResolved =
-        cameraResolvedRaw && cameraResolvedRaw.sourceMs >= cameraSourceDurationMs ? null : cameraResolvedRaw;
+      const cameraResolved = resolveClipAt(cameraClips, currentMs);
       if ((cameraResolved?.clip.id ?? null) !== activeCameraClipIdRef.current && cameraVideo) {
         if (cameraResolved) {
           cameraVideo.currentTime = cameraResolved.sourceMs / 1000;
@@ -2588,13 +2581,10 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
           if (screenClip) {
             waits.push(waitUntilSourceTime(screenVideo, (screenClip.sourceStart + (targetMs - screenClip.timelineStart)) / 1000, reachableEndSec));
           }
-          // Skipped once past the camera file's own real duration (same check as the draw
-          // loop's cameraResolved, which is what actually decides whether this frame draws
-          // it at all) — otherwise this waits on an unreachable position every single frame
-          // for however long that stretch runs, only to time out and draw nothing anyway.
-          const cameraTargetMs = cameraClip ? cameraClip.sourceStart + (targetMs - cameraClip.timelineStart) : null;
-          if (cameraClip && cameraVideo && cameraTargetMs !== null && cameraTargetMs < cameraSourceDurationMs) {
-            waits.push(waitUntilSourceTime(cameraVideo, cameraTargetMs / 1000, reachableEndSec));
+          if (cameraClip && cameraVideo) {
+            waits.push(
+              waitUntilSourceTime(cameraVideo, (cameraClip.sourceStart + (targetMs - cameraClip.timelineStart)) / 1000, reachableEndSec)
+            );
           }
           const waitStartedAt = performance.now();
           if (waits.length > 0) await Promise.all(waits);

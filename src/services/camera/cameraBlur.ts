@@ -61,7 +61,7 @@ export function applyCameraBlur(sourceStream: MediaStream, level: Exclude<Camera
   const outCtx = outCanvas.getContext("2d") as CanvasRenderingContext2D;
 
   let stopped = false;
-  let renderTimer: ReturnType<typeof setInterval> | null = null;
+  let renderRafId = 0;
   let lastMask: HTMLCanvasElement | null = null;
 
   async function inferLoop(): Promise<void> {
@@ -135,25 +135,11 @@ export function applyCameraBlur(sourceStream: MediaStream, level: Exclude<Camera
         outCtx.drawImage(personCanvas, 0, 0);
       }
     }
+    renderRafId = requestAnimationFrame(renderLoop);
   }
 
   inferLoop();
-  // setInterval, NOT requestAnimationFrame — this loop feeds outCanvas.captureStream()
-  // below, which during a recording is what RecordingService's own camera <video> element
-  // (and from there its side-clip canvas/MediaRecorder) is reading from. The main window is
-  // hidden for the whole duration of a recording, and rAF is driven by compositor frame
-  // production, which a hidden window doesn't do — so this loop would stop while
-  // captureStream kept emitting its last drawn frame, freezing the recorded camera video
-  // while its audio (an entirely separate track) carried on. Same reasoning, and the same
-  // fix, as RecordingService's tick()/sideTick(); see their comment for the full detail.
   renderLoop();
-  renderTimer = setInterval(renderLoop, Math.round(1000 / OUTPUT_FPS));
-
-  // Attached to the document (off-screen, invisible) rather than left fully detached — a
-  // <video> that is never part of the rendered tree is a Chromium power-saving throttling
-  // target in its own right, independent of the loop above.
-  video.style.cssText = "position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;";
-  document.body.appendChild(video);
 
   const stream = outCanvas.captureStream(OUTPUT_FPS);
   return {
@@ -161,11 +147,9 @@ export function applyCameraBlur(sourceStream: MediaStream, level: Exclude<Camera
     stop() {
       if (stopped) return;
       stopped = true;
-      if (renderTimer !== null) clearInterval(renderTimer);
-      renderTimer = null;
+      cancelAnimationFrame(renderRafId);
       video.pause();
       video.srcObject = null;
-      video.remove();
       stream.getTracks().forEach((t) => t.stop());
     },
   };

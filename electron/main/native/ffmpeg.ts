@@ -291,26 +291,15 @@ function videoEncoderArgs(encoder: H264Encoder, width: number, height: number, f
  *  re-encoding an already-encoded stream would only cost time and a generation of
  *  quality. `-r` on the *input* is what gives a raw elementary stream (which carries no
  *  container timestamps of its own) its frame timing. */
-// `-t durationSecs` on the output, not `-shortest` — durationSecs (the renderer's own
-// totalMs/1000, threaded down from ExportBeginInput) is already the exact length both the
-// piped video (a fixed totalFrames = totalMs*fps, written by the export loop no matter how
-// long each frame actually takes to arrive) and the audio WAV (rendered to exactly totalMs
-// via OfflineAudioContext — see renderExportAudio) are *supposed* to be, so this should be
-// a no-op in the success case. `-shortest` instead stops the output the moment ffmpeg's own
-// stream-EOF bookkeeping decides either input is "done," which is a timing judgment call —
-// on a piped, hardware-encoded (h264_videotoolbox) video stream that call can land early,
-// silently truncating the output by several seconds with no error. An explicit `-t` sidesteps
-// that judgment call entirely: ffmpeg just encodes up to that exact timestamp from whatever
-// each input actually has, deterministically, on every platform.
-function buildMuxArgs(audioWavPath: string | null, fps: number, durationSecs: number, outputMp4Path: string): string[] {
+function buildMuxArgs(audioWavPath: string | null, fps: number, outputMp4Path: string): string[] {
   const args = ["-progress", "pipe:1", "-nostats", "-y", "-f", "h264", "-r", String(fps), "-i", "pipe:0"];
   if (audioWavPath) args.push("-i", audioWavPath);
   args.push("-map", "0:v");
   if (audioWavPath) args.push("-map", "1:a");
   args.push("-c:v", "copy");
-  if (audioWavPath) args.push("-c:a", "aac", "-b:a", "192k");
+  if (audioWavPath) args.push("-c:a", "aac", "-b:a", "192k", "-shortest");
   else args.push("-an");
-  args.push("-t", durationSecs.toFixed(3), "-movflags", "+faststart", outputMp4Path);
+  args.push("-movflags", "+faststart", outputMp4Path);
   return args;
 }
 
@@ -321,7 +310,6 @@ function buildExportArgs(
   width: number,
   height: number,
   fps: number,
-  durationSecs: number,
   outputMp4Path: string
 ): string[] {
   const args = ["-progress", "pipe:1", "-nostats", "-y", "-f", "image2pipe", "-vcodec", "mjpeg", "-r", String(fps), "-i", "pipe:0"];
@@ -337,9 +325,9 @@ function buildExportArgs(
     args.push("-vf", `scale=${width}:${height}:flags=bicubic`);
   }
   args.push("-r", String(fps), ...videoEncoderArgs(encoder, width, height, fps));
-  if (audioWavPath) args.push("-c:a", "aac", "-b:a", "192k");
+  if (audioWavPath) args.push("-c:a", "aac", "-b:a", "192k", "-shortest");
   else args.push("-an");
-  args.push("-t", durationSecs.toFixed(3), "-movflags", "+faststart", outputMp4Path);
+  args.push("-movflags", "+faststart", outputMp4Path);
   return args;
 }
 
@@ -497,7 +485,6 @@ export async function startImagePipeExport(
   width: number,
   height: number,
   fps: number,
-  durationSecs: number,
   onProgress?: ProgressHandler,
   signal?: AbortSignal
 ): Promise<ImagePipeExportHandle> {
@@ -508,13 +495,13 @@ export async function startImagePipeExport(
   const detected = frameFormat === "h264" ? null : await detectH264Encoder();
   const primaryArgs =
     detected === null
-      ? buildMuxArgs(audioWavPath, fps, durationSecs, outputMp4Path)
-      : buildExportArgs(detected, audioWavPath, source, width, height, fps, durationSecs, outputMp4Path);
+      ? buildMuxArgs(audioWavPath, fps, outputMp4Path)
+      : buildExportArgs(detected, audioWavPath, source, width, height, fps, outputMp4Path);
   const { spawned, encoderUsed } =
     detected === null
       ? { spawned: spawnFfmpegProcess(primaryArgs), encoderUsed: "webcodecs_h264" as const }
       : await spawnWithFallback(detected, primaryArgs, () =>
-          buildExportArgs("libx264", audioWavPath, source, width, height, fps, durationSecs, outputMp4Path)
+          buildExportArgs("libx264", audioWavPath, source, width, height, fps, outputMp4Path)
         );
   const { proc, stderrTailRef, exited } = spawned;
   logNative(
@@ -826,7 +813,7 @@ export function copyVideoTranscodeAudio(
  *  timestamps by exactly that much before the mux, rather than shifting the video — the
  *  video's own timestamps (and everything timed against them: the synthetic cursor
  *  track, chapter/seek positions) stay the source of truth. */
-export async function muxScreenWithAudio(
+export function muxScreenWithAudio(
   screenPath: string,
   audioPath: string,
   outputMp4Path: string,
@@ -835,36 +822,29 @@ export async function muxScreenWithAudio(
   signal?: AbortSignal
 ): Promise<void> {
   const offsetSecs = Math.max(0, offsetMs) / 1000;
-  // `-t screenPath's own duration`, not `-shortest` — screenPath is the reference timeline
-  // here (audioPath is the one being shifted to line up with it, via -itsoffset above), so
-  // the output should always run exactly as long as the video, regardless of whether the
-  // shifted audio comes up short (silence for the remainder — genuinely nothing more was
-  // recorded, not a bug) or runs past it (cut off at the video's own end). `-shortest`
-  // instead bounds the output by whichever stream ffmpeg's own EOF bookkeeping decides is
-  // shorter first, which — combined with `-itsoffset` already delaying audio's effective
-  // start — silently truncated the *video* down to match audio coming up short, several
-  // seconds of real screen recording just dropped with no error.
-  const screenDurationSecs = await probeDuration(screenPath);
-  const args = [
-    "-y",
-    "-i",
-    screenPath,
-    "-itsoffset",
-    offsetSecs.toFixed(3),
-    "-i",
-    audioPath,
-    "-map",
-    "0:v",
-    "-map",
-    "1:a",
-    "-c:v",
-    "copy",
-    "-c:a",
-    "aac",
-  ];
-  if (screenDurationSecs > 0) args.push("-t", screenDurationSecs.toFixed(3));
-  args.push(outputMp4Path);
-  return run(args, onProgress, signal);
+  return run(
+    [
+      "-y",
+      "-i",
+      screenPath,
+      "-itsoffset",
+      offsetSecs.toFixed(3),
+      "-i",
+      audioPath,
+      "-map",
+      "0:v",
+      "-map",
+      "1:a",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      "-shortest",
+      outputMp4Path,
+    ],
+    onProgress,
+    signal
+  );
 }
 
 export interface CameraBubbleTrackPoint {

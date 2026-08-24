@@ -60,9 +60,7 @@ class RecordingService {
   private screenStream: MediaStream | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
-  // Interval handles, not rAF handles — see tick()/sideTick()'s own comment for why the
-  // draw loops they drive can't use requestAnimationFrame.
-  private rafId: ReturnType<typeof setInterval> | null = null;
+  private rafId: number | null = null;
   private recorder: MediaRecorder | null = null;
   private chunks: Blob[] = [];
   private cameraOnlyExt: "mp4" | "webm" = "webm";
@@ -97,17 +95,12 @@ class RecordingService {
   private nativeCapture = false;
   private sideCanvas: HTMLCanvasElement | null = null;
   private sideCtx: CanvasRenderingContext2D | null = null;
-  private sideRafId: ReturnType<typeof setInterval> | null = null;
+  private sideRafId: number | null = null;
   private sideRecorder: MediaRecorder | null = null;
   private sideChunks: Blob[] = [];
   private sideHasVideo = false;
   private sideHasAudio = false;
   private sideExt: "mp4" | "webm" = "webm";
-
-  // TEMPORARY DIAGNOSTICS (camera.mp4 freeze investigation) — remove once the cause is
-  // identified. Counts sideTick draws and samples the whole camera pipeline once a second.
-  private sideDrawCount = 0;
-  private camDiagTimer: ReturnType<typeof setInterval> | null = null;
 
   // Wall-clock (Date.now(), not performance.now() — needs to compare directly against the
   // main process's own capture clock) origin of the screen recording's t=0, and how many ms
@@ -305,15 +298,14 @@ class RecordingService {
       await window.api.cameraBubble.setContentProtected(false).catch(() => {});
     }
 
-    // Deliberately NOT calling cameraBubble.setRecordingActive here with a conservative
-    // "assume unprotected" default first: what that flag decides is whether the bubble
-    // window has to be *hidden* to keep it out of the screen capture, and no screen capture
-    // is running yet at this point (it now starts below, only once camera/mic/system-audio
-    // are ready), so there is nothing to hide it from. Doing it anyway put the bubble
-    // through a pointless hide→re-show cycle mid-startup, while its own renderer holds a
-    // live camera session on the same physical device this recording is also opening. The
-    // single call below, once screen capture has actually started and reported the real
-    // value, is both sufficient and correctly ordered.
+    // Hidden with the conservative default *before* camera/mic/system-audio acquisition
+    // (rather than right before screen capture, as it used to be) — screen capture itself
+    // now starts only after those are ready (see below), so this has to cover that whole
+    // stretch too. `contentProtected: false` always means "hide" here (see
+    // setCameraBubbleRecordingActive's shouldHide) regardless of what the real backend
+    // turns out to support, which is exactly the safe assumption to hold until screen
+    // capture actually starts and tells us the truth — revisited a few lines down.
+    await window.api.cameraBubble.setRecordingActive(true, false, showBubbleDirectly).catch(() => {});
 
     // Camera/mic/system-audio acquisition are three independent OS/device round-trips —
     // run them concurrently (rather than one after another) so this stretch costs whichever
@@ -354,17 +346,6 @@ class RecordingService {
     this.audioTrack = this.resolveAudioTrack();
     if (this.cameraStream) {
       this.cameraVideoEl = document.createElement("video");
-      // Attached to the document (off-screen, invisible) rather than left fully detached —
-      // a <video> that's never part of the rendered tree at all is a known Chromium power-
-      // saving throttling target: frame decode can slow to a crawl or stop outright after a
-      // few real seconds, independent of window/renderer-level backgrounding (which
-      // `backgroundThrottling`/disable-renderer-backgrounding, set elsewhere, don't cover —
-      // those are about timers, not per-element media decode). tick()/sideTick()'s rAF loop
-      // keeps firing either way — it just ends up copying the same stalled frame onto the
-      // canvas over and over, drawing/encoding a frozen picture while the recorder's still
-      // genuinely live audio track (a separate pipeline entirely) keeps right on going.
-      this.cameraVideoEl.style.cssText = "position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;";
-      document.body.appendChild(this.cameraVideoEl);
       if (overlay.cameraBlur === "none") {
         this.cameraVideoEl.srcObject = this.cameraStream;
       } else {
@@ -405,16 +386,15 @@ class RecordingService {
         window.api.cursor.startCapture(targetId, this.areaRect).catch(() => {});
       }
 
+      // The conservative "hide" default set before acquisition (see above) only needs
+      // revisiting when the real answer turns out to be the more permissive one — if
+      // it's still false, the bubble is already correctly hidden.
+      if (contentProtected) {
+        window.api.cameraBubble.setRecordingActive(true, true, showBubbleDirectly).catch(() => {});
+      }
     } else {
       this.nativeCapture = false;
     }
-    // The one and only call (see the note where the old conservative pre-call used to be)
-    // — awaited, and before any frames that could contain the bubble are pulled: native
-    // capture is already running by this line but hasn't been asked for output yet, and the
-    // non-native fallback's own getDisplayMedia grab happens further down still. When
-    // contentProtected is false this hides the bubble window outright (see
-    // setCameraBubbleRecordingActive), which has to have taken effect before either.
-    await window.api.cameraBubble.setRecordingActive(true, contentProtected, showBubbleDirectly).catch(() => {});
     console.log("[RecordingService] start()", {
       captureMode,
       mode,
@@ -574,7 +554,7 @@ class RecordingService {
     };
     this.recorder.start();
     console.log("[RecordingService] camera-only recorder started", { mimeType, ext });
-    this.startTickLoop();
+    this.tick();
   }
 
   private async startSideClip(overlay: OverlayConfig): Promise<void> {
@@ -594,7 +574,7 @@ class RecordingService {
       this.sideCtx = this.sideCanvas.getContext("2d");
       stream = this.sideCanvas.captureStream(FPS);
       if (this.audioTrack) stream.addTrack(this.audioTrack);
-      this.startSideTickLoop();
+      this.sideTick();
     } else {
       stream = new MediaStream([this.audioTrack!]);
     }
@@ -616,131 +596,33 @@ class RecordingService {
       ext,
       hasVideo: this.sideHasVideo,
       sideClipStartOffsetMs: this.sideClipStartOffsetMs,
-      cameraBlur: overlay.cameraBlur,
-      usingBlurPipeline: !!this.cameraBlurHandle,
     });
-    // TEMPORARY DIAGNOSTICS — see startCameraDiagnostics. Only meaningful when there's an
-    // actual camera video track being drawn/recorded.
-    if (this.sideHasVideo) this.startCameraDiagnostics(stream);
   }
 
   // Camera-only mode's own recorder — the only remaining caller, now that the screen
   // pipelines (native gdigrab and the raw-recording fallback) both burn the camera in via
   // ipc/recording.ts's ffmpeg post-process instead of a live canvas draw.
-  //
-  // setInterval, NOT requestAnimationFrame — this and sideTick below both feed a
-  // canvas.captureStream() that a MediaRecorder is actively recording, and the main window
-  // is *hidden* for the entire duration of a recording (recordingDock.hideMainWindow(),
-  // called from RecordPage's handleStart before recording even begins). rAF is driven by
-  // compositor frame production, which a hidden window doesn't do at all — so the draw loop
-  // silently stops, while captureStream happily keeps emitting the last frame that made it
-  // onto the canvas. That's a frozen video track alongside a perfectly fine audio track
-  // (separate pipeline, never touched by this loop) — i.e. exactly the frozen camera.mp4
-  // with working sound. Timers are throttled rather than stopped for hidden windows, and
-  // `backgroundThrottling: false` (window.ts) plus --disable-renderer-backgrounding
-  // (index.ts) keep even that throttling off, so an interval keeps firing where rAF won't.
   private tick = (): void => {
     if (!this.ctx || !this.canvas || !this.overlay || !this.cameraVideoEl) return;
     drawCameraFullFrame(this.ctx, this.cameraVideoEl, this.canvas.width, this.canvas.height, this.overlay.mirrorCamera);
+    this.rafId = requestAnimationFrame(this.tick);
   };
-
-  /** (Re)starts the camera-only draw loop. Draws once immediately so the very first
-   *  recorded frame isn't a blank canvas, then on a fixed FPS interval. */
-  private startTickLoop(): void {
-    this.stopTickLoop();
-    this.tick();
-    this.rafId = setInterval(this.tick, Math.round(1000 / FPS));
-  }
-
-  private stopTickLoop(): void {
-    if (this.rafId !== null) clearInterval(this.rafId);
-    this.rafId = null;
-  }
-
-  /** Side-clip (camera bubble) counterpart to startTickLoop. */
-  private startSideTickLoop(): void {
-    this.stopSideTickLoop();
-    this.sideTick();
-    this.sideRafId = setInterval(this.sideTick, Math.round(1000 / FPS));
-  }
-
-  private stopSideTickLoop(): void {
-    if (this.sideRafId !== null) clearInterval(this.sideRafId);
-    this.sideRafId = null;
-  }
 
   private sideTick = (): void => {
     if (!this.sideCtx || !this.sideCanvas || !this.cameraVideoEl || !this.overlay) return;
     drawCameraRaw(this.sideCtx, this.cameraVideoEl, this.sideCanvas.width, this.sideCanvas.height);
-    this.sideDrawCount++;
+    this.sideRafId = requestAnimationFrame(this.sideTick);
   };
-
-  /** TEMPORARY DIAGNOSTICS (camera.mp4 freeze investigation) — remove once resolved.
-   *  Samples every part of the camera pipeline once a second so a freeze can be pinned on
-   *  a specific link: the draw loop stopping, the <video> element stalling, the underlying
-   *  camera track dying/muting, the canvas capture track ending, or the recorder itself. */
-  private startCameraDiagnostics(sideStream: MediaStream): void {
-    this.stopCameraDiagnostics();
-    const startedAt = performance.now();
-    const camTrack = this.cameraStream?.getVideoTracks()[0] ?? null;
-    const blurTrack = this.cameraBlurHandle?.stream?.getVideoTracks?.()[0] ?? null;
-    const canvasTrack = sideStream.getVideoTracks()[0] ?? null;
-    const at = () => ((performance.now() - startedAt) / 1000).toFixed(1);
-
-    // These fire at the exact instant something kills the source — far more precise than
-    // the 1Hz sampler below for pinning down "why", and they name which track it was.
-    for (const [label, t] of [["camera", camTrack], ["blur", blurTrack], ["canvas", canvasTrack]] as const) {
-      if (!t) continue;
-      t.addEventListener("ended", () => console.warn(`[camDiag] ${label} track ENDED at ${at()}s`));
-      t.addEventListener("mute", () => console.warn(`[camDiag] ${label} track MUTED at ${at()}s`));
-      t.addEventListener("unmute", () => console.warn(`[camDiag] ${label} track unmuted at ${at()}s`));
-    }
-    if (this.cameraVideoEl) {
-      for (const ev of ["pause", "stalled", "suspend", "waiting", "emptied", "error", "ended"] as const) {
-        this.cameraVideoEl.addEventListener(ev, () =>
-          console.warn(`[camDiag] cameraVideoEl "${ev}" at ${at()}s`)
-        );
-      }
-    }
-
-    let lastVideoTime = -1;
-    this.camDiagTimer = setInterval(() => {
-      const v = this.cameraVideoEl;
-      const draws = this.sideDrawCount;
-      this.sideDrawCount = 0;
-      const videoTime = v ? v.currentTime : -1;
-      const advancing = videoTime > lastVideoTime;
-      lastVideoTime = videoTime;
-      const trackInfo = (t: MediaStreamTrack | null) =>
-        t ? `${t.readyState}${t.muted ? "/muted" : ""}${t.enabled ? "" : "/disabled"}` : "none";
-      console.log("[camDiag]", {
-        at: at() + "s",
-        drawsPerSec: draws,
-        videoTime: videoTime.toFixed(2),
-        videoAdvancing: advancing,
-        videoReadyState: v?.readyState,
-        videoPaused: v?.paused,
-        videoSize: v ? `${v.videoWidth}x${v.videoHeight}` : "none",
-        cameraTrack: trackInfo(camTrack),
-        blurTrack: trackInfo(blurTrack),
-        canvasTrack: trackInfo(canvasTrack),
-        recorder: this.sideRecorder?.state,
-      });
-    }, 1000);
-  }
-
-  private stopCameraDiagnostics(): void {
-    if (this.camDiagTimer !== null) clearInterval(this.camDiagTimer);
-    this.camDiagTimer = null;
-  }
 
   async pause(): Promise<void> {
     if (!this.overlay || this.paused) return;
     this.paused = true;
     this.pauseStartedAt = performance.now();
 
-    this.stopTickLoop();
-    this.stopSideTickLoop();
+    if (this.rafId !== null) cancelAnimationFrame(this.rafId);
+    this.rafId = null;
+    if (this.sideRafId !== null) cancelAnimationFrame(this.sideRafId);
+    this.sideRafId = null;
 
     if (this.recorder && this.recorder.state === "recording") this.recorder.pause();
     if (this.rawScreenRecorder && this.rawScreenRecorder.state === "recording") this.rawScreenRecorder.pause();
@@ -758,16 +640,18 @@ class RecordingService {
     if (this.sideRecorder && this.sideRecorder.state === "paused") this.sideRecorder.resume();
     if (this.nativeCapture) await window.api.screenCapture.resume().catch(() => {});
 
-    if (this.canvas) this.startTickLoop();
-    if (this.sideCanvas) this.startSideTickLoop();
+    if (this.canvas) this.tick();
+    if (this.sideCanvas) this.sideTick();
   }
 
   async discard(): Promise<void> {
     if (!this.overlay) return;
     const wasNative = this.nativeCapture;
 
-    this.stopTickLoop();
-    this.stopSideTickLoop();
+    if (this.rafId !== null) cancelAnimationFrame(this.rafId);
+    this.rafId = null;
+    if (this.sideRafId !== null) cancelAnimationFrame(this.sideRafId);
+    this.sideRafId = null;
 
     await window.api.cursor.stopCapture().catch(() => {});
     await window.api.cameraBubble.stopTrack().catch(() => {});
@@ -796,8 +680,10 @@ class RecordingService {
     const overlay = this.overlay;
     const captureMode = this.captureMode;
 
-    this.stopTickLoop();
-    this.stopSideTickLoop();
+    if (this.rafId !== null) cancelAnimationFrame(this.rafId);
+    this.rafId = null;
+    if (this.sideRafId !== null) cancelAnimationFrame(this.sideRafId);
+    this.sideRafId = null;
 
     await window.api.cursor.stopCapture().catch(() => {});
     await window.api.cameraBubble.stopTrack().catch(() => {});
@@ -916,7 +802,6 @@ class RecordingService {
   }
 
   private cleanupStreams(): void {
-    this.stopCameraDiagnostics();
     this.cameraBlurHandle?.stop();
     this.cameraBlurHandle = null;
     for (const stream of [this.screenStream, this.cameraStream, this.micStream, this.systemAudioStream]) {
@@ -929,7 +814,6 @@ class RecordingService {
     this.audioMixCtx?.close();
     this.audioMixCtx = null;
     this.audioTrack = null;
-    this.cameraVideoEl?.remove();
     this.cameraVideoEl = null;
     this.canvas = null;
     this.ctx = null;
