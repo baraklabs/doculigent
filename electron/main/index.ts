@@ -20,6 +20,19 @@ if (process.platform === "win32") {
   app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
 }
 
+// The main window is deliberately hidden for the whole duration of a recording (see
+// hideMainWindowForDock, called as soon as the recording dock opens) — but its renderer is
+// still doing real work the entire time: RecordingService's camera side-clip is a live
+// canvas fed by a requestAnimationFrame loop (see sideTick), and a MediaRecorder pulling
+// frames from it. `backgroundThrottling: false` on the window itself (window.ts) only
+// disables Chromium's own timer/rAF throttling for a hidden *window* — it doesn't stop the
+// OS/Chromium from deprioritizing the *renderer process's* scheduling once nothing is
+// visibly showing it, which can still starve that rAF loop over a long-enough hidden
+// stretch (most visibly on macOS). Without this, the canvas silently stops getting new
+// frames well before the MediaRecorder (and the still-live audio track) actually stop,
+// producing a camera.mp4 with a frozen video tail and continuing audio.
+app.commandLine.appendSwitch("disable-renderer-backgrounding");
+
 function buildDarwinMenu(): Menu {
   return Menu.buildFromTemplate([
     {

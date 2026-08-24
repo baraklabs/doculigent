@@ -1,5 +1,5 @@
 
-import { BrowserWindow, screen } from "electron";
+import { BrowserWindow, powerSaveBlocker, screen } from "electron";
 import path from "node:path";
 import { Channels } from "@shared/constants/channels";
 import type {
@@ -161,7 +161,30 @@ export function getRecordingDockAnchorBounds(): RecordingDockBounds {
     : { x: b.x + POPOVER_RESERVE, y: b.y + TOOLTIP_HEADROOM, width: b.width - POPOVER_RESERVE, height: b.height - TOOLTIP_HEADROOM };
 }
 
+// Held for exactly the span the dock is open, i.e. exactly an active recording (see
+// RecordPage.tsx's `if (recording) { recordingDock.open() } else { recordingDock.close() }`).
+// Chromium's own `backgroundThrottling: false` (window.ts) keeps the main window's own
+// timers/rAF running while it's hidden during a recording, but that's a renderer-level
+// setting — it doesn't stop the OS itself from suspending the whole app under macOS's App
+// Nap once nothing is visibly active, which throttles everything, disable-renderer-
+// backgrounding included. 'prevent-app-suspension' is the blocker type App Nap actually
+// respects; requesting it is a no-op on platforms without App Nap (Windows/Linux), so this
+// doesn't need a platform check.
+let powerSaveBlockerId: number | null = null;
+
+function startRecordingPowerSaveBlocker(): void {
+  if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) return;
+  powerSaveBlockerId = powerSaveBlocker.start("prevent-app-suspension");
+}
+
+function stopRecordingPowerSaveBlocker(): void {
+  if (powerSaveBlockerId === null) return;
+  if (powerSaveBlocker.isStarted(powerSaveBlockerId)) powerSaveBlocker.stop(powerSaveBlockerId);
+  powerSaveBlockerId = null;
+}
+
 export function openRecordingDockWindow(): void {
+  startRecordingPowerSaveBlocker();
   if (win && !win.isDestroyed()) {
     win.webContents.send(Channels.recordingDock.configChanged, lastConfig);
     win.showInactive();
@@ -227,6 +250,7 @@ export function openRecordingDockWindow(): void {
 }
 
 export function closeRecordingDockWindow(): void {
+  stopRecordingPowerSaveBlocker();
   if (win && !win.isDestroyed()) win.close();
   win = null;
   lastInteractive = null;
