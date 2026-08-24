@@ -44,9 +44,42 @@ function defaultSizeFor(shape: CameraBubbleShape): { width: number; height: numb
   }
 }
 
+function overlapArea(bounds: CameraBubbleBounds, area: Electron.Rectangle): number {
+  const w = Math.min(bounds.x + bounds.width, area.x + area.width) - Math.max(bounds.x, area.x);
+  const h = Math.min(bounds.y + bounds.height, area.y + area.height) - Math.max(bounds.y, area.y);
+  return w > 0 && h > 0 ? w * h : 0;
+}
+
+/** Whether a remembered position still lands somewhere the user can actually see it.
+ *
+ *  Bounds are stored in global screen coordinates (see setCameraBubbleBounds), so a bubble
+ *  last positioned on a second or third monitor keeps those coordinates after that monitor
+ *  is gone — pointing into space no display covers any more. Restored as-is, the window
+ *  opens fully off-screen: running, camera live, invisible, and impossible to drag back,
+ *  since there's nothing on screen to grab.
+ *
+ *  Half the bubble has to be visible to count, summed across *all* displays rather than
+ *  requiring a single display to hold it, so a bubble deliberately straddling two monitors
+ *  still reads as visible instead of being yanked onto one of them. */
+function isBoundsOnScreen(bounds: CameraBubbleBounds): boolean {
+  const area = bounds.width * bounds.height;
+  if (area <= 0) return false;
+  const visible = screen.getAllDisplays().reduce((sum, display) => sum + overlapArea(bounds, display.workArea), 0);
+  return visible >= area * 0.5;
+}
+
 function resolveBounds(shape: CameraBubbleShape): CameraBubbleBounds {
-  if (lastBounds) return lastBounds;
-  const display = screen.getPrimaryDisplay();
+  if (lastBounds && isBoundsOnScreen(lastBounds)) return lastBounds;
+  // Nothing remembered, or what's remembered is on a display that isn't attached any more.
+  // Falls back to the display the user is actually on — the one under the cursor, not
+  // `getPrimaryDisplay()`, which on a multi-monitor desk is frequently not the screen
+  // they're working on.
+  //
+  // `lastBounds` is deliberately left alone rather than overwritten with this fallback: the
+  // remembered position is still correct for the monitor it was set on, so reconnecting
+  // that display and reopening the bubble puts it back where the user left it instead of
+  // having quietly lost it to a one-screen session.
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   const { width, height } = defaultSizeFor(shape);
   return {
     x: display.workArea.x + display.workArea.width - width - EDGE_MARGIN,
