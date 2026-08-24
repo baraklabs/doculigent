@@ -104,6 +104,11 @@ class RecordingService {
   private sideHasAudio = false;
   private sideExt: "mp4" | "webm" = "webm";
 
+  // TEMPORARY DIAGNOSTICS (camera.mp4 freeze investigation) — remove once the cause is
+  // identified. Counts sideTick draws and samples the whole camera pipeline once a second.
+  private sideDrawCount = 0;
+  private camDiagTimer: ReturnType<typeof setInterval> | null = null;
+
   // Wall-clock (Date.now(), not performance.now() — needs to compare directly against the
   // main process's own capture clock) origin of the screen recording's t=0, and how many ms
   // after it the side clip's own separate MediaRecorder actually started — see
@@ -611,7 +616,12 @@ class RecordingService {
       ext,
       hasVideo: this.sideHasVideo,
       sideClipStartOffsetMs: this.sideClipStartOffsetMs,
+      cameraBlur: overlay.cameraBlur,
+      usingBlurPipeline: !!this.cameraBlurHandle,
     });
+    // TEMPORARY DIAGNOSTICS — see startCameraDiagnostics. Only meaningful when there's an
+    // actual camera video track being drawn/recorded.
+    if (this.sideHasVideo) this.startCameraDiagnostics(stream);
   }
 
   // Camera-only mode's own recorder — the only remaining caller, now that the screen
@@ -662,7 +672,67 @@ class RecordingService {
   private sideTick = (): void => {
     if (!this.sideCtx || !this.sideCanvas || !this.cameraVideoEl || !this.overlay) return;
     drawCameraRaw(this.sideCtx, this.cameraVideoEl, this.sideCanvas.width, this.sideCanvas.height);
+    this.sideDrawCount++;
   };
+
+  /** TEMPORARY DIAGNOSTICS (camera.mp4 freeze investigation) — remove once resolved.
+   *  Samples every part of the camera pipeline once a second so a freeze can be pinned on
+   *  a specific link: the draw loop stopping, the <video> element stalling, the underlying
+   *  camera track dying/muting, the canvas capture track ending, or the recorder itself. */
+  private startCameraDiagnostics(sideStream: MediaStream): void {
+    this.stopCameraDiagnostics();
+    const startedAt = performance.now();
+    const camTrack = this.cameraStream?.getVideoTracks()[0] ?? null;
+    const blurTrack = this.cameraBlurHandle?.stream?.getVideoTracks?.()[0] ?? null;
+    const canvasTrack = sideStream.getVideoTracks()[0] ?? null;
+    const at = () => ((performance.now() - startedAt) / 1000).toFixed(1);
+
+    // These fire at the exact instant something kills the source — far more precise than
+    // the 1Hz sampler below for pinning down "why", and they name which track it was.
+    for (const [label, t] of [["camera", camTrack], ["blur", blurTrack], ["canvas", canvasTrack]] as const) {
+      if (!t) continue;
+      t.addEventListener("ended", () => console.warn(`[camDiag] ${label} track ENDED at ${at()}s`));
+      t.addEventListener("mute", () => console.warn(`[camDiag] ${label} track MUTED at ${at()}s`));
+      t.addEventListener("unmute", () => console.warn(`[camDiag] ${label} track unmuted at ${at()}s`));
+    }
+    if (this.cameraVideoEl) {
+      for (const ev of ["pause", "stalled", "suspend", "waiting", "emptied", "error", "ended"] as const) {
+        this.cameraVideoEl.addEventListener(ev, () =>
+          console.warn(`[camDiag] cameraVideoEl "${ev}" at ${at()}s`)
+        );
+      }
+    }
+
+    let lastVideoTime = -1;
+    this.camDiagTimer = setInterval(() => {
+      const v = this.cameraVideoEl;
+      const draws = this.sideDrawCount;
+      this.sideDrawCount = 0;
+      const videoTime = v ? v.currentTime : -1;
+      const advancing = videoTime > lastVideoTime;
+      lastVideoTime = videoTime;
+      const trackInfo = (t: MediaStreamTrack | null) =>
+        t ? `${t.readyState}${t.muted ? "/muted" : ""}${t.enabled ? "" : "/disabled"}` : "none";
+      console.log("[camDiag]", {
+        at: at() + "s",
+        drawsPerSec: draws,
+        videoTime: videoTime.toFixed(2),
+        videoAdvancing: advancing,
+        videoReadyState: v?.readyState,
+        videoPaused: v?.paused,
+        videoSize: v ? `${v.videoWidth}x${v.videoHeight}` : "none",
+        cameraTrack: trackInfo(camTrack),
+        blurTrack: trackInfo(blurTrack),
+        canvasTrack: trackInfo(canvasTrack),
+        recorder: this.sideRecorder?.state,
+      });
+    }, 1000);
+  }
+
+  private stopCameraDiagnostics(): void {
+    if (this.camDiagTimer !== null) clearInterval(this.camDiagTimer);
+    this.camDiagTimer = null;
+  }
 
   async pause(): Promise<void> {
     if (!this.overlay || this.paused) return;
@@ -846,6 +916,7 @@ class RecordingService {
   }
 
   private cleanupStreams(): void {
+    this.stopCameraDiagnostics();
     this.cameraBlurHandle?.stop();
     this.cameraBlurHandle = null;
     for (const stream of [this.screenStream, this.cameraStream, this.micStream, this.systemAudioStream]) {
