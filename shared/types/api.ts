@@ -74,8 +74,19 @@ export interface DoculigentApi {
       targetId: string,
       hideCursor: boolean,
       area?: AreaRect,
-      mode?: "quick" | "advanced"
-    ): Promise<{ available: boolean; contentProtected: boolean; startedAtMs: number | null }>;
+      mode?: "quick" | "advanced",
+      /** Ask the native backend to record system audio into its own output file. Only
+       *  macOS's ScreenCaptureKit backend can honor this; the returned `systemAudio` says
+       *  whether it actually did, and the renderer opens a Chromium loopback stream itself
+       *  when it didn't. */
+      captureSystemAudio?: boolean
+    ): Promise<{
+      available: boolean;
+      contentProtected: boolean;
+      startedAtMs: number | null;
+      /** True when the capture itself is recording system audio (macOS/SCK). */
+      systemAudio: boolean;
+    }>;
     stop(): Promise<{ available: boolean; filePath?: string }>;
     pause(): Promise<boolean>;
     resume(): Promise<boolean>;

@@ -285,6 +285,18 @@ async function resolveMacScreenDeviceIndex(targetId: string): Promise<number | n
  *  setContentProtection(true) set) or the Chromium getDisplayMedia fallback on any
  *  platform. Callers use this to decide whether cameraBubbleWindow.ts needs to hide the
  *  bubble outright for the recording's duration instead of trusting the OS to exclude it. */
+/** Whether the active capture is writing system audio into its own output file, which
+ *  only macOS's ScreenCaptureKit backend can do. False everywhere else — Windows and Linux
+ *  record system audio in the renderer (Chromium desktop loopback) and have it muxed into
+ *  the screen track at save time instead, so every platform ends up with the same layout:
+ *  system audio in the screen track, mic in the camera side clip. The renderer reads this
+ *  to decide whether it still needs to open a loopback stream of its own. */
+export function isCaptureRecordingSystemAudio(): boolean {
+  return nativeSystemAudio;
+}
+
+let nativeSystemAudio = false;
+
 export function isCaptureContentProtected(): boolean {
   if (!active) return false;
   if (process.platform === "win32") return active.kind === "ffmpeg" || active.kind === "wgc";
@@ -346,6 +358,13 @@ interface SckCaptureConfig {
    *  streamConfig.showsCursor accordingly (currently hardcoded false there) — until the
    *  native helper is rebuilt with that change, this is sent but has no effect. */
   showsCursor?: boolean;
+  /** Captures the display's system audio into the output mp4's own audio track. macOS's
+   *  only route to system audio at all — Chromium's desktop-loopback audio (what Windows
+   *  and Linux use, then muxed into the screen track at save time) is Windows-only, and so
+   *  is Electron's own setDisplayMediaRequestHandler loopback option. An older helper
+   *  binary that predates this field ignores it and records video-only, which
+   *  `nativeSystemAudio` below is what reports back to the renderer. */
+  capturesAudio?: boolean;
 }
 
 /** Spawns the helper and waits for its "Recording started" stdout line (mirrors the
@@ -805,9 +824,13 @@ export async function startScreenCapture(
   targetId: string,
   hideCursor: boolean,
   area?: AreaRect,
-  mode: "quick" | "advanced" = "advanced"
+  mode: "quick" | "advanced" = "advanced",
+  captureSystemAudio = false
 ): Promise<boolean> {
   if (active) return false;
+  // Only the macOS SCK branch below can set this true; every other backend leaves the
+  // renderer responsible for system audio (see isCaptureRecordingSystemAudio).
+  nativeSystemAudio = false;
   // Reset before the canCaptureTarget bail-out, not after: a window target (or any other
   // target no native backend can capture) records through the getDisplayMedia fallback
   // instead, and the clock has to read as "no native capture" for this recording rather
@@ -889,10 +912,16 @@ export async function startScreenCapture(
           areaWidth: area?.width,
           areaHeight: area?.height,
           showsCursor: !hideCursor,
+          capturesAudio: captureSystemAudio,
         });
         if (capture) {
           clockCapturing();
           active = capture;
+          // Only claimed for the SCK backend, and only when audio was actually asked for.
+          // A helper binary too old to know the flag records video-only regardless, which
+          // would leave the recording with no system audio at all rather than falling back
+          // — see resolveScreenTrack's own note on detecting that at save time.
+          nativeSystemAudio = captureSystemAudio;
           return true;
         }
         console.warn("[screenCapture] FALLING BACK TO AVFOUNDATION");

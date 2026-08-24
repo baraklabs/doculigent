@@ -138,6 +138,17 @@ class RecordingService {
   private sideHasAudio = false;
   private sideExt: "mp4" | "webm" = "webm";
 
+  // System audio is recorded on its own, never mixed into the side clip with the mic,
+  // because it belongs to a different file: it gets muxed into the screen track at save
+  // time (see ipc/recording.ts) so every platform stores it the same way. Unused on macOS,
+  // where ScreenCaptureKit writes system audio into the capture file itself and
+  // nativeSystemAudio below is true.
+  private systemAudioRecorder: MediaRecorder | null = null;
+  private systemAudioChunks: Blob[] = [];
+  private systemAudioExt: "mp4" | "webm" = "webm";
+  private systemAudioStartOffsetMs: number | null = null;
+  private nativeSystemAudio = false;
+
   // Wall-clock (Date.now(), not performance.now() — needs to compare directly against the
   // main process's own capture clock) origin of the screen recording's t=0, and how many ms
   // after it the side clip's own separate MediaRecorder actually started — see
@@ -262,7 +273,7 @@ class RecordingService {
 
   /** Same idea as prewarmCamera, for system audio — keyed on (enabled, sourceId) together. */
   prewarmSystemAudio(systemAudio: SystemAudioConfig): void {
-    if (!systemAudio.enabled || !systemAudio.sourceId) {
+    if (!systemAudio.enabled || !systemAudio.sourceId || isMacOS()) {
       this.cancelPrewarmedSystemAudio();
       return;
     }
@@ -407,9 +418,14 @@ class RecordingService {
         targetId,
         mode === "advanced",
         this.areaRect ?? undefined,
-        mode
+        mode,
+        // Only macOS's ScreenCaptureKit backend can honor this; everywhere else the
+        // renderer's own loopback recording below covers it. Asking unconditionally keeps
+        // the decision in one place — the backend reports back what it actually did.
+        systemAudio.enabled
       );
       this.nativeCapture = captureResult.available;
+      this.nativeSystemAudio = captureResult.systemAudio;
       contentProtected = captureResult.contentProtected;
       this.screenStartedAtMs = captureResult.startedAtMs;
 
@@ -445,11 +461,13 @@ class RecordingService {
       await this.startCameraOnlyPipeline();
     } else if (this.nativeCapture) {
       await this.startSideClip(this.overlay);
+      this.startSystemAudioRecording();
     } else {
       // Fallback path — no gdigrab, so the screen itself is recorded raw (see
       // startRawScreenRecording) and the camera, same as native, gets its own clip.
       await this.startRawScreenRecording(targetId);
       await this.startSideClip(this.overlay);
+      this.startSystemAudioRecording();
     }
 
     this.startedAt = performance.now();
@@ -503,8 +521,16 @@ class RecordingService {
     });
   }
 
+  /** null on macOS, always: Chromium's desktop-loopback audio — which is all
+   *  getSystemAudioStream can offer — is implemented on Windows and Linux only, so asking
+   *  for it there is at best a wasted device round-trip and at worst a rejection that would
+   *  take the whole start() Promise.all down with it. macOS's system audio comes from the
+   *  ScreenCaptureKit capture itself instead (see start()'s captureSystemAudio argument),
+   *  which is the only route to it on that platform. The one thing this loses there is
+   *  camera-only capture's system audio, which has no screen capture to source it from —
+   *  and which never worked on macOS anyway. */
   private obtainSystemAudioStream(systemAudio: SystemAudioConfig): Promise<MediaStream> | null {
-    if (!systemAudio.enabled || !systemAudio.sourceId) {
+    if (!systemAudio.enabled || !systemAudio.sourceId || isMacOS()) {
       this.cancelPrewarmedSystemAudio();
       return null;
     }
@@ -519,8 +545,20 @@ class RecordingService {
     return getSystemAudioStream(systemAudio.sourceId);
   }
 
+  /** The side clip's audio — the **mic only**. System audio used to be mixed in here, which
+   *  is what put it in the camera track; it now rides with the screen track instead (see
+   *  startSystemAudioRecording and ipc/recording.ts), so the two are never combined in the
+   *  renderer at all. That split is what lets the editor treat them as separate sources,
+   *  and what makes the file layout identical on all three platforms even though only macOS
+   *  can capture system audio natively.
+   *
+   *  Camera-only capture (captureMode "camera") is the one exception: it composites
+   *  everything into a single file with no separate screen track to attach system audio to,
+   *  so there the two are still mixed together — see startCameraOnlyPipeline's caller. */
   private resolveAudioTrack(): MediaStreamTrack | null {
     const micTrack = this.micStream?.getAudioTracks()[0] ?? null;
+    if (this.captureMode !== "camera") return micTrack;
+
     const systemTrack = this.systemAudioStream?.getAudioTracks()[0] ?? null;
     if (micTrack && systemTrack) {
       this.audioMixCtx = new AudioContext();
@@ -530,6 +568,56 @@ class RecordingService {
       return dest.stream.getAudioTracks()[0] ?? null;
     }
     return micTrack ?? systemTrack ?? null;
+  }
+
+  /** Records the Chromium desktop-loopback stream on its own, for the platforms that have
+   *  one (Windows/Linux). Skipped entirely when the native capture is already recording
+   *  system audio itself (macOS/SCK), and when there's no loopback stream to record.
+   *  Audio-only, so pickMimeType keeps this on WebM/Opus — see its own doc comment. */
+  private startSystemAudioRecording(): void {
+    this.systemAudioRecorder = null;
+    this.systemAudioStartOffsetMs = null;
+    if (this.nativeSystemAudio || this.captureMode === "camera") return;
+    const systemTrack = this.systemAudioStream?.getAudioTracks()[0] ?? null;
+    if (!systemTrack) return;
+
+    const { mimeType, ext } = pickMimeType(false);
+    this.systemAudioExt = ext;
+    this.systemAudioChunks = [];
+    const recorder = new MediaRecorder(new MediaStream([systemTrack]), { mimeType });
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) this.systemAudioChunks.push(e.data);
+    };
+    recorder.onerror = (e) => console.error("[RecordingService] systemAudioRecorder error", e);
+    recorder.start();
+    this.systemAudioRecorder = recorder;
+    // Same clock and same purpose as the side clip's own offset — how far into the screen
+    // recording this clip's t=0 lands, so the save-time mux can shift it back into place.
+    this.systemAudioStartOffsetMs = this.screenStartedAtMs !== null ? Date.now() - this.screenStartedAtMs : null;
+    console.log("[RecordingService] system audio recorder started", {
+      mimeType,
+      ext,
+      startOffsetMs: this.systemAudioStartOffsetMs,
+    });
+  }
+
+  /** Stops the system-audio recorder and hands back its bytes, or undefined when there was
+   *  nothing to record (macOS native capture, camera-only mode, or system sound off). */
+  private async stopSystemAudioRecording(): Promise<
+    { bytes: ArrayBuffer; ext: "mp4" | "webm"; startOffsetMs: number | null } | undefined
+  > {
+    const recorder = this.systemAudioRecorder;
+    if (!recorder) return undefined;
+    const blob = await new Promise<Blob>((resolve) => {
+      if (recorder.state === "inactive") {
+        resolve(new Blob(this.systemAudioChunks, { type: "audio/webm" }));
+        return;
+      }
+      recorder.onstop = () => resolve(new Blob(this.systemAudioChunks, { type: "audio/webm" }));
+      recorder.stop();
+    });
+    if (blob.size === 0) return undefined;
+    return { bytes: await blob.arrayBuffer(), ext: this.systemAudioExt, startOffsetMs: this.systemAudioStartOffsetMs };
   }
 
   private async startRawScreenRecording(targetId: string): Promise<void> {
@@ -675,6 +763,7 @@ class RecordingService {
     if (this.recorder && this.recorder.state === "recording") this.recorder.pause();
     if (this.rawScreenRecorder && this.rawScreenRecorder.state === "recording") this.rawScreenRecorder.pause();
     if (this.sideRecorder && this.sideRecorder.state === "recording") this.sideRecorder.pause();
+    if (this.systemAudioRecorder && this.systemAudioRecorder.state === "recording") this.systemAudioRecorder.pause();
     if (this.nativeCapture) await window.api.screenCapture.pause().catch(() => {});
   }
 
@@ -686,6 +775,7 @@ class RecordingService {
     if (this.recorder && this.recorder.state === "paused") this.recorder.resume();
     if (this.rawScreenRecorder && this.rawScreenRecorder.state === "paused") this.rawScreenRecorder.resume();
     if (this.sideRecorder && this.sideRecorder.state === "paused") this.sideRecorder.resume();
+    if (this.systemAudioRecorder && this.systemAudioRecorder.state === "paused") this.systemAudioRecorder.resume();
     if (this.nativeCapture) await window.api.screenCapture.resume().catch(() => {});
 
     if (this.canvas) this.tick();
@@ -707,6 +797,7 @@ class RecordingService {
     if (this.recorder && this.recorder.state !== "inactive") this.recorder.stop();
     if (this.rawScreenRecorder && this.rawScreenRecorder.state !== "inactive") this.rawScreenRecorder.stop();
     if (this.sideRecorder && this.sideRecorder.state !== "inactive") this.sideRecorder.stop();
+    if (this.systemAudioRecorder && this.systemAudioRecorder.state !== "inactive") this.systemAudioRecorder.stop();
     if (wasNative) await window.api.screenCapture.discard().catch(() => {});
 
     this.cleanupStreams();
@@ -783,12 +874,17 @@ class RecordingService {
     mode: "quick" | "advanced"
   ): Promise<{ id: string }> {
     const sideClip = await this.stopSideClip();
+    // Undefined on macOS (ScreenCaptureKit already wrote system audio into the capture
+    // file) and whenever system sound is off — see startSystemAudioRecording.
+    const systemAudioClip = await this.stopSystemAudioRecording();
     console.log("[RecordingService] stopSeparateFiles", {
       nativeCapture: this.nativeCapture,
+      nativeSystemAudio: this.nativeSystemAudio,
       hasSideClip: !!sideClip,
       sideClipHasVideo: sideClip?.hasVideo,
       sideClipHasAudio: sideClip?.hasAudio,
       sideClipBytes: sideClip?.bytes.byteLength,
+      systemAudioBytes: systemAudioClip?.bytes.byteLength,
     });
 
     if (this.nativeCapture) {
@@ -797,6 +893,7 @@ class RecordingService {
       return window.api.recording.save({
         screenFilePath: filePath,
         sideClip,
+        systemAudioClip,
         sideClipStartOffsetMs: this.sideClipStartOffsetMs,
         overlay,
         durationSecs,
@@ -826,6 +923,7 @@ class RecordingService {
       screenExt: this.rawScreenExt,
       areaRect: this.areaRect,
       sideClip,
+      systemAudioClip,
       sideClipStartOffsetMs: this.sideClipStartOffsetMs,
       overlay,
       durationSecs,
@@ -870,6 +968,10 @@ class RecordingService {
     this.sideCanvas = null;
     this.sideCtx = null;
     this.sideRecorder = null;
+    this.systemAudioRecorder = null;
+    this.systemAudioChunks = [];
+    this.systemAudioStartOffsetMs = null;
+    this.nativeSystemAudio = false;
     this.sideChunks = [];
   }
 }

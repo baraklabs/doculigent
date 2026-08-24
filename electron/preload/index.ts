@@ -32,8 +32,8 @@ const api: DoculigentApi = {
     stopCapture: () => ipcRenderer.invoke(Channels.cursor.stopCapture),
   },
   screenCapture: {
-    start: (targetId, hideCursor, area, mode) =>
-      ipcRenderer.invoke(Channels.screenCapture.start, targetId, hideCursor, area, mode),
+    start: (targetId, hideCursor, area, mode, captureSystemAudio) =>
+      ipcRenderer.invoke(Channels.screenCapture.start, targetId, hideCursor, area, mode, captureSystemAudio),
     stop: () => ipcRenderer.invoke(Channels.screenCapture.stop),
     pause: () => ipcRenderer.invoke(Channels.screenCapture.pause),
     resume: () => ipcRenderer.invoke(Channels.screenCapture.resume),

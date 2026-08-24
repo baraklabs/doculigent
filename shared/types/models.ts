@@ -590,6 +590,25 @@ export interface SaveRecordingSideClip {
   ext: "mp4" | "webm";
 }
 
+/** The system-audio ("system sound") clip, recorded by the renderer on the platforms
+ *  where Chromium can capture desktop loopback at all (Windows/Linux). Kept apart from the
+ *  camera side clip's mic audio deliberately: system audio belongs to the *screen* track,
+ *  and gets muxed into it at save time (see ipc/recording.ts's resolveScreenTrack), so all
+ *  three platforms end up with one layout — system audio in the screen track, mic in the
+ *  camera clip. macOS never sends this: ScreenCaptureKit writes system audio straight into
+ *  the capture file instead (see native/screenCapture.ts's isCaptureRecordingSystemAudio),
+ *  which is the only route to it there. */
+export interface SaveRecordingSystemAudioClip {
+  bytes: ArrayBuffer;
+  /** Always "webm" today — pickMimeType only ever reaches for H.264/MP4 on a stream that
+   *  carries video, and this one is audio-only. */
+  ext: "mp4" | "webm";
+  /** How many ms after the screen recording's own t=0 this clip's recorder started, same
+   *  clock and same purpose as sideClipStartOffsetMs — the mux shifts the audio by this
+   *  much so it lines up with the video it was recorded against. */
+  startOffsetMs: number | null;
+}
+
 export interface SaveRecordingInput {
   webmBytes?: ArrayBuffer;
   /** Container of `webmBytes` — "mp4" when MediaRecorder recorded real H.264/AAC directly
@@ -603,6 +622,8 @@ export interface SaveRecordingInput {
   screenExt?: "mp4" | "webm";
   areaRect?: AreaRect | null;
   sideClip?: SaveRecordingSideClip;
+  /** Windows/Linux only — see SaveRecordingSystemAudioClip. */
+  systemAudioClip?: SaveRecordingSystemAudioClip;
   /** How many ms after the screen recording's own t=0 (see RecordingService's
    *  screenStartedAtMs, resolved from screenCapture.start()'s startedAtMs) the sideClip's
    *  own recorder actually started — see EditProjectMedia.sideClipStartOffsetMs, which

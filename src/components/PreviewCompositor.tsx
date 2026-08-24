@@ -1061,22 +1061,27 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     };
   }, [cursorMetadataPath, cursorIconsDir]);
 
-  // Which element actually carries the recorded audio (mic/system, talking, etc.):
-  // audioOnlyRef when there's one (a separate camera track, or a screen-only recording's
-  // own separately-captured audio.wav — see audioOnlyRef's own doc comment), else
-  // screenVideoRef itself for the case where it's already the fully-muxed file (the
-  // non-native screen-capture fallback). Never cameraVideoRef — see its own doc comment
-  // for why that element is muted and visual-only now.
+  // Recorded audio can come from *both* elements at once now, so muting has to reach both.
+  // screenVideoRef carries the system audio ("system sound"), which lives in the screen
+  // track on every platform — written there natively by macOS's ScreenCaptureKit capture,
+  // muxed in at save time from Chromium's desktop loopback on Windows/Linux (see
+  // ipc/recording.ts's resolveScreenTrack) — as well as being the whole soundtrack on its
+  // own for an already-muxed single file. audioOnlyRef carries the mic, from the camera
+  // side clip or a screen-only recording's audio.wav. Either can be absent: a project
+  // recorded with system sound off has a silent screen track, one with no mic has no
+  // audioOnly element, and anything recorded before this split has both sources mixed
+  // together in the side clip with a silent screen track. Never cameraVideoRef — see its
+  // own doc comment for why that element is muted and visual-only.
   const mutedRef = useRef(sound.muted);
   useEffect(() => {
     mutedRef.current = sound.muted;
-    const audioEl = audioOnlyRef.current ?? screenVideoRef.current;
-    if (audioEl) audioEl.muted = sound.muted;
+    for (const el of [audioOnlyRef.current, screenVideoRef.current]) {
+      if (el) el.muted = sound.muted;
+    }
   }, [sound.muted]);
 
   // Load the source video(s) whenever the project's media changes.
   useEffect(() => {
-    const hasSeparateAudio = !!(cameraFilePath || audioFilePath);
     const screenVideo = document.createElement("video");
     // media:// (mediaProtocol.ts) is always a different origin from the renderer page
     // (file:// in production, http://localhost in dev) — without this, the browser fetches
@@ -1087,7 +1092,11 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     // not be exported" export-time failure, never a playback issue.
     screenVideo.crossOrigin = "anonymous";
     screenVideo.src = mediaUrl(screenFilePath);
-    screenVideo.muted = hasSeparateAudio ? true : mutedRef.current;
+    // Not force-muted when there's a side clip any more: the screen track is where system
+    // audio lives now (see mutedRef's own comment), so silencing it here would drop system
+    // sound from every recording that also has a mic. Harmless for the projects that don't
+    // have any — an unmuted video with no audio track is silent either way.
+    screenVideo.muted = mutedRef.current;
     screenVideo.playsInline = true;
     screenVideoRef.current = screenVideo;
 
@@ -2181,38 +2190,54 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     const offlineCtx = new OfflineAudioContext(2, numSamples, SAMPLE_RATE);
 
     if (!muted) {
-      // cameraFilePath's own audio, if there's a camera track; otherwise a screen-only
-      // recording's separately-captured audio.wav, if there is one (see audioFilePath's
-      // own doc comment); otherwise screenFilePath itself, for the case where it already
-      // has audio muxed directly into it (the non-native screen-capture fallback).
-      const sourceAudioPath = cameraFilePath ?? audioFilePath ?? screenFilePath;
-      // Only cameraFilePath/audioFilePath are a separate side clip with their own start
-      // offset (see sideClipOffsetMsRef's doc comment) — the screenFilePath fallback is
-      // one file, muxed with itself, trivially at offset 0.
-      const startSec = cameraFilePath || audioFilePath ? Math.max(0, sideClipOffsetMsRef.current / 1000) : 0;
-      try {
-        const wavBytes = await decodeAudio(sourceAudioPath);
-        const decoded = await offlineCtx.decodeAudioData(wavBytes);
-        // One continuous, unedited buffer source spanning the whole export (from startSec
-        // on) — not gated by either track's own clips. Neither the Camera track's pieces
-        // (see cameraClips's own independent-editing comment) nor the screen Clips track's
-        // own cuts/gaps are something the user is actually editing *audio* by touching: a
-        // gap on either track just means blank visual background for that stretch (see the
-        // draw loop's own "plays as real, silent background" comment) — real elapsed time
-        // nothing stops the underlying recording's own audio from continuing straight
-        // through, on both counts. edited-ms and raw source-ms are the same clock for
-        // audio's purposes specifically because of that: it's the one track never subject
-        // to remapping, past the fixed startSec shift.
-        const durSec = Math.min(decoded.duration, Math.max(0, totalMs / 1000 - startSec));
-        if (durSec > 0) {
-          const src = offlineCtx.createBufferSource();
-          src.buffer = decoded;
-          src.connect(offlineCtx.destination);
-          src.start(startSec, 0, durSec);
+      // Two independent recorded sources, mixed here into one export track — the same two
+      // the live preview plays through two separate elements (see mutedRef's own comment):
+      //
+      //  - the screen track, which is where system audio ("system sound") lives on every
+      //    platform now, and which for an already-muxed single-file source is the entire
+      //    soundtrack on its own. Always at offset 0: it *is* the reference timeline.
+      //  - the side clip's mic — the camera track's own audio, or a screen-only
+      //    recording's separately-captured audio.wav — which starts sideClipOffsetMs into
+      //    that timeline (see sideClipOffsetMsRef's doc comment) because its recorder
+      //    starts after screen capture is already rolling.
+      //
+      // Either can be missing or silent, and both are decoded independently so one failing
+      // never costs the other: a project recorded with system sound off has a silent screen
+      // track, one recorded with no mic has no side clip at all, and anything recorded
+      // before system audio moved to the screen track has both mixed together in the side
+      // clip against a silent screen track — which still comes out right here, since that
+      // mixed clip is simply one of the two sources and the other contributes nothing.
+      const sideAudioPath = cameraFilePath ?? audioFilePath;
+      const sources: { path: string; startSec: number }[] = [
+        { path: screenFilePath, startSec: 0 },
+        ...(sideAudioPath ? [{ path: sideAudioPath, startSec: Math.max(0, sideClipOffsetMsRef.current / 1000) }] : []),
+      ];
+
+      for (const { path: sourceAudioPath, startSec } of sources) {
+        try {
+          const wavBytes = await decodeAudio(sourceAudioPath);
+          const decoded = await offlineCtx.decodeAudioData(wavBytes);
+        // One continuous, unedited buffer source spanning the whole export (from its own
+        // start offset on) — not gated by either track's own clips. Neither the Camera
+        // track's pieces (see cameraClips's own independent-editing comment) nor the screen
+        // Clips track's own cuts/gaps are something the user is actually editing *audio* by
+        // touching: a gap on either track just means blank visual background for that
+        // stretch (see the draw loop's own "plays as real, silent background" comment) —
+        // real elapsed time nothing stops the underlying recording's own audio from
+        // continuing straight through, on both counts. edited-ms and raw source-ms are the
+        // same clock for audio's purposes specifically because of that: it's the one track
+        // never subject to remapping, past the fixed start-offset shift.
+          const durSec = Math.min(decoded.duration, Math.max(0, totalMs / 1000 - startSec));
+          if (durSec > 0) {
+            const src = offlineCtx.createBufferSource();
+            src.buffer = decoded;
+            src.connect(offlineCtx.destination);
+            src.start(startSec, 0, durSec);
+          }
+        } catch {
+          // No audio track on this source, or it failed to decode — skip just this one.
+          // The other source (and the click sounds below) still render.
         }
-      } catch {
-        // No audio track on the source file, or it failed to decode — export just ends
-        // up silent (still worth rendering click sounds below, if any are due).
       }
     }
 

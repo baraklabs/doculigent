@@ -3,10 +3,19 @@ import ScreenCaptureKit
 import AVFoundation
 import CoreGraphics
 
-// Video-only ScreenCaptureKit-based screen recorder for the macOS native capture path
-// (see electron/main/native/screenCapture.ts). Doculigent already records mic/system
-// audio and the camera bubble through its own separate getUserMedia-based pipelines, so
-// unlike a full-featured recorder this only ever needs one video track.
+// ScreenCaptureKit-based screen recorder for the macOS native capture path (see
+// electron/main/native/screenCapture.ts). Records the display's video plus — when
+// `capturesAudio` is set — the system audio playing through it, into a single mp4.
+//
+// The mic and the camera bubble still come from Doculigent's own getUserMedia pipelines
+// (they're per-device, not per-display, and both work fine on macOS). System audio is the
+// one source that cannot: Chromium only implements `chromeMediaSource: "desktop"` loopback
+// audio on Windows, and Electron's own `setDisplayMediaRequestHandler` loopback option is
+// documented Windows-only too. ScreenCaptureKit is the only route to it on macOS, which is
+// why this recorder — video-only until now — grew an audio track. Windows and Linux keep
+// using their own loopback capture and have it muxed into the screen track at save time
+// instead (see ipc/recording.ts), so all three platforms end up with the same file layout:
+// system audio in the screen track, mic in the camera side clip.
 //
 // Why ScreenCaptureKit instead of ffmpeg's `-f avfoundation` input (the pre-existing
 // fallback, still used if this helper isn't built/found): avfoundation's screen capture
@@ -33,6 +42,10 @@ struct CaptureConfig: Codable {
 	let areaY: Double?
 	let areaWidth: Double?
 	let areaHeight: Double?
+	// Whether to capture the system audio playing through this display into the output's
+	// own audio track. Defaults to false so an older Node side that doesn't send it keeps
+	// this recorder's original video-only behavior.
+	let capturesAudio: Bool?
 	// Quick Recording wants the real OS cursor burnt directly into the capture (no
 	// separate synthetic overlay needed); Advanced keeps it out, same as before, since it
 	// tracks cursor position separately for editing. Defaults to false (hidden) to match
@@ -41,11 +54,16 @@ struct CaptureConfig: Codable {
 }
 
 let targetCaptureFPS = 30
+// 48kHz stereo — ScreenCaptureKit's own default shape for captured audio, and what the
+// rest of the pipeline (ffmpeg's aac encoder, the editor's Web Audio graph) expects.
+let audioSampleRate = 48_000
+let audioChannelCount = 2
 
 final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 	private let queue = DispatchQueue(label: "doculigent.screencapturekit.video")
 	private var assetWriter: AVAssetWriter?
 	private var videoInput: AVAssetWriterInput?
+	private var audioInput: AVAssetWriterInput?
 	private var stream: SCStream?
 	private var firstSampleTime: CMTime = .zero
 	private var lastSampleBuffer: CMSampleBuffer?
@@ -84,7 +102,16 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		streamConfig.queueDepth = 6
 		streamConfig.pixelFormat = kCVPixelFormatType_32BGRA
 		streamConfig.showsCursor = config.showsCursor ?? false
-		streamConfig.capturesAudio = false
+		let capturesAudio = config.capturesAudio ?? false
+		streamConfig.capturesAudio = capturesAudio
+		if capturesAudio {
+			streamConfig.sampleRate = audioSampleRate
+			streamConfig.channelCount = audioChannelCount
+			// Doculigent's own UI sounds (and anything else this process plays) would
+			// otherwise be captured alongside the recorded app's audio — the recording is
+			// meant to carry what the user is demonstrating, not the recorder.
+			streamConfig.excludesCurrentProcessAudio = true
+		}
 
 		let displayBounds = CGDisplayBounds(display.displayID)
 		let scaleFactor = Self.scaleFactor(for: display.displayID)
@@ -138,9 +165,37 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		assetWriter.add(videoInput)
 		self.videoInput = videoInput
 
+		if capturesAudio {
+			let audioSettings: [String: Any] = [
+				AVFormatIDKey: kAudioFormatMPEG4AAC,
+				AVNumberOfChannelsKey: audioChannelCount,
+				AVSampleRateKey: audioSampleRate,
+				AVEncoderBitRateKey: 192_000,
+			]
+			let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
+			audioInput.expectsMediaDataInRealTime = true
+			if assetWriter.canAdd(audioInput) {
+				assetWriter.add(audioInput)
+				self.audioInput = audioInput
+			} else {
+				// Not fatal: a screen recording with no system audio is still a usable
+				// recording, and failing the whole capture over it would be worse.
+				fputs("Warning: unable to add audio writer input — continuing video-only\n", stderr)
+				fflush(stderr)
+			}
+		}
+
 		let stream = SCStream(filter: filter, configuration: streamConfig, delegate: self)
 		self.stream = stream
 		try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
+		// Deliberately the *same* serial queue as the video output rather than one of its
+		// own: both handlers read and mutate the shared session clock below
+		// (firstSampleTime, accumulatedPausedDuration, the pause flags), so sharing one
+		// queue serializes them instead of racing. Both sample streams are stamped on the
+		// same host clock, so a single origin keeps them in sync with each other.
+		if self.audioInput != nil {
+			try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
+		}
 		try await stream.startCapture()
 
 		guard assetWriter.startWriting() else {
@@ -181,7 +236,12 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 	}
 
 	func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
-		guard sessionStarted, sampleBuffer.isValid, isRecording, outputType == .screen else { return }
+		guard sessionStarted, sampleBuffer.isValid, isRecording else { return }
+		if outputType == .audio {
+			appendAudio(sampleBuffer)
+			return
+		}
+		guard outputType == .screen else { return }
 		guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
 			  let attachment = attachments.first,
 			  let statusRawValue = attachment[SCStreamFrameInfo.status] as? Int,
@@ -231,11 +291,13 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		let endTime = lastVideoPresentationTime + (lastSampleBuffer.map { frameDuration(for: $0) } ?? .zero)
 		assetWriter?.endSession(atSourceTime: endTime)
 		videoInput?.markAsFinished()
+		audioInput?.markAsFinished()
 		await assetWriter?.finishWriting()
 
 		let path = outputURL?.path ?? ""
 		assetWriter = nil
 		videoInput = nil
+		audioInput = nil
 		outputURL = nil
 		sessionStarted = false
 		firstSampleTime = .zero
@@ -247,6 +309,24 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		pendingResumeAdjustment = false
 		accumulatedPausedDuration = .zero
 		return path
+	}
+
+	/// Audio counterpart to the video branch above. Shares `adjustedPresentationTime`, so
+	/// audio and video are re-stamped against one common origin and one common paused-time
+	/// accumulator — the same reason both outputs run on the same queue. Unlike video there
+	/// is no last-buffer/extended-duration bookkeeping to do: `finishCapture` ends the
+	/// session on the video clock, and any audio past that point is simply trimmed.
+	private func appendAudio(_ sampleBuffer: CMSampleBuffer) {
+		guard let audioInput = audioInput, audioInput.isReadyForMoreMediaData else { return }
+		guard let presentationTime = adjustedPresentationTime(for: sampleBuffer) else { return }
+		let timing = CMSampleTimingInfo(
+			duration: sampleBuffer.duration,
+			presentationTimeStamp: presentationTime,
+			decodeTimeStamp: .invalid
+		)
+		if let retimed = try? CMSampleBuffer(copying: sampleBuffer, withNewTiming: [timing]) {
+			audioInput.append(retimed)
+		}
 	}
 
 	private func adjustedPresentationTime(for sampleBuffer: CMSampleBuffer) -> CMTime? {

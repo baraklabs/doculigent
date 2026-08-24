@@ -84,10 +84,20 @@ async function resolveScreenTrack(
 ): Promise<string> {
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
+  // System audio belongs to the screen track on every platform. macOS's ScreenCaptureKit
+  // capture already has it muxed in (see native/screenCapture.ts's capturesAudio), so there
+  // is no clip to fold in there and this resolves straight to outputPath. Windows and Linux
+  // record Chromium's desktop loopback in the renderer instead, which arrives here as
+  // `systemAudioClip` and is muxed in below — so all three end up with one layout: system
+  // audio in screen.mp4, mic in the camera side clip.
+  const systemAudio = input.systemAudioClip;
+  const screenPath = systemAudio ? path.join(os.tmpdir(), `${id}-screen-silent.mp4`) : outputPath;
+  if (systemAudio) cleanupPaths.push(screenPath);
+
   if (input.screenFilePath) {
     // Native capture (gdigrab/WGC on Windows, ScreenCaptureKit on mac) — already a
     // finished mp4 at its final size, so this is a move, never a re-encode.
-    await moveFile(input.screenFilePath, outputPath);
+    await moveFile(input.screenFilePath, screenPath);
   } else {
     // Non-native fallback — a raw, uncropped/unscaled getUserMedia recording of the
     // *whole* display (there's no way to crop at the capture source itself), transcoded
@@ -111,10 +121,30 @@ async function resolveScreenTrack(
       : vfFor(false);
     console.log("[recording] transcoding fallback screen recording", { tempScreenPath, screenExt: input.screenExt, vf });
     try {
-      await transcodeScreenRecording(tempScreenPath, outputPath, vf, onProgress, signal);
+      await transcodeScreenRecording(tempScreenPath, screenPath, vf, onProgress, signal);
     } catch (e) {
       console.error("[recording] transcodeScreenRecording failed", e);
       throw e;
+    }
+  }
+
+  if (systemAudio) {
+    const systemAudioPath = path.join(os.tmpdir(), `${id}-system-audio.${systemAudio.ext}`);
+    cleanupPaths.push(systemAudioPath);
+    await fs.writeFile(systemAudioPath, Buffer.from(systemAudio.bytes));
+    try {
+      // The same helper the Quick path uses to attach the mic. The screen track has no
+      // audio of its own on these platforms, so this takes its plain replace branch: an
+      // `-itsoffset` shift by however late the loopback recorder started relative to the
+      // capture, then a stream-copied video alongside a freshly encoded AAC track.
+      await muxScreenWithAudio(screenPath, systemAudioPath, outputPath, systemAudio.startOffsetMs ?? 0, undefined, signal);
+    } catch (e) {
+      if (e instanceof FfmpegCancelledError) throw e;
+      // A recording without system audio still beats no recording — fall back to the silent
+      // screen track rather than failing the whole save over it.
+      console.error("[recording] system audio mux failed — keeping the screen track without it", e);
+      logNative(`[recording] system audio mux failed: id=${id} error=${String(e)}`);
+      await moveFile(screenPath, outputPath);
     }
   }
 

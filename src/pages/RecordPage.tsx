@@ -505,10 +505,12 @@ export function RecordPage() {
     };
   }, [mic.deviceId]);
 
+  const isMac = window.api.system.platform === "darwin";
   const [systemAudioLevel, setSystemAudioLevel] = useState(0);
   const [systemAudioError, setSystemAudioError] = useState<string | null>(null);
   useEffect(() => {
-    if (!systemAudio.enabled || !systemAudio.sourceId || recording) {
+    // macOS is excluded deliberately, and it isn't an error there — see below.
+    if (!systemAudio.enabled || !systemAudio.sourceId || recording || isMac) {
       setSystemAudioLevel(0);
       setSystemAudioError(null);
       return;
@@ -950,7 +952,12 @@ export function RecordPage() {
                   aria-pressed={!mic.muted}
                   onClick={() => setMic({ ...mic, muted: !mic.muted })}
                 >
-                  <span>Mute</span>
+                  {/* On/Off, not "Mute" — the switch beside it is already lit whenever the
+                      mic is *live* (className/aria-pressed both key off !mic.muted), so a
+                      working mic was reading as "Mute [on]". Same wording as the System
+                      sound toggle next to it, which states the state rather than the
+                      action. */}
+                  <span>{mic.muted ? "Off" : "On"}</span>
                   <span className="header-toggle-switch" aria-hidden="true">
                     <span className="header-toggle-knob" />
                   </span>
@@ -963,7 +970,14 @@ export function RecordPage() {
                 <span className="record-block-icon"><Volume2 size={16} /></span>
                 <div className="record-block-title-slot">
                   <div className="record-block-title">System sound</div>
-                  {systemAudio.enabled && (
+                  {/* No live meter on macOS. The meter is fed by getSystemAudioStream,
+                      i.e. Chromium's desktop loopback, which only exists on Windows and
+                      Linux; macOS system audio is captured by the ScreenCaptureKit
+                      recorder, which only runs during an actual recording and so has
+                      nothing to preview from. Showing an empty meter (or worse, the
+                      "unavailable" error) would read as broken when the recording itself
+                      captures system sound fine. */}
+                  {systemAudio.enabled && !isMac && (
                     <div className="record-block-sub-meter" title={systemAudioError ?? undefined}>
                       <div
                         className="record-block-sub-meter-fill"

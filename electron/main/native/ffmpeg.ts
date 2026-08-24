@@ -835,33 +835,46 @@ export async function muxScreenWithAudio(
   signal?: AbortSignal
 ): Promise<void> {
   const offsetSecs = Math.max(0, offsetMs) / 1000;
-  // `-t screenPath's own duration`, not `-shortest` — screenPath is the reference timeline
-  // here (audioPath is the one being shifted to line up with it, via -itsoffset above), so
-  // the output should always run exactly as long as the video, regardless of whether the
+  // Two shapes, depending on whether `screenPath` already carries an audio track of its
+  // own — which it now can, since system audio lives in the screen track: macOS writes it
+  // there natively via ScreenCaptureKit, and Windows/Linux have their Chromium loopback
+  // recording muxed in beforehand (see ipc/recording.ts's resolveScreenTrack). When it
+  // does, `audioPath`'s mic has to be *mixed* into it rather than replacing it.
+  //
+  // The mix branch delays the mic with `adelay` inside the filter graph rather than
+  // `-itsoffset` on the input: amix aligns its inputs by presentation timestamp, and
+  // spelling the delay out in the graph keeps that alignment explicit instead of depending
+  // on how an input-level timestamp shift propagates through a filter chain. `normalize=0`
+  // matters — amix's default normalization would halve both sources' volume purely because
+  // there are two of them.
+  //
+  // `-t screenPath's own duration`, not `-shortest`, in both shapes: screenPath is the
+  // reference timeline here (the mic is the one being shifted to line up with it), so the
+  // output should always run exactly as long as the video, regardless of whether the
   // shifted audio comes up short (silence for the remainder — genuinely nothing more was
   // recorded, not a bug) or runs past it (cut off at the video's own end). `-shortest`
   // instead bounds the output by whichever stream ffmpeg's own EOF bookkeeping decides is
-  // shorter first, which — combined with `-itsoffset` already delaying audio's effective
-  // start — silently truncated the *video* down to match audio coming up short, several
-  // seconds of real screen recording just dropped with no error.
-  const screenDurationSecs = await probeDuration(screenPath);
-  const args = [
-    "-y",
-    "-i",
-    screenPath,
-    "-itsoffset",
-    offsetSecs.toFixed(3),
-    "-i",
-    audioPath,
-    "-map",
-    "0:v",
-    "-map",
-    "1:a",
-    "-c:v",
-    "copy",
-    "-c:a",
-    "aac",
-  ];
+  // shorter first, which — combined with the mic's delayed start — silently truncated the
+  // *video* down to match audio coming up short, several seconds of real screen recording
+  // just dropped with no error.
+  const screenInfo = await probeMediaInfo(screenPath);
+  const screenDurationSecs = screenInfo.durationSecs;
+  const args = ["-y", "-i", screenPath];
+  if (screenInfo.audioCodec) {
+    args.push(
+      "-i",
+      audioPath,
+      "-filter_complex",
+      `[1:a]adelay=${Math.round(offsetSecs * 1000)}:all=1[mic];[0:a][mic]amix=inputs=2:duration=longest:normalize=0[aout]`,
+      "-map",
+      "0:v",
+      "-map",
+      "[aout]"
+    );
+  } else {
+    args.push("-itsoffset", offsetSecs.toFixed(3), "-i", audioPath, "-map", "0:v", "-map", "1:a");
+  }
+  args.push("-c:v", "copy", "-c:a", "aac", "-b:a", "192k");
   if (screenDurationSecs > 0) args.push("-t", screenDurationSecs.toFixed(3));
   args.push(outputMp4Path);
   return run(args, onProgress, signal);

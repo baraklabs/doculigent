@@ -5,6 +5,7 @@ import {
   captureStartedAt,
   discardScreenCapture,
   isCaptureContentProtected,
+  isCaptureRecordingSystemAudio,
   pauseScreenCapture,
   resumeScreenCapture,
   startScreenCapture,
@@ -19,12 +20,21 @@ export function registerScreenCaptureIpc(): void {
       targetId: string,
       hideCursor: boolean,
       area?: AreaRect,
-      mode?: "quick" | "advanced"
-    ): Promise<{ available: boolean; contentProtected: boolean; startedAtMs: number | null }> => {
-      const started = await startScreenCapture(targetId, hideCursor, area, mode);
+      mode?: "quick" | "advanced",
+      captureSystemAudio?: boolean
+    ): Promise<{
+      available: boolean;
+      contentProtected: boolean;
+      startedAtMs: number | null;
+      systemAudio: boolean;
+    }> => {
+      const started = await startScreenCapture(targetId, hideCursor, area, mode, !!captureSystemAudio);
       return {
         available: started,
         contentProtected: started && isCaptureContentProtected(),
+        // Tells the renderer whether the capture is recording system audio itself (macOS)
+        // or whether it still has to open a Chromium loopback stream (Windows/Linux).
+        systemAudio: started && isCaptureRecordingSystemAudio(),
         // The renderer uses this (RecordingService.screenStartedAtMs) as the wall-clock
         // origin for the side clip's own start offset — see
         // EditProjectMedia.sideClipStartOffsetMs. Same Date.now() clock as the main
