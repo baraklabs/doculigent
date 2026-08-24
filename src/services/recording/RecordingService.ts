@@ -33,6 +33,24 @@ const H264_MP4_CANDIDATES = [
 ];
 const VP9_WEBM_CANDIDATES = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
 
+/** Explicit encode target for the camera's own MediaRecorder, in bits/second. Without one,
+ *  MediaRecorder picks its own conservative default (2.5 Mbps regardless of resolution),
+ *  which is a real quality ceiling on the camera track: the stream is requested at up to
+ *  4K (see acquireCameraStream) and recorded at whatever the device actually delivers, so
+ *  a 1080p camera was being encoded at well under half the bits it wants — and on macOS
+ *  that encode is additionally the *source* for the H.264 conversion at save time (see
+ *  ipc/recording.ts's writeCameraTrack), where anything lost here can't be recovered.
+ *
+ *  0.12 bits/pixel/frame is deliberately above the ~0.05 typical for natural video and
+ *  above the 0.08 the save-time H.264 passes target for screen content, so this
+ *  intermediate stays visibly cleaner than whatever is eventually encoded from it. The
+ *  floor keeps small/low-res cameras from being starved; the ceiling keeps a 4K webcam from
+ *  asking a software VP9 encoder for more than it can deliver in realtime. */
+function cameraBitsPerSecond(width: number, height: number): number {
+  const target = Math.round(width * height * FPS * 0.12);
+  return Math.min(20_000_000, Math.max(4_000_000, target));
+}
+
 function isMacOS(): boolean {
   return window.api.system.platform === "darwin";
 }
@@ -565,7 +583,10 @@ class RecordingService {
 
     const { mimeType, ext } = pickMimeType(true);
     this.cameraOnlyExt = ext;
-    this.recorder = new MediaRecorder(canvasStream, { mimeType });
+    this.recorder = new MediaRecorder(canvasStream, {
+      mimeType,
+      videoBitsPerSecond: cameraBitsPerSecond(this.canvas.width, this.canvas.height),
+    });
     this.chunks = [];
     this.recorder.ondataavailable = (e) => {
       if (e.data.size > 0) this.chunks.push(e.data);
@@ -600,7 +621,14 @@ class RecordingService {
 
     const { mimeType, ext } = pickMimeType(this.sideHasVideo);
     this.sideExt = ext;
-    this.sideRecorder = new MediaRecorder(stream, { mimeType });
+    // videoBitsPerSecond only where there's actually video to spend it on — an audio-only
+    // side clip carries no video track for MediaRecorder to apply it to.
+    this.sideRecorder = new MediaRecorder(
+      stream,
+      this.sideHasVideo
+        ? { mimeType, videoBitsPerSecond: cameraBitsPerSecond(this.sideCanvas!.width, this.sideCanvas!.height) }
+        : { mimeType }
+    );
     this.sideChunks = [];
     this.sideRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) this.sideChunks.push(e.data);

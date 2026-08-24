@@ -146,7 +146,17 @@ export function setCameraBubbleRecordingActive(active: boolean, contentProtected
     shouldHide,
     wasVisible: win.isVisible(),
   });
+  // Symmetric on purpose: this is called twice per recording — once with a conservative
+  // `contentProtected: false` before the backend is known (which hides the window), then
+  // again with the real answer once screen capture has actually started (see
+  // RecordingService's start()). Without the re-show, that first pessimistic call was
+  // permanent: the bubble vanished the moment an Advanced recording began and never came
+  // back, even on a backend that excludes it perfectly well on its own. `showInactive`
+  // rather than `show` so it never steals focus from whatever is being recorded, and the
+  // window keeps whatever setContentProtection state it already had, so bringing it back
+  // can't leak it into the capture.
   if (shouldHide) win.hide();
+  else if (!win.isVisible()) win.showInactive();
   win.webContents.send(Channels.cameraBubble.recordingActiveChanged, active, contentProtected);
 }
 
