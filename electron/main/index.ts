@@ -59,6 +59,28 @@ function buildDarwinMenu(): Menu {
         { role: "selectAll" },
       ],
     },
+    {
+      label: "View",
+      submenu: [
+        {
+          label: "Toggle Developer Tools",
+          accelerator: "CommandOrControl+Alt+I",
+          // Detached ({ mode: "detach" }), not the { role: "toggleDevTools" } default
+          // (which docks to the inspected window itself) — the main window is
+          // deliberately hidden for the whole duration of a recording (see
+          // hideMainWindowForDock), so a docked devtools panel would disappear right
+          // along with it, at exactly the moment there's something to actually watch in
+          // the console. A detached devtools window is independent, so it stays open
+          // and visible straight through a hidden-window recording.
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+            if (!win) return;
+            if (win.webContents.isDevToolsOpened()) win.webContents.closeDevTools();
+            else win.webContents.openDevTools({ mode: "detach" });
+          },
+        },
+      ],
+    },
   ]);
 }
 

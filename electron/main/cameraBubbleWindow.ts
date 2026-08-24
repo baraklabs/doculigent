@@ -146,7 +146,14 @@ export function setCameraBubbleRecordingActive(active: boolean, contentProtected
     shouldHide,
     wasVisible: win.isVisible(),
   });
+  // Both branches needed now, not just hide — RecordingService.start() calls this twice
+  // per recording (a conservative contentProtected:false default before screen capture
+  // starts, then again with the real value once it's known — see its own comment), so a
+  // window this *first* call hid has to be explicitly re-shown here if the real answer
+  // turns out not to need that after all, or it stays wrongly hidden for the rest of the
+  // recording (a plain `if (shouldHide) win.hide()` only ever handled one-call-per-recording).
   if (shouldHide) win.hide();
+  else if (!win.isVisible()) win.showInactive();
   win.webContents.send(Channels.cameraBubble.recordingActiveChanged, active, contentProtected);
 }
 
