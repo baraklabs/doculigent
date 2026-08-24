@@ -346,6 +346,17 @@ class RecordingService {
     this.audioTrack = this.resolveAudioTrack();
     if (this.cameraStream) {
       this.cameraVideoEl = document.createElement("video");
+      // Attached to the document (off-screen, invisible) rather than left fully detached —
+      // a <video> that's never part of the rendered tree at all is a known Chromium power-
+      // saving throttling target: frame decode can slow to a crawl or stop outright after a
+      // few real seconds, independent of window/renderer-level backgrounding (which
+      // `backgroundThrottling`/disable-renderer-backgrounding, set elsewhere, don't cover —
+      // those are about timers, not per-element media decode). tick()/sideTick()'s rAF loop
+      // keeps firing either way — it just ends up copying the same stalled frame onto the
+      // canvas over and over, drawing/encoding a frozen picture while the recorder's still
+      // genuinely live audio track (a separate pipeline entirely) keeps right on going.
+      this.cameraVideoEl.style.cssText = "position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;";
+      document.body.appendChild(this.cameraVideoEl);
       if (overlay.cameraBlur === "none") {
         this.cameraVideoEl.srcObject = this.cameraStream;
       } else {
@@ -814,6 +825,7 @@ class RecordingService {
     this.audioMixCtx?.close();
     this.audioMixCtx = null;
     this.audioTrack = null;
+    this.cameraVideoEl?.remove();
     this.cameraVideoEl = null;
     this.canvas = null;
     this.ctx = null;
