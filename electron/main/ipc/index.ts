@@ -19,6 +19,7 @@ import { registerTeamsIpc } from "./teams";
 import { registerProjectManagersIpc } from "./projectManagers";
 import { registerPersonasIpc } from "./personas";
 import { registerStorageIpc } from "./storage";
+import { registerGoogleDriveIpc } from "./googleDrive";
 
 export function registerIpcHandlers(): void {
   registerCaptureIpc();
@@ -42,4 +43,5 @@ export function registerIpcHandlers(): void {
   registerProjectManagersIpc();
   registerPersonasIpc();
   registerStorageIpc();
+  registerGoogleDriveIpc();
 }

@@ -38,4 +38,7 @@ export const StorageService = {
   getCachedShareLink(fileId: string): Promise<ShareLink | null> {
     return window.api.storage.getCachedShareLink(fileId);
   },
+  testConnection(preference: StoragePreference, s3SecretKey?: string | null): Promise<{ ok: boolean; message: string }> {
+    return window.api.storage.testConnection(preference, s3SecretKey);
+  },
 };

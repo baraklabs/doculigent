@@ -23,6 +23,13 @@ export function useSetStoragePreference() {
   });
 }
 
+export function useTestStoragePreference() {
+  return useMutation({
+    mutationFn: ({ preference, s3SecretKey }: { preference: StoragePreference; s3SecretKey?: string | null }) =>
+      StorageService.testConnection(preference, s3SecretKey),
+  });
+}
+
 export function useStorageTeams(enabled = true) {
   return useQuery({
     queryKey: ["storageTeams"],

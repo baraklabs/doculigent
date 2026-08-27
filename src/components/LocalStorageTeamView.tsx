@@ -1,22 +1,35 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, Plus, Trash2 } from "lucide-react";
-import { useCreateStorageTeam, useDeleteStorageTeam, useStorageTeams } from "../hooks/useStorage";
+import type { StorageProviderKind } from "@shared/types/storage";
+import { useCreateStorageTeam, useDeleteStorageTeam, useStoragePreference, useStorageTeams } from "../hooks/useStorage";
 import { StorageFileBrowser } from "./StorageFileBrowser";
 import { useToast } from "../hooks/useToast";
 import "./TeamsSection.css";
 
+function storageLabel(provider: StorageProviderKind): string {
+  return provider === "google_drive" ? "Google Drive" : "S3 bucket";
+}
+
 export function LocalStorageTeamView() {
+  const { data: preference } = useStoragePreference();
+  const provider = preference?.provider ?? "s3";
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
 
   return selectedTeamId ? (
-    <LocalStorageTeamDetail teamId={selectedTeamId} onBack={() => setSelectedTeamId(null)} />
+    <LocalStorageTeamDetail teamId={selectedTeamId} provider={provider} onBack={() => setSelectedTeamId(null)} />
   ) : (
-    <LocalStorageTeamList onSelect={setSelectedTeamId} />
+    <LocalStorageTeamList provider={provider} onSelect={setSelectedTeamId} />
   );
 }
 
-function LocalStorageTeamList({ onSelect }: { onSelect: (teamId: string) => void }) {
+function LocalStorageTeamList({
+  provider,
+  onSelect,
+}: {
+  provider: StorageProviderKind;
+  onSelect: (teamId: string) => void;
+}) {
   const { data: teams = [], isLoading } = useStorageTeams();
   const [showCreate, setShowCreate] = useState(false);
 
@@ -24,7 +37,8 @@ function LocalStorageTeamList({ onSelect }: { onSelect: (teamId: string) => void
     <div className="teams-list-view">
       <div className="teams-list-view-head">
         <p className="muted">
-          Teams here are folders in your own S3 bucket — <Link to="/settings?section=storage">Settings &gt; Storage</Link>.
+          Teams here are folders in your own {storageLabel(provider)} —{" "}
+          <Link to="/settings?section=storage">Settings &gt; Storage</Link>.
         </p>
         <button type="button" className="primary" onClick={() => setShowCreate(true)}>
           <Plus size={14} /> Create team
@@ -44,6 +58,7 @@ function LocalStorageTeamList({ onSelect }: { onSelect: (teamId: string) => void
 
       {showCreate && (
         <CreateStorageTeamModal
+          provider={provider}
           onClose={() => setShowCreate(false)}
           onCreated={(teamId) => {
             setShowCreate(false);
@@ -55,7 +70,15 @@ function LocalStorageTeamList({ onSelect }: { onSelect: (teamId: string) => void
   );
 }
 
-function CreateStorageTeamModal({ onClose, onCreated }: { onClose: () => void; onCreated: (teamId: string) => void }) {
+function CreateStorageTeamModal({
+  provider,
+  onClose,
+  onCreated,
+}: {
+  provider: StorageProviderKind;
+  onClose: () => void;
+  onCreated: (teamId: string) => void;
+}) {
   const createTeam = useCreateStorageTeam();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -88,7 +111,7 @@ function CreateStorageTeamModal({ onClose, onCreated }: { onClose: () => void; o
               placeholder="e.g. Marketing"
               onChange={(e) => setName(e.target.value)}
             />
-            <small className="field-hint">Creates a folder with this name in your S3 bucket.</small>
+            <small className="field-hint">Creates a folder with this name in your {storageLabel(provider)}.</small>
           </div>
           {error && <p className="error">{error}</p>}
           <div className="actions modal-actions">
@@ -105,7 +128,15 @@ function CreateStorageTeamModal({ onClose, onCreated }: { onClose: () => void; o
   );
 }
 
-function LocalStorageTeamDetail({ teamId, onBack }: { teamId: string; onBack: () => void }) {
+function LocalStorageTeamDetail({
+  teamId,
+  provider,
+  onBack,
+}: {
+  teamId: string;
+  provider: StorageProviderKind;
+  onBack: () => void;
+}) {
   const toast = useToast();
   const deleteTeam = useDeleteStorageTeam();
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -134,8 +165,8 @@ function LocalStorageTeamDetail({ teamId, onBack }: { teamId: string; onBack: ()
       </div>
 
       <p className="notice">
-        Files upload straight to this folder in your own S3 bucket. Team member invites aren't available with this
-        storage option — switch back to Doculigent Cloud in{" "}
+        Files upload straight to this folder in your own {storageLabel(provider)}. Team member invites aren't
+        available with this storage option — switch back to Doculigent Cloud in{" "}
         <Link to="/settings?section=storage">Settings &gt; Storage</Link> to invite people.
       </p>
 
@@ -146,8 +177,8 @@ function LocalStorageTeamDetail({ teamId, onBack }: { teamId: string; onBack: ()
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h2>Delete "{teamId}"?</h2>
             <p className="muted">
-              This deletes the "{teamId}" folder and everything inside it from your S3 bucket, and removes any
-              synced copies from your Library. This can't be undone.
+              This deletes the "{teamId}" folder and everything inside it from your {storageLabel(provider)}, and
+              removes any synced copies from your Library. This can't be undone.
             </p>
             <div className="actions modal-actions">
               <button type="button" onClick={() => setConfirmDelete(false)}>

@@ -74,7 +74,7 @@ export function ShareToStoragePanel({
           </button>
         )}
       </div>
-      <p className="muted">Upload to Amazon S3 and copy a link to send a colleague.</p>
+      <p className="muted">Upload to your connected storage and copy a link to send a colleague.</p>
 
       {uploadPercent !== null && (
         <div className="progress">

@@ -20,6 +20,7 @@ export function isStorageNotSetUp(
 ): boolean {
   if (!preference) return true;
   if (preference.provider === "s3") return !preference.s3;
+  if (preference.provider === "google_drive") return !preference.googleDrive;
   // Auth hasn't resolved yet — treat as "not set up" rather than risk a false "it's ready"
   // read that sends auto-share into SharePage before we actually know if there's a session.
   if (!authReady) return true;

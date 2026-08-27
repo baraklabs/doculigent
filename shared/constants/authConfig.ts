@@ -14,3 +14,18 @@ export const AUTH_CONFIG = {
   loopbackHost: "127.0.0.1",
   loopbackPath: "/callback",
 } as const;
+
+export const GOOGLE_DRIVE_CLIENT_ID = import.meta.env.MAIN_VITE_GOOGLE_DRIVE_CLIENT_ID ?? "";
+export const GOOGLE_DRIVE_CLIENT_SECRET = import.meta.env.MAIN_VITE_GOOGLE_DRIVE_CLIENT_SECRET ?? "";
+export const GOOGLE_DRIVE_CONFIGURED = Boolean(GOOGLE_DRIVE_CLIENT_ID && GOOGLE_DRIVE_CLIENT_SECRET);
+
+export const GOOGLE_DRIVE_AUTH_CONFIG = {
+  authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+  tokenUrl: "https://oauth2.googleapis.com/token",
+  userInfoUrl: "https://www.googleapis.com/oauth2/v2/userinfo",
+  clientId: GOOGLE_DRIVE_CLIENT_ID,
+  clientSecret: GOOGLE_DRIVE_CLIENT_SECRET,
+  scope: "https://www.googleapis.com/auth/drive.file email",
+  loopbackHost: "127.0.0.1",
+  loopbackPath: "/google-callback",
+} as const;

@@ -41,7 +41,7 @@ import type { WhisperModelSize, WhisperModelStatus } from "../constants/whisperM
 import type { FileDownloadTicket, Team, TeamFile, TeamFileStatus, TeamMember } from "./team";
 import type { PmRunResult, ProjectManager } from "./projectManager";
 import type { CustomPersona } from "./persona";
-import type { ShareLink, StorageFile, StoragePreference, StorageTeam } from "./storage";
+import type { GoogleDriveStatus, ShareLink, StorageFile, StoragePreference, StorageTeam } from "./storage";
 
 export interface DoculigentApi {
  
@@ -433,5 +433,12 @@ export interface DoculigentApi {
     deleteFile(fileId: string): Promise<void>;
     getShareableLink(fileId: string): Promise<ShareLink>;
     getCachedShareLink(fileId: string): Promise<ShareLink | null>;
+    testConnection(preference: StoragePreference, s3SecretKey?: string | null): Promise<{ ok: boolean; message: string }>;
+  };
+  googleDrive: {
+    getStatus(): Promise<GoogleDriveStatus>;
+    signIn(): Promise<GoogleDriveStatus>;
+    signOut(): Promise<void>;
+    onStatusChanged(callback: (status: GoogleDriveStatus) => void): () => void;
   };
 }

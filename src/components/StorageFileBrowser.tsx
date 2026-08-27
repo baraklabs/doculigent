@@ -97,11 +97,6 @@ function ShareLinkActions({ fileId }: { fileId: string }) {
   );
 }
 
-/** Upload dropzone + file list + delete flow for one S3 prefix — either a team subfolder
- *  (`teams/<teamId>/`) or the untargeted `shared/` folder when teamId is "". Callers that show
- *  their own upload UI above this (e.g. ShareToStoragePanel, routed in from a video/meeting's
- *  Share button) can hide the generic dropzone via showDropzone={false} so there's only one
- *  upload control on screen at a time. */
 export function StorageFileBrowser({ teamId, showDropzone = true }: { teamId: string; showDropzone?: boolean }) {
   const toast = useToast();
   const { data: files, isLoading } = useStorageFiles(teamId);
@@ -257,7 +252,7 @@ export function StorageFileBrowser({ teamId, showDropzone = true }: { teamId: st
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h2>Delete "{deleteTarget.name}"?</h2>
             <p className="muted">
-              This removes it from S3 and deletes the synced copy from your Library. This can't be undone.
+              This removes it from your connected storage and deletes the synced copy from your Library. This can't be undone.
             </p>
             <div className="actions modal-actions">
               <button type="button" onClick={() => setDeleteTarget(null)}>

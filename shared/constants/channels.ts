@@ -246,5 +246,12 @@ export const Channels = {
     deleteFile: "storage:deleteFile",
     getShareableLink: "storage:getShareableLink",
     getCachedShareLink: "storage:getCachedShareLink",
+    testConnection: "storage:testConnection",
+  },
+  googleDrive: {
+    getStatus: "googleDrive:getStatus",
+    signIn: "googleDrive:signIn",
+    signOut: "googleDrive:signOut",
+    statusChanged: "googleDrive:statusChanged",
   },
 } as const;

@@ -62,3 +62,17 @@ export function getS3SecretKey(): Promise<string | null> {
 export async function deleteS3SecretKey(): Promise<void> {
   await keytar.deletePassword(SERVICE, S3_SECRET_ACCOUNT);
 }
+
+const GOOGLE_DRIVE_REFRESH_ACCOUNT = "storage:googleDriveRefreshToken";
+
+export function setGoogleDriveRefreshToken(token: string): Promise<void> {
+  return keytar.setPassword(SERVICE, GOOGLE_DRIVE_REFRESH_ACCOUNT, token);
+}
+
+export function getGoogleDriveRefreshToken(): Promise<string | null> {
+  return keytar.getPassword(SERVICE, GOOGLE_DRIVE_REFRESH_ACCOUNT);
+}
+
+export async function clearGoogleDriveRefreshToken(): Promise<void> {
+  await keytar.deletePassword(SERVICE, GOOGLE_DRIVE_REFRESH_ACCOUNT);
+}

@@ -39,7 +39,7 @@ export interface ProjectManager {
   name: string;
   teamId: string;
   teamName: string;
-  storageProvider?: "doculigent" | "s3";
+  storageProvider?: "doculigent" | "s3" | "google_drive";
   persona: PmPersonaId;
   triggerMode: PmTriggerMode;
   scheduleTime?: string | null;

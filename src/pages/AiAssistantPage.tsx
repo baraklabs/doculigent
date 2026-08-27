@@ -354,7 +354,7 @@ export function AiAssistantPage() {
   const { data: projectManagers = [] } = useProjectManagers();
   const { data: customPersonas = [] } = useCustomPersonas();
   const { data: storagePreference } = useStoragePreference();
-  const usingS3Storage = storagePreference?.provider === "s3";
+  const usingS3Storage = storagePreference?.provider === "s3" || storagePreference?.provider === "google_drive";
   const { data: teams = [] } = useTeams(!usingS3Storage);
   const { data: storageTeams = [] } = useStorageTeams(usingS3Storage);
   const pmTeams: { id: string; name: string }[] = usingS3Storage ? storageTeams : teams;
@@ -394,7 +394,7 @@ export function AiAssistantPage() {
         name: newPmName.trim(),
         teamId: team.id,
         teamName: team.name,
-        storageProvider: usingS3Storage ? "s3" : "doculigent",
+        storageProvider: usingS3Storage ? (storagePreference?.provider as "s3" | "google_drive") : "doculigent",
         persona: newPmPersona,
         triggerMode: "manual",
         scheduleTime: null,

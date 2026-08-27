@@ -112,7 +112,7 @@ export function ProjectManagerPanel({
   onDeleted: () => void;
   onManagePersonas: () => void;
 }) {
-  const isS3 = pm.storageProvider === "s3";
+  const isS3 = pm.storageProvider === "s3" || pm.storageProvider === "google_drive";
   const { data: teamFiles = [], isLoading: teamFilesLoading } = useTeamFiles(pm.teamId, "active", !isS3);
   const { data: storageFiles = [], isLoading: storageFilesLoading } = useStorageFiles(pm.teamId, isS3);
   const files: PmFile[] = isS3

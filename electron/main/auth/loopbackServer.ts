@@ -12,16 +12,20 @@ export class LoopbackServer {
   private port = 0;
   private settle: { resolve: (r: LoopbackResult) => void; reject: (e: Error) => void } | null = null;
 
-  private constructor(private readonly server: http.Server) {
+  private constructor(
+    private readonly server: http.Server,
+    private readonly host: string,
+    private readonly path: string
+  ) {
     server.on("request", (req, res) => this.handleRequest(req, res));
   }
 
-  static start(): Promise<LoopbackServer> {
+  static start(path: string = AUTH_CONFIG.loopbackPath, host: string = AUTH_CONFIG.loopbackHost): Promise<LoopbackServer> {
     return new Promise((resolve, reject) => {
       const server = http.createServer();
-      const instance = new LoopbackServer(server);
+      const instance = new LoopbackServer(server, host, path);
       server.once("error", reject);
-      server.listen(0, AUTH_CONFIG.loopbackHost, () => {
+      server.listen(0, host, () => {
         server.removeListener("error", reject);
         const address = server.address();
         instance.port = typeof address === "object" && address ? address.port : 0;
@@ -31,18 +35,32 @@ export class LoopbackServer {
   }
 
   get redirectUri(): string {
-    return `http://${AUTH_CONFIG.loopbackHost}:${this.port}${AUTH_CONFIG.loopbackPath}`;
+    return `http://${this.host}:${this.port}${this.path}`;
   }
 
-  waitForCallback(): Promise<LoopbackResult> {
+  waitForCallback(timeoutMs = 5 * 60 * 1000): Promise<LoopbackResult> {
     return new Promise((resolve, reject) => {
-      this.settle = { resolve, reject };
+      const timer = setTimeout(() => {
+        this.settle = null;
+        reject(new Error("Sign-in timed out. Please try again."));
+      }, timeoutMs);
+
+      this.settle = {
+        resolve: (result) => {
+          clearTimeout(timer);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      };
     });
   }
 
   private handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-    const url = new URL(req.url ?? "/", `http://${AUTH_CONFIG.loopbackHost}:${this.port}`);
-    if (url.pathname !== AUTH_CONFIG.loopbackPath) {
+    const url = new URL(req.url ?? "/", `http://${this.host}:${this.port}`);
+    if (url.pathname !== this.path) {
       res.writeHead(404).end();
       return;
     }
@@ -54,12 +72,15 @@ export class LoopbackServer {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(resultPage(error));
 
+    const settle = this.settle;
+    this.settle = null;
+
     if (error) {
-      this.settle?.reject(new Error(url.searchParams.get("error_description") ?? error));
+      settle?.reject(new Error(url.searchParams.get("error_description") ?? error));
     } else if (code && state) {
-      this.settle?.resolve({ code, state });
+      settle?.resolve({ code, state });
     } else {
-      this.settle?.reject(new Error("Callback was missing code/state"));
+      settle?.reject(new Error("Callback was missing code/state"));
     }
   }
 
@@ -67,6 +88,13 @@ export class LoopbackServer {
     if (this.closed) return;
     this.closed = true;
     this.server.close();
+  }
+
+  cancel(reason: Error): void {
+    const settle = this.settle;
+    this.settle = null;
+    settle?.reject(reason);
+    this.close();
   }
 }
 

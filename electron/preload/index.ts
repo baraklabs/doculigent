@@ -12,7 +12,7 @@ import type {
   RecordingSaveResult,
 } from "@shared/types/models";
 import type { TeamFileStatus } from "@shared/types/team";
-import type { StoragePreference } from "@shared/types/storage";
+import type { GoogleDriveStatus, StoragePreference } from "@shared/types/storage";
 
 const api: DoculigentApi = {
   system: {
@@ -404,6 +404,17 @@ const api: DoculigentApi = {
     deleteFile: (fileId) => ipcRenderer.invoke(Channels.storage.deleteFile, fileId),
     getShareableLink: (fileId) => ipcRenderer.invoke(Channels.storage.getShareableLink, fileId),
     getCachedShareLink: (fileId) => ipcRenderer.invoke(Channels.storage.getCachedShareLink, fileId),
+    testConnection: (preference, s3SecretKey) => ipcRenderer.invoke(Channels.storage.testConnection, preference, s3SecretKey),
+  },
+  googleDrive: {
+    getStatus: () => ipcRenderer.invoke(Channels.googleDrive.getStatus),
+    signIn: () => ipcRenderer.invoke(Channels.googleDrive.signIn),
+    signOut: () => ipcRenderer.invoke(Channels.googleDrive.signOut),
+    onStatusChanged: (callback) => {
+      const listener = (_event: unknown, status: GoogleDriveStatus) => callback(status);
+      ipcRenderer.on(Channels.googleDrive.statusChanged, listener);
+      return () => ipcRenderer.removeListener(Channels.googleDrive.statusChanged, listener);
+    },
   },
 };
 

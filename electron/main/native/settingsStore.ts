@@ -22,6 +22,10 @@ import type { WhisperModelSize } from "@shared/constants/whisperModels";
 import type { StoragePreference } from "@shared/types/storage";
 import { settingsFilePath } from "./paths";
 
+export interface GoogleDriveAccount {
+  email: string;
+}
+
 interface StoredSettings {
   llmProfiles?: LlmModelProfile[];
   appIntegrations?: AppIntegration[];
@@ -47,6 +51,7 @@ interface StoredSettings {
   transcriptionByokProfileId?: string | null;
   autoTranscribe?: AutoTranscribeSettings;
   storagePreference?: StoragePreference;
+  googleDriveAccount?: GoogleDriveAccount;
   cameraBubbleConfig?: CameraBubbleConfig;
   cameraBubbleBounds?: CameraBubbleBounds;
   recordingDockConfig?: RecordingDockConfig;
@@ -322,5 +327,18 @@ export function getStoragePreference(): StoragePreference {
 
 export function setStoragePreference(preference: StoragePreference): void {
   writeStored({ ...readStored(), storagePreference: preference });
+}
+
+export function getGoogleDriveAccount(): GoogleDriveAccount | null {
+  return readStored().googleDriveAccount ?? null;
+}
+
+export function setGoogleDriveAccount(account: GoogleDriveAccount): void {
+  writeStored({ ...readStored(), googleDriveAccount: account });
+}
+
+export function clearGoogleDriveAccount(): void {
+  const { googleDriveAccount: _googleDriveAccount, ...rest } = readStored();
+  writeStored(rest);
 }
 

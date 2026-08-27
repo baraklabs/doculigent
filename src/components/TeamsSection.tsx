@@ -1,5 +1,5 @@
 import { useEffect, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, Cloud, Loader2, LogIn, Plus, Trash2, Upload, UserPlus, Users } from "lucide-react";
 import type { TeamFile, TeamMember } from "@shared/types/team";
@@ -22,7 +22,7 @@ import {
 import { TeamsService } from "../services/teams/TeamsService";
 import { useAuthStore } from "../store/authStore";
 import { useToast } from "../hooks/useToast";
-import { useStoragePreference } from "../hooks/useStorage";
+import { useSetStoragePreference, useStoragePreference } from "../hooks/useStorage";
 import { LocalStorageTeamView } from "./LocalStorageTeamView";
 import "./TeamsSection.css";
 
@@ -43,6 +43,45 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`;
 }
 
+function GoogleDriveTeamsUnsupported() {
+  const navigate = useNavigate();
+  const session = useAuthStore((s) => s.session);
+  const { data: preference } = useStoragePreference();
+  const setPreference = useSetStoragePreference();
+
+  async function switchToDoculigent() {
+    if (!session) {
+      navigate("/account");
+      return;
+    }
+    await setPreference.mutateAsync({ preference: { ...preference, provider: "doculigent" } });
+  }
+
+  return (
+    <div className="shared-empty">
+      <Users size={26} className="shared-empty-icon" />
+      <h2>Team isn't supported with Google Drive</h2>
+      <p className="muted">
+        Google Drive's per-file access model can't reliably support team folders. Switch to Doculigent Cloud for
+        full team support (invites, shared roster), or manage individual files in{" "}
+        <Link to="/settings?section=storage">Settings &gt; Storage</Link>.
+      </p>
+      <div className="actions shared-empty-actions">
+        <button
+          type="button"
+          className="primary"
+          onClick={switchToDoculigent}
+          disabled={setPreference.isPending}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+        >
+          <LogIn size={14} />
+          {setPreference.isPending ? "Switching…" : session ? "Switch to Doculigent Cloud" : "Sign in to switch"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function TeamsSection() {
   const navigate = useNavigate();
   const session = useAuthStore((s) => s.session);
@@ -55,6 +94,10 @@ export function TeamsSection() {
         <p className="muted">Loading…</p>
       </div>
     );
+  }
+
+  if (storagePreference?.provider === "google_drive") {
+    return <GoogleDriveTeamsUnsupported />;
   }
 
   if (storagePreference && storagePreference.provider !== "doculigent") {

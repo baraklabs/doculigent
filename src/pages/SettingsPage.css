@@ -136,6 +136,58 @@
   opacity: .6; cursor: not-allowed; background: var(--muted); border-color: var(--muted); box-shadow: none;
 }
 
+.storage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin: 12px 0; }
+.storage-card {
+  position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+  text-align: left; padding: 18px 16px; border-radius: 14px;
+  border: 2px solid var(--border); background: var(--bg); color: var(--text);
+  cursor: pointer; transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+.storage-card:hover { border-color: var(--accent); transform: translateY(-1px); box-shadow: 0 6px 16px rgba(91, 75, 245, .12); }
+.storage-card.active {
+  border-color: var(--accent);
+  background: linear-gradient(135deg, rgba(91, 75, 245, .08), rgba(91, 75, 245, .02));
+  box-shadow: 0 0 0 1px rgba(91, 75, 245, .18);
+}
+.storage-card-badge {
+  position: absolute; top: 12px; right: 12px; font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .03em; color: #fff; background: var(--accent); padding: 2px 8px; border-radius: 999px;
+}
+.storage-card-icon {
+  display: flex; align-items: center; justify-content: center; width: 40px; height: 40px;
+  border-radius: 10px; background: var(--panel); border: 1px solid var(--border); font-size: 18px;
+}
+.storage-card-icon.doculigent { color: #15803d; }
+.storage-card-icon.s3 { color: #b45309; }
+.storage-card-icon.google { padding: 6px; }
+.storage-card-icon.google svg { width: 100%; height: 100%; }
+.storage-card-title { font-size: 15px; font-weight: 700; }
+.storage-card-blurb { font-size: 12px; color: var(--muted); line-height: 1.4; }
+.storage-card-status { font-size: 11px; color: var(--muted); font-weight: 600; margin-top: auto; padding-top: 4px; }
+.storage-card.active .storage-card-status { color: var(--accent-strong); }
+
+.google-account-field { align-items: center; text-align: center; }
+
+.google-signin-btn {
+  display: inline-flex; align-items: center; gap: 10px; align-self: center;
+  background: #fff; border: 1px solid #dadce0; color: #3c4043;
+  font-size: 13px; font-weight: 600; font-family: "Roboto", "Inter", system-ui, sans-serif;
+  padding: 8px 14px 8px 10px; border-radius: 6px; cursor: pointer;
+  box-shadow: 0 1px 2px rgba(60, 64, 67, .1);
+  transition: box-shadow 150ms ease, background 150ms ease;
+}
+.google-signin-btn svg { width: 18px; height: 18px; flex-shrink: 0; }
+.google-signin-btn:hover:not(:disabled) { background: #f8f9fa; box-shadow: 0 1px 3px rgba(60, 64, 67, .25); border-color: #dadce0; }
+.google-signin-btn:disabled { opacity: .6; cursor: not-allowed; }
+
+.google-account-row { display: flex; align-items: center; justify-content: center; gap: 12px; align-self: center; }
+.google-signout-btn {
+  background: none; border: none; color: var(--accent-strong); font-size: 12px; font-weight: 600;
+  cursor: pointer; padding: 2px 4px;
+}
+.google-signout-btn:hover:not(:disabled) { text-decoration: underline; }
+.google-signout-btn:disabled { opacity: .6; cursor: not-allowed; }
+
 .app-add-grid { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
 .app-add-card {
   display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 10px;

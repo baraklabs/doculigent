@@ -25,8 +25,7 @@ import type { StorageProvider } from "./StorageProvider";
 const SHARE_LINK_EXPIRY_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
 function normalizeFolder(folder: string): string {
-  const trimmed = folder.trim().replace(/^\/+/, "");
-  if (!trimmed) return "";
+  const trimmed = (folder.trim() || "Doculigent").replace(/^\/+/, "");
   return trimmed.endsWith("/") ? trimmed : `${trimmed}/`;
 }
 

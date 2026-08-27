@@ -1,4 +1,4 @@
-export type StorageProviderKind = "doculigent" | "s3";
+export type StorageProviderKind = "doculigent" | "s3" | "google_drive";
 
 export interface StorageFile {
   id: string;
@@ -26,7 +26,17 @@ export interface S3Config {
   endpoint?: string;
 }
 
+export interface GoogleDriveConfig {
+  folder: string;
+}
+
 export interface StoragePreference {
   provider: StorageProviderKind;
   s3?: S3Config;
+  googleDrive?: GoogleDriveConfig;
+}
+
+export interface GoogleDriveStatus {
+  connected: boolean;
+  email: string | null;
 }

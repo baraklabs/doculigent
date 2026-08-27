@@ -500,15 +500,24 @@ export function LibraryPage() {
           style={{ "--section-accent": activeSection.accent, "--section-tint": activeSection.tint } as CSSProperties}
         >
           {section === "shared" ? (
-            storagePreference?.provider === "s3" ? (
+            storagePreference?.provider === "s3" || storagePreference?.provider === "google_drive" ? (
               <>
                 <div className="library-section-head">
                   <span className="library-section-icon">{activeSection.icon}</span>
                   <div>
                     <h1>Shared</h1>
                     <p className="muted">
-                      Files uploaded via Share, or dropped here directly — stored under{" "}
-                      <code>{storagePreference.s3?.folder || "folder"}/shared/</code> in your S3 bucket.
+                      {storagePreference.provider === "s3" ? (
+                        <>
+                          Files uploaded via Share, or dropped here directly — stored under{" "}
+                          <code>{storagePreference.s3?.folder || "folder"}/shared/</code> in your S3 bucket.
+                        </>
+                      ) : (
+                        <>
+                          Files uploaded via Share, or dropped here directly — stored under{" "}
+                          <code>{storagePreference.googleDrive?.folder || "folder"}/shared/</code> in your Google Drive.
+                        </>
+                      )}
                     </p>
                   </div>
                 </div>
@@ -872,7 +881,7 @@ export function LibraryPage() {
                             title="Share"
                             className="icon-btn icon-btn-share"
                             onClick={() => {
-                              if (storagePreference?.provider === "s3") {
+                              if (storagePreference?.provider === "s3" || storagePreference?.provider === "google_drive") {
                                 setSection("shared");
                                 setShareVideoId(v.id);
                               } else {
