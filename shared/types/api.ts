@@ -1,6 +1,4 @@
 import type {
-  AppIntegration,
-  AppIntegrationKind,
   AreaRect,
   AreaSelectResult,
   AutoTranscribeSettings,
@@ -39,7 +37,7 @@ import type { AuthSession, LoginStatus } from "./auth";
 import type { AnnotationCommand, AnnotationState, AnnotationTool } from "./annotation";
 import type { WhisperModelSize, WhisperModelStatus } from "../constants/whisperModels";
 import type { FileDownloadTicket, Team, TeamFile, TeamFileStatus, TeamMember } from "./team";
-import type { PmRunResult, ProjectManager } from "./projectManager";
+import type { ProjectManager } from "./projectManager";
 import type { CustomPersona } from "./persona";
 import type { GoogleDriveStatus, ShareLink, StorageFile, StoragePreference, StorageTeam } from "./storage";
 
@@ -347,29 +345,6 @@ export interface DoculigentApi {
     ): Promise<ChatMessage>;
     testConnection(profile: LlmModelProfile, apiKey?: string | null): Promise<{ ok: boolean; message: string }>;
   };
-  apps: {
-    list(): Promise<AppIntegration[]>;
-    save(integration: AppIntegration, secret?: string | null): Promise<void>;
-    delete(id: string): Promise<void>;
-    testConnection(
-      kind: AppIntegrationKind,
-      integrationId: string | null,
-      secret?: string | null
-    ): Promise<{ ok: boolean; message: string }>;
-    githubCreateIssue(
-      integrationId: string,
-      repo: string,
-      title: string,
-      body: string
-    ): Promise<{ ok: boolean; message: string; url?: string }>;
-    githubCommentIssue(
-      integrationId: string,
-      repo: string,
-      issueNumber: number,
-      body: string
-    ): Promise<{ ok: boolean; message: string; url?: string }>;
-    slackPostMessage(integrationId: string, channel: string, text: string): Promise<{ ok: boolean; message: string }>;
-  };
   transcription: {
     transcribe(filePath: string, language?: string, modelSize?: WhisperModelSize, byokProfileId?: string): Promise<Transcript>;
     transcribePcm(samples: number[], language?: string): Promise<Transcript>;
@@ -413,7 +388,6 @@ export interface DoculigentApi {
     generateInsight(pmId: string, fileId: string, fileName: string, profileId?: string): Promise<ProjectManager>;
     generateOverallInsight(pmId: string, profileId?: string): Promise<ProjectManager>;
     markAutoProcessed(pmId: string): Promise<ProjectManager>;
-    run(pmId: string, profileId?: string): Promise<PmRunResult>;
   };
   persona: {
     list(): Promise<CustomPersona[]>;

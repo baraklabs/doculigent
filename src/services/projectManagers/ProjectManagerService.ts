@@ -1,4 +1,4 @@
-import type { PmRunResult, ProjectManager } from "@shared/types/projectManager";
+import type { ProjectManager } from "@shared/types/projectManager";
 
 export const ProjectManagerService = {
   list(): Promise<ProjectManager[]> {
@@ -18,8 +18,5 @@ export const ProjectManagerService = {
   },
   markAutoProcessed(pmId: string): Promise<ProjectManager> {
     return window.api.pm.markAutoProcessed(pmId);
-  },
-  run(pmId: string): Promise<PmRunResult> {
-    return window.api.pm.run(pmId);
   },
 };

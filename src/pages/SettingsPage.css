@@ -187,20 +187,3 @@
 }
 .google-signout-btn:hover:not(:disabled) { text-decoration: underline; }
 .google-signout-btn:disabled { opacity: .6; cursor: not-allowed; }
-
-.app-add-grid { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
-.app-add-card {
-  display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 10px;
-  border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px; font-weight: 600;
-  cursor: pointer; transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
-}
-.app-add-card:hover { border-color: var(--accent); box-shadow: 0 4px 12px rgba(91, 75, 245, .12); transform: translateY(-1px); }
-.app-icon {
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-  width: 22px; height: 22px; border-radius: 6px; color: #fff; font-size: 13px; line-height: 1;
-}
-.app-icon.multicolor { padding: 2px; }
-.app-icon.multicolor svg { width: 100%; height: 100%; }
-.app-add-card .app-icon { width: 26px; height: 26px; font-size: 15px; }
-.app-form-kind { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
-.app-form-kind .app-icon { width: 28px; height: 28px; font-size: 16px; border-radius: 7px; }

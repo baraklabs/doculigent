@@ -157,36 +157,6 @@
   display: flex; flex-direction: column; gap: 10px; min-height: 0;
 }
 .chat-video-panel-text { font-size: 13px; line-height: 1.5; }
-
-.chat-actions-sheet {
-  flex-shrink: 0; border-top: 1px solid var(--border);
-  max-height: 38px; overflow: hidden;
-  transition: max-height 220ms cubic-bezier(.4, 0, .2, 1);
-}
-.chat-actions-sheet.open { max-height: min(60%, 380px); overflow-y: auto; }
-.chat-actions-toggle {
-  position: sticky; top: 0; z-index: 1;
-  display: flex; align-items: center; justify-content: space-between; width: 100%;
-  background: var(--panel); border: none; font: inherit; cursor: pointer;
-  padding: 11px 14px; font-size: 12px; font-weight: 700; color: var(--text);
-}
-.chat-actions-toggle:hover { color: var(--accent); }
-.chat-actions-sheet-body { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 8px; }
-.chat-actions-list { display: flex; flex-direction: column; gap: 6px; }
-.chat-action-app {
-  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
-  display: flex; flex-direction: column; gap: 8px;
-}
-.chat-action-app-header { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
-.chat-action-app-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-action-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
-.chat-action-buttons button { padding: 5px 10px; font-size: 12px; }
-.chat-action-form {
-  display: flex; flex-direction: column; gap: 8px;
-  padding-top: 8px; border-top: 1px solid var(--border);
-}
-.chat-action-source-picker { display: flex; align-items: center; gap: 6px; font-size: 12px; flex-wrap: wrap; }
-.chat-action-form input { font-size: 13px; padding: 7px 10px; }
 .chip {
   background: none; border: 1px solid var(--border); color: var(--muted);
   font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 999px; cursor: pointer;

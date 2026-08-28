@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { ipcMain } from "electron";
 import { Channels } from "@shared/constants/channels";
-import type { PmRunResult, ProjectManager } from "@shared/types/projectManager";
+import type { ProjectManager } from "@shared/types/projectManager";
 import * as store from "../native/settingsStore";
 import { generateFileInsight, generateOverallInsight } from "../projectManagers/insights";
-import { runProjectManager } from "../projectManagers/run";
 
 export function registerProjectManagersIpc(): void {
   ipcMain.handle(Channels.pm.list, async (): Promise<ProjectManager[]> => store.listProjectManagers());
@@ -48,13 +47,5 @@ export function registerProjectManagersIpc(): void {
     const updated: ProjectManager = { ...pm, autoProcessedAt: new Date().toISOString() };
     store.saveProjectManager(updated);
     return updated;
-  });
-
-  ipcMain.handle(Channels.pm.run, async (_event, pmId: string): Promise<PmRunResult> => {
-    const pm = store.getProjectManager(pmId);
-    if (!pm) return { ok: false, message: "Project Manager not found.", actionResults: [] };
-    const result = await runProjectManager(pm);
-    store.saveProjectManager({ ...pm, lastRunAt: new Date().toISOString() });
-    return result;
   });
 }

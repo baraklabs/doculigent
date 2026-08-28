@@ -306,19 +306,6 @@ const api: DoculigentApi = {
       ipcRenderer.invoke(Channels.ai.chat, transcript, history, question, profileId, systemPromptOverride),
     testConnection: (profile, apiKey) => ipcRenderer.invoke(Channels.ai.testConnection, profile, apiKey),
   },
-  apps: {
-    list: () => ipcRenderer.invoke(Channels.apps.list),
-    save: (integration, secret) => ipcRenderer.invoke(Channels.apps.save, integration, secret),
-    delete: (id) => ipcRenderer.invoke(Channels.apps.delete, id),
-    testConnection: (kind, integrationId, secret) =>
-      ipcRenderer.invoke(Channels.apps.testConnection, kind, integrationId, secret),
-    githubCreateIssue: (integrationId, repo, title, body) =>
-      ipcRenderer.invoke(Channels.apps.githubCreateIssue, integrationId, repo, title, body),
-    githubCommentIssue: (integrationId, repo, issueNumber, body) =>
-      ipcRenderer.invoke(Channels.apps.githubCommentIssue, integrationId, repo, issueNumber, body),
-    slackPostMessage: (integrationId, channel, text) =>
-      ipcRenderer.invoke(Channels.apps.slackPostMessage, integrationId, channel, text),
-  },
   transcription: {
     transcribe: (filePath, language, modelSize, byokProfileId) =>
       ipcRenderer.invoke(Channels.transcription.transcribe, filePath, language, modelSize, byokProfileId),
@@ -378,7 +365,6 @@ const api: DoculigentApi = {
       ipcRenderer.invoke(Channels.pm.generateInsight, pmId, fileId, fileName, profileId),
     generateOverallInsight: (pmId, profileId) => ipcRenderer.invoke(Channels.pm.generateOverallInsight, pmId, profileId),
     markAutoProcessed: (pmId) => ipcRenderer.invoke(Channels.pm.markAutoProcessed, pmId),
-    run: (pmId) => ipcRenderer.invoke(Channels.pm.run, pmId),
   },
   persona: {
     list: () => ipcRenderer.invoke(Channels.persona.list),

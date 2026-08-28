@@ -704,11 +704,3 @@ export interface LlmModelProfile extends LlmProviderConfig {
   id: string;
   name: string;
 }
-
-export type AppIntegrationKind = "github" | "slack";
-
-export interface AppIntegration {
-  id: string;
-  kind: AppIntegrationKind;
-  name: string;
-}

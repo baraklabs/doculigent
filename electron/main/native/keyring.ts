@@ -19,22 +19,6 @@ export async function deleteLlmApiKey(profileId: string): Promise<void> {
   await keytar.deletePassword(SERVICE, llmAccountFor(profileId));
 }
 
-function appAccountFor(integrationId: string): string {
-  return `app-secret:${integrationId}`;
-}
-
-export function setAppSecret(integrationId: string, secret: string): Promise<void> {
-  return keytar.setPassword(SERVICE, appAccountFor(integrationId), secret);
-}
-
-export function getAppSecret(integrationId: string): Promise<string | null> {
-  return keytar.getPassword(SERVICE, appAccountFor(integrationId));
-}
-
-export async function deleteAppSecret(integrationId: string): Promise<void> {
-  await keytar.deletePassword(SERVICE, appAccountFor(integrationId));
-}
-
 const AUTH_ACCOUNT = "auth:refreshToken";
 
 export function setRefreshToken(token: string): Promise<void> {

@@ -174,15 +174,6 @@ export const Channels = {
     chat: "ai:chat",
     testConnection: "ai:testConnection",
   },
-  apps: {
-    list: "apps:list",
-    save: "apps:save",
-    delete: "apps:delete",
-    testConnection: "apps:testConnection",
-    githubCreateIssue: "apps:githubCreateIssue",
-    githubCommentIssue: "apps:githubCommentIssue",
-    slackPostMessage: "apps:slackPostMessage",
-  },
   transcription: {
     transcribe: "transcription:transcribe",
     transcribePcm: "transcription:transcribePcm",
@@ -226,7 +217,6 @@ export const Channels = {
     generateInsight: "pm:generateInsight",
     generateOverallInsight: "pm:generateOverallInsight",
     markAutoProcessed: "pm:markAutoProcessed",
-    run: "pm:run",
   },
   persona: {
     list: "persona:list",

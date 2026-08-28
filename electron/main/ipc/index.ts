@@ -10,7 +10,6 @@ import { registerRecordingIpc } from "./recording";
 import { registerLibraryIpc } from "./library";
 import { registerEditProjectsIpc } from "./editProjects";
 import { registerSettingsIpc } from "./settings";
-import { registerAppsIpc } from "./apps";
 import { registerAiIpc } from "./ai";
 import { registerTranscriptionIpc } from "./transcription";
 import { registerWindowIpc } from "./window";
@@ -34,7 +33,6 @@ export function registerIpcHandlers(): void {
   registerLibraryIpc();
   registerEditProjectsIpc();
   registerSettingsIpc();
-  registerAppsIpc();
   registerAiIpc();
   registerTranscriptionIpc();
   registerWindowIpc();

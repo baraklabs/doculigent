@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { AppWindow, Cloud, Cpu, Download, PanelLeftClose, PanelLeftOpen, SlidersHorizontal } from "lucide-react";
+import { Cloud, Cpu, Download, PanelLeftClose, PanelLeftOpen, SlidersHorizontal } from "lucide-react";
 import type {
-  AppIntegration,
-  AppIntegrationKind,
   AutoTranscribeSettings,
   LlmCapability,
   LlmModelProfile,
@@ -13,16 +11,9 @@ import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whi
 import { WHISPER_MODELS } from "@shared/constants/whisperModels";
 import { isBilledTier } from "@shared/constants/plans";
 import { AI_PROVIDERS, LOCAL_LLM_PROVIDERS } from "../providers/ai";
-import { APP_PROVIDERS, appProviderMeta } from "../providers/apps";
 import { SettingsService } from "../services/settings/SettingsService";
 import { useAuthStore } from "../store/authStore";
 import { useDeleteLlmProfile, useLlmProfiles, useSaveLlmProfile, useTestLlmConnection } from "../hooks/useLlmProfiles";
-import {
-  useAppIntegrations,
-  useDeleteAppIntegration,
-  useSaveAppIntegration,
-  useTestAppConnection,
-} from "../hooks/useAppIntegrations";
 import { useAutoTranscribeSettings, useSetAutoTranscribeSettings } from "../hooks/useAutoTranscribeSettings";
 import { StorageSection } from "./settings/StorageSection";
 import "./SettingsPage.css";
@@ -167,93 +158,6 @@ function ModelForm({ initial, isNew, onCancel, onSaved }: ModelFormProps) {
   );
 }
 
-interface AppIntegrationFormProps {
-  kind: AppIntegrationKind;
-  initial: AppIntegration | null;
-  onCancel: () => void;
-  onSaved: () => void;
-}
-
-function AppIntegrationForm({ kind, initial, onCancel, onSaved }: AppIntegrationFormProps) {
-  const meta = appProviderMeta(kind);
-  const isNew = !initial;
-  const [name, setName] = useState(initial?.name ?? meta.label);
-  const [secret, setSecret] = useState("");
-  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
-  const saveIntegration = useSaveAppIntegration();
-  const testConnection = useTestAppConnection();
-
-  async function handleTest() {
-    setTestResult(null);
-    const result = await testConnection.mutateAsync({
-      kind,
-      integrationId: initial?.id ?? null,
-      secret: secret || undefined,
-    });
-    setTestResult(result);
-  }
-
-  async function handleSave() {
-    const integration: AppIntegration = { id: initial?.id ?? crypto.randomUUID(), kind, name: name.trim() };
-    await saveIntegration.mutateAsync({ integration, secret: secret || undefined });
-    onSaved();
-  }
-
-  return (
-    <div className="model-form">
-      <p className="muted app-form-kind">
-        <span
-          className={meta.multicolor ? "app-icon multicolor" : "app-icon"}
-          style={meta.multicolor ? undefined : { background: meta.accent }}
-        >
-          {meta.icon}
-        </span>
-        {meta.label}
-      </p>
-
-      <label className="field">
-        <span>Title</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} />
-        <small className="field-hint">
-          A name you'll recognize — handy if you connect more than one {meta.label} account.
-        </small>
-      </label>
-
-      <label className="field">
-        <span>
-          {meta.secretLabel} <span className="field-hint-inline">— stored in your OS keychain</span>
-        </span>
-        <input
-          type="password"
-          value={secret}
-          placeholder={isNew ? meta.secretPlaceholder : "Leave blank to keep the saved value"}
-          onChange={(e) => setSecret(e.target.value)}
-        />
-        <small className="field-hint">{meta.testHint}</small>
-      </label>
-
-      <div className="actions">
-        <button type="button" onClick={handleTest} disabled={testConnection.isPending || (isNew && !secret)}>
-          {testConnection.isPending ? "Testing…" : "Test connection"}
-        </button>
-        <button
-          type="button"
-          className="primary"
-          onClick={handleSave}
-          disabled={saveIntegration.isPending || !name.trim() || (isNew && !secret)}
-        >
-          {saveIntegration.isPending ? "Saving…" : "Save"}
-        </button>
-        <button type="button" onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-
-      {testResult && <p className={testResult.ok ? "muted" : "error"}>{testResult.ok ? "✓ " : "✗ "}{testResult.message}</p>}
-    </div>
-  );
-}
-
 function formatMb(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
 }
@@ -370,7 +274,6 @@ function useWhisperModels() {
 
 const SECTIONS = [
   { id: "models", label: "Models", icon: <Cpu size={16} /> },
-  { id: "apps", label: "Apps", icon: <AppWindow size={16} /> },
   { id: "storage", label: "Storage", icon: <Cloud size={16} /> },
   { id: "preferences", label: "Preferences", icon: <SlidersHorizontal size={16} /> },
 ] as const;
@@ -449,15 +352,6 @@ export function SettingsPage() {
   const isLoadingAny = isLoading || whisper.loading;
   const readyCount = filteredProfiles.length + downloadedWhisper.length + (doculigentVisible ? 1 : 0);
 
-  const { data: integrations = [], isLoading: integrationsLoading } = useAppIntegrations();
-  const deleteIntegration = useDeleteAppIntegration();
-  const [addingKind, setAddingKind] = useState<AppIntegrationKind | null>(null);
-  const [editingIntegration, setEditingIntegration] = useState<AppIntegration | null>(null);
-  function closeIntegrationModal() {
-    setAddingKind(null);
-    setEditingIntegration(null);
-  }
-
   const { data: autoTranscribe } = useAutoTranscribeSettings();
   const setAutoTranscribe = useSetAutoTranscribeSettings();
 
@@ -504,75 +398,7 @@ export function SettingsPage() {
         ))}
       </nav>
 
-      {section === "apps" ? (
-        <section className="panel settings-content">
-          <p className="muted">
-            Connect external apps so Doculigent can work with the tools your team already uses.
-          </p>
-
-          <div className="field">
-            <span>Add an app</span>
-            <div className="app-add-grid">
-              {APP_PROVIDERS.map((p) => (
-                <button key={p.kind} type="button" className="app-add-card" onClick={() => setAddingKind(p.kind)}>
-                  <span
-                    className={p.multicolor ? "app-icon multicolor" : "app-icon"}
-                    style={p.multicolor ? undefined : { background: p.accent }}
-                  >
-                    {p.icon}
-                  </span>
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="field">
-            <span>Connected apps</span>
-
-            {integrationsLoading && <p className="muted">Loading…</p>}
-
-            <div className="model-list">
-              {integrations.map((a) => {
-                const meta = appProviderMeta(a.kind);
-                return (
-                  <div key={a.id} className="model-row">
-                    <div className="model-row-info">
-                      <h3>
-                        <span
-                          className={meta.multicolor ? "app-icon multicolor" : "app-icon"}
-                          style={meta.multicolor ? undefined : { background: meta.accent }}
-                        >
-                          {meta.icon}
-                        </span>
-                        {a.name}
-                      </h3>
-                      <p className="muted sub">{meta.label}</p>
-                    </div>
-                    <div className="actions">
-                      <button type="button" onClick={() => setEditingIntegration(a)}>
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        className="danger"
-                        onClick={() => deleteIntegration.mutate(a.id)}
-                        disabled={deleteIntegration.isPending}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-
-              {!integrationsLoading && integrations.length === 0 && (
-                <p className="muted">No apps connected yet.</p>
-              )}
-            </div>
-          </div>
-        </section>
-      ) : section === "storage" ? (
+      {section === "storage" ? (
         <StorageSection />
       ) : section === "preferences" ? (
         <section className="panel settings-content">
@@ -801,24 +627,6 @@ export function SettingsPage() {
               isNew={editing.isNew}
               onCancel={() => setEditing(null)}
               onSaved={() => setEditing(null)}
-            />
-          </div>
-        </div>
-      )}
-
-      {(addingKind || editingIntegration) && (
-        <div className="modal-backdrop" onClick={closeIntegrationModal}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>
-              {editingIntegration
-                ? `Edit ${appProviderMeta(editingIntegration.kind).label}`
-                : `Add ${appProviderMeta(addingKind!).label}`}
-            </h2>
-            <AppIntegrationForm
-              kind={editingIntegration?.kind ?? addingKind!}
-              initial={editingIntegration}
-              onCancel={closeIntegrationModal}
-              onSaved={closeIntegrationModal}
             />
           </div>
         </div>

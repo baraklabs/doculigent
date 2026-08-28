@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronLeft, ChevronRight, Files, Info, MessageCircle, Settings, Sparkles, X } from "lucide-react";
 import type { Video } from "@shared/types/models";
-import type { PmPersonaId, PmRunResult, ProjectManager } from "@shared/types/projectManager";
+import type { PmPersonaId, ProjectManager } from "@shared/types/projectManager";
 import type { CustomPersona } from "@shared/types/persona";
 import { listAllPersonas, resolvePersonaById } from "@shared/constants/pmPersonas";
 import { useCustomPersonas } from "../hooks/useCustomPersonas";
@@ -17,7 +17,6 @@ import {
   useGenerateInsight,
   useGenerateOverallInsight,
   useMarkProjectManagerAutoProcessed,
-  useRunProjectManager,
   useSaveProjectManager,
 } from "../hooks/useProjectManagers";
 import { TeamsService } from "../services/teams/TeamsService";
@@ -535,21 +534,15 @@ function PmConfigure({
 }) {
   const [name, setName] = useState(pm.name);
   const [persona, setPersona] = useState<PmPersonaId>(pm.persona);
-  const [triggerMode, setTriggerMode] = useState(pm.triggerMode);
-  const [scheduleTime, setScheduleTime] = useState(pm.scheduleTime ?? "09:00");
   const [chatProfileId, setChatProfileId] = useState(pm.chatProfileId || chatProfiles[0]?.id || "");
   const [transcribeModel, setTranscribeModel] = useState(pm.transcribeModel || transcribeOptions[0]?.value || "");
-  const [runResult, setRunResult] = useState<PmRunResult | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     setName(pm.name);
     setPersona(pm.persona);
-    setTriggerMode(pm.triggerMode);
-    setScheduleTime(pm.scheduleTime ?? "09:00");
     setChatProfileId(pm.chatProfileId || chatProfiles[0]?.id || "");
     setTranscribeModel(pm.transcribeModel || transcribeOptions[0]?.value || "");
-    setRunResult(null);
     setConfirmDelete(false);
   }, [pm.id]);
 
@@ -563,27 +556,18 @@ function PmConfigure({
 
   const saveMutation = useSaveProjectManager();
   const deleteMutation = useDeleteProjectManager();
-  const runMutation = useRunProjectManager();
 
   function save() {
     saveMutation.mutate({
       ...pm,
       name: name.trim() || pm.name,
       persona,
-      triggerMode,
-      scheduleTime: triggerMode === "scheduled" ? scheduleTime : null,
       chatProfileId: chatProfileId || null,
       transcribeModel: transcribeModel || null,
     });
   }
 
   const personaDef = resolvePersonaById(persona, customPersonas);
-
-  async function runNow() {
-    setRunResult(null);
-    const result = await runMutation.mutateAsync(pm.id);
-    setRunResult(result);
-  }
 
   return (
     <div className="pm-configure">
@@ -613,27 +597,6 @@ function PmConfigure({
           </button>
         </small>
       </label>
-
-      <fieldset className="field">
-        <legend>Trigger</legend>
-        <label className="pm-radio">
-          <input type="radio" checked={triggerMode === "manual"} onChange={() => setTriggerMode("manual")} />
-          Manual (Run now button only)
-        </label>
-        <label className="pm-radio">
-          <input type="radio" checked={triggerMode === "scheduled"} onChange={() => setTriggerMode("scheduled")} />
-          Scheduled — every day at
-          <input
-            type="time"
-            value={scheduleTime}
-            disabled={triggerMode !== "scheduled"}
-            onChange={(e) => setScheduleTime(e.target.value)}
-          />
-        </label>
-        {triggerMode === "scheduled" && (
-          <small className="field-hint">Only fires while Doculigent is open — a missed time isn't caught up later.</small>
-        )}
-      </fieldset>
 
       <label className="field">
         <span>Chat model</span>
@@ -667,30 +630,14 @@ function PmConfigure({
         )}
       </label>
 
-      {pm.lastRunAt && <p className="muted">Last run: {new Date(pm.lastRunAt).toLocaleString()}</p>}
-
       <div className="actions">
         <button type="button" className="primary" onClick={save} disabled={saveMutation.isPending}>
           {saveMutation.isPending ? "Saving…" : "Save"}
-        </button>
-        <button type="button" onClick={runNow} disabled={runMutation.isPending}>
-          {runMutation.isPending ? "Running…" : "Run now"}
         </button>
         <button type="button" className="danger" onClick={() => setConfirmDelete(true)} disabled={deleteMutation.isPending}>
           Delete
         </button>
       </div>
-
-      {runResult && (
-        <div className={runResult.ok ? "muted" : "error"}>
-          <p>{runResult.message}</p>
-          {runResult.actionResults.map((r, i) => (
-            <p key={i} className={r.ok ? "muted" : "error"}>
-              {r.kind}: {r.message}
-            </p>
-          ))}
-        </div>
-      )}
 
       {confirmDelete && (
         <div className="modal-backdrop" onClick={() => setConfirmDelete(false)}>

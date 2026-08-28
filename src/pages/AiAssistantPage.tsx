@@ -12,8 +12,6 @@ import {
   PanelRightOpen,
   Mic,
   Video,
-  ChevronUp,
-  ChevronDown,
   Bot,
   Info,
   UserCog,
@@ -32,13 +30,6 @@ import { useTeams } from "../hooks/useTeams";
 import { useStoragePreference, useStorageTeams } from "../hooks/useStorage";
 import { useProjectManagers, useSaveProjectManager } from "../hooks/useProjectManagers";
 import { useCustomPersonas } from "../hooks/useCustomPersonas";
-import {
-  useAppIntegrations,
-  useGithubCommentIssue,
-  useGithubCreateIssue,
-  useSlackPostMessage,
-} from "../hooks/useAppIntegrations";
-import { appProviderMeta } from "../providers/apps";
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
 import { SettingsService } from "../services/settings/SettingsService";
 import { AiService } from "../services/ai/AiService";
@@ -52,10 +43,6 @@ function fmt(t: number): string {
   const m = Math.floor(t / 60);
   const s = Math.floor(t % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-function transcriptToPlainText(transcript: Transcript): string {
-  return transcript.segments.map((s) => `[${fmt(s.start)}] ${s.speaker}: ${s.text}`).join("\n");
 }
 
 const LAST_PROFILE_KEY = "aiAssistant.lastProfileId";
@@ -167,88 +154,6 @@ export function AiAssistantPage() {
   const [notesText, setNotesText] = useState<string | null>(null);
   const [runningAction, setRunningAction] = useState<"summarize" | "notes" | null>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
-
-  const { data: integrations = [] } = useAppIntegrations();
-  const githubCreateIssueMutation = useGithubCreateIssue();
-  const githubCommentIssueMutation = useGithubCommentIssue();
-  const slackPostMessageMutation = useSlackPostMessage();
-  const [actionsExpanded, setActionsExpanded] = useState(false);
-  const [openAction, setOpenAction] = useState<{
-    integrationId: string;
-    kind: "githubCreateIssue" | "githubCommentIssue" | "slackPostMessage";
-  } | null>(null);
-  const [actionSource, setActionSource] = useState<"summary" | "notes" | "transcript" | null>(null);
-  const [actionRepo, setActionRepo] = useState("");
-  const [actionTitle, setActionTitle] = useState("");
-  const [actionIssueNumber, setActionIssueNumber] = useState("");
-  const [actionChannel, setActionChannel] = useState("");
-  const [actionResult, setActionResult] = useState<{ ok: boolean; message: string; url?: string } | null>(null);
-  const actionSending =
-    githubCreateIssueMutation.isPending || githubCommentIssueMutation.isPending || slackPostMessageMutation.isPending;
-
-  function openActionForm(
-    integrationId: string,
-    kind: "githubCreateIssue" | "githubCommentIssue" | "slackPostMessage"
-  ) {
-    setOpenAction({ integrationId, kind });
-    setActionSource(null);
-    setActionRepo("");
-    setActionTitle(video?.title ?? "");
-    setActionIssueNumber("");
-    setActionChannel("");
-    setActionResult(null);
-  }
-
-  function resolveActionContent(source: "summary" | "notes" | "transcript" | null): string | null {
-    if (source === "summary") return summaryText;
-    if (source === "notes") return notesText;
-    if (source === "transcript") return transcript ? transcriptToPlainText(transcript) : null;
-    return null;
-  }
-
-  const actionContent = resolveActionContent(actionSource);
-  const actionFieldsValid = (() => {
-    if (!openAction || !actionContent) return false;
-    if (openAction.kind === "githubCreateIssue") return actionRepo.trim().includes("/");
-    if (openAction.kind === "githubCommentIssue") return actionRepo.trim().includes("/") && !!actionIssueNumber.trim();
-    return !!actionChannel.trim(); 
-  })();
-
-  async function runOpenAction() {
-    if (!openAction || !actionContent || !actionFieldsValid) return;
-    setActionResult(null);
-    try {
-      if (openAction.kind === "githubCreateIssue") {
-        setActionResult(
-          await githubCreateIssueMutation.mutateAsync({
-            integrationId: openAction.integrationId,
-            repo: actionRepo.trim(),
-            title: actionTitle.trim() || video?.title || "Doculigent recording",
-            body: actionContent,
-          })
-        );
-      } else if (openAction.kind === "githubCommentIssue") {
-        setActionResult(
-          await githubCommentIssueMutation.mutateAsync({
-            integrationId: openAction.integrationId,
-            repo: actionRepo.trim(),
-            issueNumber: Number(actionIssueNumber),
-            body: actionContent,
-          })
-        );
-      } else {
-        setActionResult(
-          await slackPostMessageMutation.mutateAsync({
-            integrationId: openAction.integrationId,
-            channel: actionChannel.trim(),
-            text: actionContent,
-          })
-        );
-      }
-    } catch (e) {
-      setActionResult({ ok: false, message: String(e) });
-    }
-  }
 
   const [transcribing, setTranscribing] = useState(false);
   const [transcribeError, setTranscribeError] = useState<string | null>(null);
@@ -396,14 +301,10 @@ export function AiAssistantPage() {
         teamName: team.name,
         storageProvider: usingS3Storage ? (storagePreference?.provider as "s3" | "google_drive") : "doculigent",
         persona: newPmPersona,
-        triggerMode: "manual",
-        scheduleTime: null,
-        actions: {},
         insights: [],
         chatProfileId: newPmChatProfileId || null,
         transcribeModel: newPmTranscribeModel || null,
         createdAt: new Date().toISOString(),
-        lastRunAt: null,
       });
       setAddPmOpen(false);
       setActivePmId(created.id);
@@ -427,9 +328,7 @@ export function AiAssistantPage() {
     setSummaryText(cached.summary ?? null);
     setNotesText(cached.notes ?? null);
     setVideoPanelTab("summary");
-    setOpenAction(null);
-    setActionsExpanded(false);
-  }, [video?.id]); 
+  }, [video?.id]);
 
   function newChat() {
     setActivePmId(null);
@@ -1103,174 +1002,6 @@ export function AiAssistantPage() {
             </div>
 
           </div>
-
-          {/* Actions sheet — collapsed to just its toggle bar by default. A normal flex
-              sibling of .chat-video-panel-inner (not absolutely positioned/overlaid), so
-              expanding it squeezes that content upward — .chat-video-panel-inner's own
-              flex:1/overflow-y:auto shrinks and keeps everything (Summary/Notes/Transcribe,
-              including the Regenerate button) reachable by scrolling within the smaller
-              space, rather than an overlay covering it. Lists every app connected in
-              Settings > Apps with its available action(s); clicking one expands an inline
-              form right there (content source + whatever that action needs). */}
-          {video && (
-            <div className={actionsExpanded ? "chat-actions-sheet open" : "chat-actions-sheet"}>
-              <button
-                type="button"
-                className="chat-actions-toggle"
-                onClick={() => setActionsExpanded((v) => !v)}
-              >
-                <span>Actions</span>
-                {actionsExpanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-              </button>
-              {actionsExpanded && (
-              <div className="chat-actions-sheet-body">
-              {integrations.length === 0 ? (
-                <p className="muted">
-                  No apps connected — <Link to="/settings">connect one in Settings</Link>.
-                </p>
-              ) : (
-                <div className="chat-actions-list">
-                  {integrations.map((integ) => {
-                    const meta = appProviderMeta(integ.kind);
-                    return (
-                      <div key={integ.id} className="chat-action-app">
-                        <div className="chat-action-app-header">
-                          <span
-                            className={meta.multicolor ? "app-icon multicolor" : "app-icon"}
-                            style={meta.multicolor ? undefined : { background: meta.accent }}
-                          >
-                            {meta.icon}
-                          </span>
-                          <span className="chat-action-app-name">{integ.name}</span>
-                        </div>
-
-                        <div className="chat-action-buttons">
-                          {integ.kind === "github" && (
-                            <>
-                              <button type="button" onClick={() => openActionForm(integ.id, "githubCreateIssue")}>
-                                Create Issue
-                              </button>
-                              <button type="button" onClick={() => openActionForm(integ.id, "githubCommentIssue")}>
-                                Comment
-                              </button>
-                            </>
-                          )}
-                          {integ.kind === "slack" && (
-                            <button type="button" onClick={() => openActionForm(integ.id, "slackPostMessage")}>
-                              Post Message
-                            </button>
-                          )}
-                        </div>
-
-                        {openAction?.integrationId === integ.id && (
-                          <div className="chat-action-form">
-                            <div className="chat-action-source-picker">
-                              <span className="muted">Send</span>
-                              <button
-                                type="button"
-                                className={actionSource === "summary" ? "chip active" : "chip"}
-                                disabled={!summaryText}
-                                onClick={() => setActionSource("summary")}
-                              >
-                                Summary
-                              </button>
-                              <button
-                                type="button"
-                                className={actionSource === "notes" ? "chip active" : "chip"}
-                                disabled={!notesText}
-                                onClick={() => setActionSource("notes")}
-                              >
-                                Notes
-                              </button>
-                              <button
-                                type="button"
-                                className={actionSource === "transcript" ? "chip active" : "chip"}
-                                disabled={!transcript}
-                                onClick={() => setActionSource("transcript")}
-                              >
-                                Transcript
-                              </button>
-                            </div>
-
-                            {openAction.kind === "githubCreateIssue" && (
-                              <>
-                                <input
-                                  value={actionRepo}
-                                  placeholder="owner/repo"
-                                  onChange={(e) => setActionRepo(e.target.value)}
-                                />
-                                <input
-                                  value={actionTitle}
-                                  placeholder="Issue title"
-                                  onChange={(e) => setActionTitle(e.target.value)}
-                                />
-                              </>
-                            )}
-                            {openAction.kind === "githubCommentIssue" && (
-                              <>
-                                <input
-                                  value={actionRepo}
-                                  placeholder="owner/repo"
-                                  onChange={(e) => setActionRepo(e.target.value)}
-                                />
-                                <input
-                                  value={actionIssueNumber}
-                                  placeholder="Issue or PR #"
-                                  inputMode="numeric"
-                                  onChange={(e) => setActionIssueNumber(e.target.value.replace(/\D/g, ""))}
-                                />
-                              </>
-                            )}
-                            {openAction.kind === "slackPostMessage" && (
-                              <input
-                                value={actionChannel}
-                                placeholder="#channel or channel ID"
-                                onChange={(e) => setActionChannel(e.target.value)}
-                              />
-                            )}
-
-                            <div className="actions">
-                              <button
-                                type="button"
-                                className="primary"
-                                onClick={runOpenAction}
-                                disabled={!actionFieldsValid || actionSending}
-                              >
-                                {actionSending ? "Sending…" : "Send"}
-                              </button>
-                              <button type="button" onClick={() => setOpenAction(null)}>
-                                Cancel
-                              </button>
-                            </div>
-
-                            {actionResult && (
-                              <p className={actionResult.ok ? "muted" : "error"}>
-                                {actionResult.message}
-                                {actionResult.url && (
-                                  <>
-                                    {" "}
-                                    <button
-                                      type="button"
-                                      className="link-btn"
-                                      onClick={() => window.open(actionResult.url, "_blank")}
-                                    >
-                                      View
-                                    </button>
-                                  </>
-                                )}
-                              </p>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              </div>
-              )}
-            </div>
-          )}
           </>
           )}
         </aside>

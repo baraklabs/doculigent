@@ -14,7 +14,6 @@ import { killPendingFfmpegJobs } from "./native/ffmpeg";
 import { killPendingScreenCapture } from "./native/screenCapture";
 import { initTranscriptionWorkerClient, terminateTranscriptionWorker } from "./transcription/whisperWorkerClient";
 import { registerProtocolClient, handleOpenUrl, handleSecondInstanceArgv, handleInitialArgv } from "./auth/deepLink";
-import { startProjectManagerScheduler } from "./projectManagers/scheduler";
 
 if (process.platform === "win32") {
   app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
@@ -89,7 +88,6 @@ if (!gotSingleInstanceLock) {
     registerMediaHandler();
     registerDisplayMediaHandler();
     registerIpcHandlers();
-    startProjectManagerScheduler();
     openMainWindow();
 
     if (!globalShortcut.register("CommandOrControl+Shift+A", toggleAnnotationOverlay)) {

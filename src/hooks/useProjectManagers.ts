@@ -55,11 +55,3 @@ export function useMarkProjectManagerAutoProcessed() {
     onSuccess: invalidate,
   });
 }
-
-export function useRunProjectManager() {
-  const invalidate = useInvalidateProjectManagers();
-  return useMutation({
-    mutationFn: (pmId: string) => ProjectManagerService.run(pmId),
-    onSuccess: invalidate,
-  });
-}
