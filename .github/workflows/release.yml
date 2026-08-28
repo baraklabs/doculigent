@@ -10,7 +10,35 @@ permissions:
   contents: write
 
 jobs:
+  # Creates the GitHub release for this tag once, before any OS build starts. Without this,
+  # each matrix job below asks electron-builder to publish independently, and electron-builder
+  # only reuses an existing release if it can see one — when two jobs both check "does a
+  # release exist for this tag?" before either has created it, they each create their own,
+  # producing duplicate draft releases with the assets split across them. Creating it here
+  # first, in a single job the matrix depends on, removes that race entirely: by the time any
+  # OS job starts publishing, exactly one release already exists for every job to reuse.
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure a draft release exists for this tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Derived from package.json rather than GITHUB_REF so this also works under
+          # workflow_dispatch (no tag ref) and always matches the tag electron-builder itself
+          # publishes to (v${version}), regardless of how the workflow was triggered.
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="v$VERSION"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, leaving it as-is."
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "$VERSION"
+          fi
+
   release:
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
