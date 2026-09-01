@@ -1,6 +1,6 @@
 {
   "name": "doculigent",
-  "version": "1.5.2",
+  "version": "1.5.1",
   "private": true,
   "description": "Open-source, local-first screen recorder + AI video workspace.",
   "license": "AGPL-3.0-only",

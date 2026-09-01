@@ -19,6 +19,23 @@ if (process.platform === "win32") {
   app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
 }
 
+// The macOS counterpart to the Windows switch above, and the same failure it prevents:
+// Chromium suspends painting for a window it believes is fully occluded, so the window
+// keeps presenting a stale frame while its renderer goes on running normally — input is
+// delivered, handlers fire, React commits, nothing appears. It reads as a frozen UI rather
+// than a rendering fault, which is what made this look like blocked tab navigation.
+//
+// Why it tracked Screen Recording permission: macOS derives NSWindowOcclusionState from
+// window-server visibility information that permission gates. Without it the app gets
+// degraded occlusion reporting, Chromium concludes the window is hidden, and stops drawing
+// — hence "works in dev, freezes in the downloaded DMG", where dev already held the grant
+// and the packaged build (a separate code-signing identity, so a separate TCC subject)
+// did not.
+if (process.platform === "darwin") {
+  app.commandLine.appendSwitch("disable-features", "MacWebContentsOcclusion");
+  app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
+}
+
 function buildDarwinMenu(): Menu {
   return Menu.buildFromTemplate([
     {
