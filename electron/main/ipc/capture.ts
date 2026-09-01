@@ -30,8 +30,16 @@ export function registerCaptureIpc(): void {
         return { screen: "granted", microphone: "granted" };
       }
       const screen = systemPreferences.getMediaAccessStatus("screen") as PermissionStatus;
-      const micGranted = await systemPreferences.askForMediaAccess("microphone");
-      return { screen, microphone: micGranted ? "granted" : "denied" };
+      // Reads only — never askForMediaAccess here. This handler is polled on every
+      // RecordPage mount/window-focus (react-query's refetchOnWindowFocus) and on every
+      // RecordingService.start() call, so asking would re-trigger macOS's native mic TCC
+      // prompt on each of those if mic permission is still "not-determined" — a modal
+      // system dialog that steals all input to the app (including tab clicks) until
+      // dismissed, and can render without an obvious visible cue. The mic permission
+      // itself is already requested the standard way, once, via the renderer's own
+      // getUserMedia({ audio }) calls (mic level meters, recording start, etc).
+      const microphone = systemPreferences.getMediaAccessStatus("microphone") as PermissionStatus;
+      return { screen, microphone };
     }
   );
 
