@@ -225,20 +225,8 @@ export function MeetingPage() {
   // showing a dropdown for a choice that doesn't change anything.
   const [displayTargets, setDisplayTargets] = useState<CaptureTarget[]>([]);
   useEffect(() => {
-    // Checked first, not just called straight into listTargets() — listTargets() calls
-    // desktopCapturer.getSources() with real thumbnails, which is itself the action that
-    // trips macOS's native, app-modal Screen Recording consent prompt the very first time
-    // it's ever called (see the identical guard and its longer note in RecordPage.tsx).
-    // getPermissionStatus's screen check is a passive read (no capture, no prompt), so
-    // it's always safe to call first; skipping listTargets while not granted just leaves
-    // the audio-source picker without a display to key off, same as before permission was
-    // ever asked about.
     window.api.capture
-      .getPermissionStatus()
-      .then(({ screen }) => {
-        if (screen !== "granted") return [];
-        return window.api.capture.listTargets();
-      })
+      .listTargets()
       .then((targets) => {
         const displays = targets.filter((t) => t.kind === "display");
         setDisplayTargets(displays);
