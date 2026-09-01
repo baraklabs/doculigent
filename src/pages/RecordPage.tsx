@@ -54,6 +54,14 @@ const DEFAULT_OVERLAY: OverlayConfig = {
   cameraBlur: "none",
 };
 
+// Module scope, so the "no targets yet" fallback below is the SAME array every render. An
+// inline `= []` default is a fresh reference each time, which made the capture-targets
+// effect re-run on every render and set fresh state, re-rendering forever — a JS thread
+// pinned at 100% and a window that stops responding to input entirely. It only showed up
+// when the query had no data, i.e. exactly when Screen Recording permission is missing and
+// desktopCapturer.getSources() never settles.
+const NO_TARGETS: CaptureTarget[] = [];
+
 const BLUR_CYCLE: CameraBlurLevel[] = ["none", "soft", "aggressive"];
 const BLUR_META: Record<CameraBlurLevel, { label: string; color: string; bg: string }> = {
   none: { label: "Background blur: Off", color: "var(--muted)", bg: "rgba(92, 98, 115, 0.1)" },
@@ -197,7 +205,7 @@ export function RecordPage() {
   // check above is a passive read (getMediaAccessStatus, no capture, no prompt), so it's
   // always safe up front; the screenPermissionDenied message below already tells the user
   // how to grant access via System Settings without ever needing this query to prompt.
-  const { data: targets = [], refetch: refetchTargets } = useQuery<CaptureTarget[]>({
+  const { data: targets = NO_TARGETS, refetch: refetchTargets } = useQuery<CaptureTarget[]>({
     queryKey: ["captureTargets"],
     queryFn: () => window.api.capture.listTargets(),
     enabled: screenPermission?.screen === "granted",
@@ -345,7 +353,12 @@ export function RecordPage() {
   useEffect(() => {
     const displays = targets.filter((t) => t.kind === "display");
     setDisplayTargets(displays);
-    setSystemAudio((current) => (current.sourceId ? current : { ...current, sourceId: displays[0]?.id ?? null }));
+    // Bails when there's no display to assign, rather than returning a new object holding
+    // the same null — an unchanged value in a fresh object still counts as a state change
+    // and re-renders, which was a second driver of the render loop described at NO_TARGETS.
+    setSystemAudio((current) =>
+      current.sourceId || !displays[0] ? current : { ...current, sourceId: displays[0].id }
+    );
   }, [targets]);
 
   useEffect(() => {
