@@ -45,6 +45,15 @@ function buildDarwinMenu(): Menu {
         { role: "selectAll" },
       ],
     },
+    // Kept in production builds, not just dev: replacing the default application menu also
+    // removes the default Cmd+Opt+I accelerator, which left packaged builds with no way to
+    // open DevTools at all — so a bug that only reproduces in a signed/packaged app (where
+    // TCC treats it as a different identity than a locally-built one) had no console to
+    // read.
+    {
+      label: "View",
+      submenu: [{ role: "reload" }, { role: "toggleDevTools" }],
+    },
   ]);
 }
 
