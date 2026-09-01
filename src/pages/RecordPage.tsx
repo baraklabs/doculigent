@@ -604,6 +604,16 @@ export function RecordPage() {
       captureMode === "area" ? areaRect : null,
       recordingMode
     );
+    if (!useRecordingStore.getState().recording) {
+      // start() failed (e.g. Screen Recording permission denied) — the countdown branch
+      // in handleStart already hid the main window and opened the dock before this ran,
+      // and the [recording]-keyed effect above never fires to undo that here since
+      // `recording` stayed false throughout. Without this, the main window (and every
+      // tab in it) stays hidden with nothing left on screen to bring it back short of
+      // restarting the app.
+      window.api.recordingDock.close().catch(() => {});
+      window.api.recordingDock.showMainWindow().catch(() => {});
+    }
   }
 
   function handleStart() {
