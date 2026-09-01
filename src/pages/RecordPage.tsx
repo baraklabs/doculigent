@@ -180,17 +180,30 @@ export function RecordPage() {
   const authReady = useAuthStore((s) => s.ready);
   const storageNotSetUp = isStorageNotSetUp(storagePreference, session, authReady);
 
-  const { data: targets = [], refetch: refetchTargets } = useQuery<CaptureTarget[]>({
-    queryKey: ["captureTargets"],
-    queryFn: () => window.api.capture.listTargets(),
-    refetchOnWindowFocus: true,
-  });
   const { data: screenPermission } = useQuery({
     queryKey: ["screenPermission"],
     queryFn: () => window.api.capture.getPermissionStatus(),
     refetchOnWindowFocus: true,
   });
-  const screenPermissionDenied = targets.length === 0 && screenPermission && screenPermission.screen !== "granted";
+  // Gated on screen permission already reading "granted" — listTargets() calls
+  // desktopCapturer.getSources() with real thumbnails, which is itself the action that
+  // trips macOS's native Screen Recording consent prompt the very first time any app ever
+  // calls it. Record is the default route, so firing this unconditionally on mount meant a
+  // fresh install hit that prompt immediately on launch, before the user had done
+  // anything — and that prompt is an app-wide modal that blocks all input, including the
+  // tab bar, until it's dismissed (confirmed: reproduces in a packaged/signed build, which
+  // has never had this decided, but not in `npm run dev`, where the generic Electron.app
+  // binary already has a cached answer from prior testing). getPermissionStatus's screen
+  // check above is a passive read (getMediaAccessStatus, no capture, no prompt), so it's
+  // always safe up front; the screenPermissionDenied message below already tells the user
+  // how to grant access via System Settings without ever needing this query to prompt.
+  const { data: targets = [], refetch: refetchTargets } = useQuery<CaptureTarget[]>({
+    queryKey: ["captureTargets"],
+    queryFn: () => window.api.capture.listTargets(),
+    enabled: screenPermission?.screen === "granted",
+    refetchOnWindowFocus: true,
+  });
+  const screenPermissionDenied = !!screenPermission && screenPermission.screen !== "granted";
   const [targetId, setTargetId] = useState("");
   const [captureMode, setCaptureMode] = useState<CaptureMode>("display");
   const [areaRect, setAreaRect] = useState<AreaRect | null>(null);
