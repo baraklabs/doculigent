@@ -76,6 +76,8 @@ jobs:
           mkdir -p env
           echo "VITE_SUPABASE_URL=${{ secrets.VITE_SUPABASE_URL }}" > env/.env.production
           echo "VITE_WEB_URL=${{ secrets.VITE_WEB_URL }}" >> env/.env.production
+          echo "MAIN_VITE_GOOGLE_DRIVE_CLIENT_ID=${{ secrets.MAIN_VITE_GOOGLE_DRIVE_CLIENT_ID }}" >> env/.env.production
+          echo "MAIN_VITE_GOOGLE_DRIVE_CLIENT_SECRET=${{ secrets.MAIN_VITE_GOOGLE_DRIVE_CLIENT_SECRET }}" >> env/.env.production
 
       - name: Build and publish
         run: npm run build -- --publish always
