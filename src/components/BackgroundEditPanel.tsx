@@ -26,6 +26,13 @@ const FILLS: { id: BackgroundFill; label: string; icon: LucideIcon }[] = [
 interface BackgroundEditPanelProps {
   background: BackgroundEditSettings;
   onChange: (next: BackgroundEditSettings) => void;
+  /** The screen box's current width/height, each as a % of the canvas's own width/height
+   *  — the same underlying values (LayoutEditSettings.freeScreenSizePct/HeightPct) that
+   *  dragging the screen box's corner in the preview sets, kept here in sync in both
+   *  directions rather than duplicated into BackgroundEditSettings. */
+  screenSizePct: number;
+  screenHeightPct: number;
+  onScreenSizeChange: (sizePct: number, heightPct: number) => void;
   onResetAllToOriginal: () => void;
   onResetAllToDefault: () => void;
 }
@@ -33,6 +40,9 @@ interface BackgroundEditPanelProps {
 export function BackgroundEditPanel({
   background,
   onChange,
+  screenSizePct,
+  screenHeightPct,
+  onScreenSizeChange,
   onResetAllToOriginal,
   onResetAllToDefault,
 }: BackgroundEditPanelProps) {
@@ -247,53 +257,65 @@ export function BackgroundEditPanel({
         <span className="background-edit-slider-value">{background.zoomPct}%</span>
       </label>
 
-      <div className="background-edit-section">
-        <span className="background-edit-label">Crop</span>
-        <label className="background-edit-slider-row">
-          <span className="background-edit-label">Top</span>
-          <input
-            type="range"
-            min={0}
-            max={45}
-            value={background.cropTopPct}
-            onChange={(e) => patch({ cropTopPct: Number(e.target.value) })}
-          />
-          <span className="background-edit-slider-value">{background.cropTopPct}%</span>
-        </label>
-        <label className="background-edit-slider-row">
-          <span className="background-edit-label">Right</span>
-          <input
-            type="range"
-            min={0}
-            max={45}
-            value={background.cropRightPct}
-            onChange={(e) => patch({ cropRightPct: Number(e.target.value) })}
-          />
-          <span className="background-edit-slider-value">{background.cropRightPct}%</span>
-        </label>
-        <label className="background-edit-slider-row">
-          <span className="background-edit-label">Bottom</span>
-          <input
-            type="range"
-            min={0}
-            max={45}
-            value={background.cropBottomPct}
-            onChange={(e) => patch({ cropBottomPct: Number(e.target.value) })}
-          />
-          <span className="background-edit-slider-value">{background.cropBottomPct}%</span>
-        </label>
-        <label className="background-edit-slider-row">
-          <span className="background-edit-label">Left</span>
-          <input
-            type="range"
-            min={0}
-            max={45}
-            value={background.cropLeftPct}
-            onChange={(e) => patch({ cropLeftPct: Number(e.target.value) })}
-          />
-          <span className="background-edit-slider-value">{background.cropLeftPct}%</span>
-        </label>
-      </div>
+      <label className="background-edit-slider-row">
+        <span className="background-edit-label">Size</span>
+        <input
+          type="range"
+          min={10}
+          max={300}
+          value={Math.round((screenSizePct + screenHeightPct) / 2)}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            onScreenSizeChange(v, v);
+          }}
+        />
+        <span className="background-edit-slider-value">{Math.round((screenSizePct + screenHeightPct) / 2)}%</span>
+      </label>
+
+      <label className="background-edit-slider-row">
+        <span className="background-edit-label">Crop top</span>
+        <input
+          type="range"
+          min={0}
+          max={45}
+          value={background.cropTopPct}
+          onChange={(e) => patch({ cropTopPct: Number(e.target.value) })}
+        />
+        <span className="background-edit-slider-value">{background.cropTopPct}%</span>
+      </label>
+      <label className="background-edit-slider-row">
+        <span className="background-edit-label">Crop right</span>
+        <input
+          type="range"
+          min={0}
+          max={45}
+          value={background.cropRightPct}
+          onChange={(e) => patch({ cropRightPct: Number(e.target.value) })}
+        />
+        <span className="background-edit-slider-value">{background.cropRightPct}%</span>
+      </label>
+      <label className="background-edit-slider-row">
+        <span className="background-edit-label">Crop bottom</span>
+        <input
+          type="range"
+          min={0}
+          max={45}
+          value={background.cropBottomPct}
+          onChange={(e) => patch({ cropBottomPct: Number(e.target.value) })}
+        />
+        <span className="background-edit-slider-value">{background.cropBottomPct}%</span>
+      </label>
+      <label className="background-edit-slider-row">
+        <span className="background-edit-label">Crop left</span>
+        <input
+          type="range"
+          min={0}
+          max={45}
+          value={background.cropLeftPct}
+          onChange={(e) => patch({ cropLeftPct: Number(e.target.value) })}
+        />
+        <span className="background-edit-slider-value">{background.cropLeftPct}%</span>
+      </label>
 
       <label className="background-edit-slider-row">
         <span className="background-edit-label">Backdrop blur</span>

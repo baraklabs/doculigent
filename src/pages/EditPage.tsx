@@ -206,7 +206,10 @@ export function EditPage() {
   const backgroundLoadedForIdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (id && project && backgroundLoadedForIdRef.current !== id) {
-      setBackground(project.background ?? DEFAULT_BACKGROUND_EDIT_SETTINGS);
+      // Merged with defaults, not just falling back to them wholesale — projects saved
+      // before newer fields (e.g. crop) existed still have a `background` object, just
+      // missing those keys.
+      setBackground({ ...DEFAULT_BACKGROUND_EDIT_SETTINGS, ...(project.background ?? {}) });
       backgroundLoadedForIdRef.current = id;
     }
   }, [id, project]);
@@ -867,6 +870,25 @@ export function EditPage() {
                     <BackgroundEditPanel
                       background={background}
                       onChange={handleBackgroundChange}
+                      screenSizePct={layout.freeScreenSizePct}
+                      screenHeightPct={layout.freeScreenHeightPct}
+                      onScreenSizeChange={(sizePct, heightPct) =>
+                        handleLayoutChange({
+                          ...layout,
+                          freeScreenSizePct: sizePct,
+                          freeScreenHeightPct: heightPct,
+                          // Same as PreviewCompositor's own resize-drag handler: while
+                          // freeScreenPos is still null, "split" layout auto-derives the
+                          // screen box's size to fill whatever the camera isn't using,
+                          // ignoring freeScreenSizePct/HeightPct entirely — so without
+                          // this, the slider would silently do nothing until the user
+                          // first dragged the box by hand. {50,50} is the same neutral
+                          // centered value resolveDragPos already falls back to for a
+                          // null position, so this is a no-op everywhere except that one
+                          // split-still-untouched case.
+                          freeScreenPos: layout.freeScreenPos ?? { xPct: 50, yPct: 50 },
+                        })
+                      }
                       onResetAllToOriginal={resetAllToOriginal}
                       onResetAllToDefault={resetAllToDefault}
                     />
