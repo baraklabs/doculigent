@@ -1,30 +1,37 @@
 import { useEffect, useRef, useState } from "react";
-import { MousePointer2, RotateCcw, RotateCw, Scissors, Trash2, X } from "lucide-react";
+import { MousePointer2, RotateCcw, RotateCw, Scissors, Trash2 } from "lucide-react";
 import { MagicWand } from "@phosphor-icons/react";
 import {
+  DEFAULT_CURSOR_EDIT_SETTINGS,
+  DEFAULT_SOUND_EDIT_SETTINGS,
   DEFAULT_TIMELINE_EDIT_SETTINGS,
   ZOOM_DEFAULT_DURATION_MS,
   ZOOM_DEFAULT_PCT,
   ZOOM_LEAD_MS,
-  ZOOM_PCT_PRESETS,
   ZOOM_TRANSITION_MS,
+  type CursorEditSettings,
   type CursorMetadata,
+  type LayoutEditSettings,
+  type SoundEditSettings,
   type TimelineClip,
   type TimelineEditSettings,
+  type TimelineSegment,
   type TimelineZoom,
-  type TimelineZoomPct,
 } from "@shared/types/models";
 import { bringClipToFront, deleteClip, effectiveClips, resolveClipAt, sourceToEditedMs, splitClipAtSource } from "@shared/lib/timelineClips";
+import { effectiveSegments, setSegmentSettings, splitSegmentAtPoint } from "@shared/lib/timelineSegments";
+import { removeZoom as removeZoomLib } from "@shared/lib/timelineZooms";
 import { frameDimensions, toFrameCoords } from "@shared/lib/cursorFrame";
 import { mediaUrl } from "@shared/constants/media";
 import "./Timeline.css";
 
 export type TimelineTool = "default" | "cut";
 
-// Any piece across the three tracks — Clips/Camera pieces and Zoom blocks all share one
-// selection set, keyed as `${track}:${id}` (see keyOf below) so a single Set<string> can
-// hold a mixed multi-selection spanning tracks.
-type TrackKind = "clips" | "camera" | "zoom";
+// Every piece across all six tracks — Clips/Camera pieces, Zoom blocks, and Cursor/Layout/
+// Sound segments all share one selection set, keyed as `${track}:${id}` (see keyOf below)
+// so a single Set<string> can hold a mixed multi-selection spanning tracks. Exported so
+// EditPage's chip rail (focusRequest prop below) and activeTrack can reference it.
+export type TrackKind = "clips" | "camera" | "zoom" | "cursor" | "layout" | "sound";
 
 // Every .tl-row's header column (72px) plus the gap Timeline.css puts between it and the
 // track (10px) — where the playhead's own left offset below has to start too, so it lines
@@ -67,6 +74,23 @@ interface TimelineProps {
    *  Never fires again after that (see autoZoomAppliedRef below), so it can't clobber edits
    *  on a later reopen. */
   autoZoomOnLoad?: boolean;
+  /** Set by EditPage when a chip-rail selection (Master/Cut N, or Zoom N) changes, so the
+   *  Timeline highlights the matching piece — one-directional (panel → timeline); the
+   *  Timeline's own `selection` state stays local otherwise. Consumed once (selectOnly +
+   *  onFocusConsumed) rather than staying "live," so it doesn't fight normal in-timeline
+   *  clicking afterward. */
+  focusRequest?: { track: TrackKind; id: string } | null;
+  onFocusConsumed?: () => void;
+  /** The active edit tab, mapped to its track — highlights that row so it's obvious which
+   *  track the open panel is editing. Purely a CSS class; every row stays interactive
+   *  regardless of which tab is active, same as today. */
+  activeTrack?: TrackKind;
+  /** The reverse direction of focusRequest — fires whenever the Timeline's own selection
+   *  becomes exactly one piece (a plain click, Ctrl/Cmd+click down to one, or a marquee
+   *  that lands on a single piece), so EditPage can switch to that track's tab and select
+   *  the matching cut/zoom there too. Silent for an empty selection or a multi-selection —
+   *  "on selecting" means one specific thing became the focus, not a batch. */
+  onSoleSelect?: (track: TrackKind, id: string) => void;
 }
 
 function clamp01(n: number): number {
@@ -193,6 +217,10 @@ export function Timeline({
   cameraStartOffsetMs,
   cursorMetadataPath,
   autoZoomOnLoad,
+  focusRequest,
+  onFocusConsumed,
+  activeTrack,
+  onSoleSelect,
 }: TimelineProps) {
   // The edited timeline's own extent (durationMsProp) is derived from clips/cameraClips —
   // it legitimately drops to 0 when every piece on both tracks has been deleted (e.g. via
@@ -240,14 +268,6 @@ export function Timeline({
       next.delete(k);
       return next;
     });
-  }
-  // The single selected piece, if the selection is exactly one — used to gate the Zoom
-  // toolbar (pct presets + remove button), which only makes sense for one piece at a time.
-  function soleSelection(): { track: TrackKind; id: string } | null {
-    if (selection.size !== 1) return null;
-    const [k] = selection;
-    const idx = k.indexOf(":");
-    return { track: k.slice(0, idx) as TrackKind, id: k.slice(idx + 1) };
   }
   // Recorded click timestamps (raw source ms) for the "auto zoom on clicks" magic button —
   // null while unloaded/unavailable, distinct from an empty array (loaded, but the
@@ -347,6 +367,9 @@ export function Timeline({
   const clipsTrackRef = useRef<HTMLDivElement>(null);
   const zoomTrackRef = useRef<HTMLDivElement>(null);
   const cameraTrackRef = useRef<HTMLDivElement>(null);
+  const cursorTrackRef = useRef<HTMLDivElement>(null);
+  const layoutTrackRef = useRef<HTMLDivElement>(null);
+  const soundTrackRef = useRef<HTMLDivElement>(null);
   // Wraps the ruler + Clips/Zoom/Camera rows — the coordinate frame the marquee
   // selection box (see startMarquee) is positioned relative to, and the boundary the
   // outside-click effect below uses to tell "clicked elsewhere in the timeline" (never
@@ -469,6 +492,29 @@ export function Timeline({
   useEffect(() => {
     if (tool !== "cut") setCutGuide(null);
   }, [tool]);
+
+  // EditPage sets `focusRequest` whenever a chip-rail selection (Master/Cut N, Zoom N)
+  // changes, so the matching piece highlights here too — one-directional (panel →
+  // timeline). Consumed immediately via onFocusConsumed so it doesn't fight normal
+  // in-timeline clicking afterward.
+  useEffect(() => {
+    if (!focusRequest) return;
+    selectOnly(focusRequest.track, focusRequest.id);
+    onFocusConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRequest]);
+
+  // The reverse direction — clicking (or marquee-selecting down to) exactly one piece
+  // anywhere in the Timeline tells EditPage to switch to that track's tab and select the
+  // matching cut/zoom there, so its settings show in the panel above. Silent while the
+  // selection is empty or spans more than one piece.
+  useEffect(() => {
+    if (selection.size !== 1) return;
+    const [key] = selection;
+    const idx = key.indexOf(":");
+    onSoleSelect?.(key.slice(0, idx) as TrackKind, key.slice(idx + 1));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection]);
 
   // Tracks timelineFocusedRef (for Ctrl/Cmd+A above) on every mousedown in the app, and —
   // when that mousedown landed outside the whole timeline widget (the preview canvas, other
@@ -767,6 +813,18 @@ export function Timeline({
     // and effectiveClips' own doc comment for why both tracks share one end point too.
     return effectiveClips(timeline.cameraClips, sourceDurationMs, 0, alignedLengthMs);
   }
+
+  // Cursor/Layout/Sound — see renderSegmentTrack below for the shared rendering/interaction
+  // logic these three feed into.
+  function updateCursorSegments(next: TimelineSegment<CursorEditSettings>[]) {
+    onChange({ ...timeline, cursorSegments: next });
+  }
+  function updateLayoutSegments(next: TimelineSegment<LayoutEditSettings>[]) {
+    onChange({ ...timeline, layoutSegments: next });
+  }
+  function updateSoundSegments(next: TimelineSegment<SoundEditSettings>[]) {
+    onChange({ ...timeline, soundSegments: next });
+  }
   function handleCameraClipBodyPointerDown(e: React.PointerEvent<HTMLDivElement>, clip: TimelineClip) {
     if (tool === "cut") return; // let it bubble to the track's cut-mode split handler below
     e.stopPropagation();
@@ -871,7 +929,14 @@ export function Timeline({
   }
 
   function trackElFor(t: TrackKind): HTMLDivElement | null {
-    return t === "clips" ? clipsTrackRef.current : t === "camera" ? cameraTrackRef.current : zoomTrackRef.current;
+    switch (t) {
+      case "clips": return clipsTrackRef.current;
+      case "camera": return cameraTrackRef.current;
+      case "zoom": return zoomTrackRef.current;
+      case "cursor": return cursorTrackRef.current;
+      case "layout": return layoutTrackRef.current;
+      case "sound": return soundTrackRef.current;
+    }
   }
 
   // Moving the whole multi-selection together — started (from handleClipBodyPointerDown/
@@ -897,10 +962,12 @@ export function Timeline({
       } else if (t === "camera") {
         const c = cameraClips.find((x) => x.id === pid);
         if (c) items.push({ track: t, id: pid, startMs: c.timelineStart });
-      } else {
+      } else if (t === "zoom") {
         const z = timeline.zooms.find((x) => x.id === pid);
         if (z) items.push({ track: t, id: pid, startMs: z.startMs, maxStartMs: durationMs - z.durationMs });
       }
+      // Cursor/Layout/Sound segments have no free position to drag — a group drag that
+      // includes one alongside a draggable piece just leaves the segment where it is.
     }
     groupDragRef.current = { originMs: pointerMs, downX: e.clientX, downY: e.clientY, moved: false, clickedTrack: track, clickedId: id, items };
     setDragCursor("grabbing");
@@ -1010,6 +1077,9 @@ export function Timeline({
     collect("clips", clipsTrackRef.current, clipsList().map((c) => ({ id: c.id, start: c.timelineStart, dur: c.sourceEnd - c.sourceStart })));
     collect("zoom", zoomTrackRef.current, timeline.zooms.map((z) => ({ id: z.id, start: z.startMs, dur: z.durationMs })));
     collect("camera", cameraTrackRef.current, cameraClipsList().map((c) => ({ id: c.id, start: c.timelineStart, dur: c.sourceEnd - c.sourceStart })));
+    collect("cursor", cursorTrackRef.current, effectiveSegments(timeline.cursorSegments, durationMs).map((s) => ({ id: s.id, start: s.startMs, dur: s.endMs - s.startMs })));
+    collect("layout", layoutTrackRef.current, effectiveSegments(timeline.layoutSegments, durationMs).map((s) => ({ id: s.id, start: s.startMs, dur: s.endMs - s.startMs })));
+    collect("sound", soundTrackRef.current, effectiveSegments(timeline.soundSegments, durationMs).map((s) => ({ id: s.id, start: s.startMs, dur: s.endMs - s.startMs })));
     setSelection((prev) => (m.addMode ? new Set([...prev, ...hits]) : hits));
   }
   // Shared pointerup for all three tracks (see startMarquee) — a plain click on empty space
@@ -1034,10 +1104,26 @@ export function Timeline({
   // updateCameraClips/updateZooms separately here would each read the same stale `timeline`
   // prop within this one synchronous call, so only the last of the three would actually
   // stick — see the equivalent note on handleGroupDragMove).
+  // Delete-key equivalents of the Cursor/Sound tracks' own hide/mute-in-place hover-delete
+  // (see hideCursorPiece/muteSoundPiece below) — same "operate on the effective/
+  // materialized list" reasoning, so hiding/muting via a keyboard Delete works on an
+  // unedited track's single whole-timeline piece too.
+  function hideManyCursorPieces(rawSegments: TimelineSegment<CursorEditSettings>[], ids: Set<string>): TimelineSegment<CursorEditSettings>[] {
+    let next = effectiveSegments(rawSegments, durationMs);
+    for (const id of ids) next = hideCursorPiece(next, id);
+    return next;
+  }
+  function muteManySoundPieces(rawSegments: TimelineSegment<SoundEditSettings>[], ids: Set<string>): TimelineSegment<SoundEditSettings>[] {
+    let next = effectiveSegments(rawSegments, durationMs);
+    for (const id of ids) next = muteSoundPiece(next, id);
+    return next;
+  }
   function deleteSelectedPieces() {
     const clipIds = new Set<string>();
     const cameraIds = new Set<string>();
     const zoomIds = new Set<string>();
+    const cursorIds = new Set<string>();
+    const soundIds = new Set<string>();
     for (const key of selection) {
       const idx = key.indexOf(":");
       const track = key.slice(0, idx);
@@ -1045,12 +1131,18 @@ export function Timeline({
       if (track === "clips") clipIds.add(id);
       else if (track === "camera") cameraIds.add(id);
       else if (track === "zoom") zoomIds.add(id);
+      else if (track === "cursor") cursorIds.add(id);
+      else if (track === "sound") soundIds.add(id);
+      // Layout cuts have no delete of their own (see renderSegmentTrack's Layout call
+      // below) — a selected one just gets deselected below, same as clicking away.
     }
     onChange({
       ...timeline,
       clips: clipIds.size > 0 ? emptiedTrack(clipsList().filter((c) => !clipIds.has(c.id))) : timeline.clips,
       cameraClips: cameraIds.size > 0 ? emptiedTrack(cameraClipsList().filter((c) => !cameraIds.has(c.id))) : timeline.cameraClips,
       zooms: zoomIds.size > 0 ? timeline.zooms.filter((z) => !zoomIds.has(z.id)) : timeline.zooms,
+      cursorSegments: cursorIds.size > 0 ? hideManyCursorPieces(timeline.cursorSegments, cursorIds) : timeline.cursorSegments,
+      soundSegments: soundIds.size > 0 ? muteManySoundPieces(timeline.soundSegments, soundIds) : timeline.soundSegments,
     });
     clearSelection();
   }
@@ -1085,6 +1177,9 @@ export function Timeline({
     for (const c of clipsList()) all.add(keyOf("clips", c.id));
     for (const c of cameraClipsList()) all.add(keyOf("camera", c.id));
     for (const z of timeline.zooms) all.add(keyOf("zoom", z.id));
+    for (const s of effectiveSegments(timeline.cursorSegments, durationMs)) all.add(keyOf("cursor", s.id));
+    for (const s of effectiveSegments(timeline.layoutSegments, durationMs)) all.add(keyOf("layout", s.id));
+    for (const s of effectiveSegments(timeline.soundSegments, durationMs)) all.add(keyOf("sound", s.id));
     setSelection(all);
   }
   handleSelectAllRef.current = selectAll;
@@ -1117,19 +1212,18 @@ export function Timeline({
   function updateZooms(next: TimelineZoom[]) {
     onChange({ ...timeline, zooms: next });
   }
-
+  // Same hover-delete affordance Clips/Camera pieces have — the Zoom Effect panel also has
+  // its own "Remove this zoom" button, but deleting straight from the block it's actually
+  // on (no need to select a chip first) matches how every other track already works here.
   function removeZoom(id: string) {
-    updateZooms(timeline.zooms.filter((z) => z.id !== id));
+    updateZooms(removeZoomLib(timeline.zooms, id));
     discardFromSelection("zoom", id);
-  }
-  function setZoomPct(id: string, pct: TimelineZoomPct) {
-    updateZooms(timeline.zooms.map((z) => (z.id === id ? { ...z, pct } : z)));
   }
 
   function addZoomAt(anchorMs: number) {
     const startMs = Math.max(0, anchorMs - ZOOM_LEAD_MS);
     const blockDuration = Math.min(ZOOM_DEFAULT_DURATION_MS, Math.max(200, durationMs - startMs));
-    const zoom: TimelineZoom = { id: newId(), startMs, durationMs: blockDuration, pct: ZOOM_DEFAULT_PCT };
+    const zoom: TimelineZoom = { id: newId(), startMs, durationMs: blockDuration, pct: ZOOM_DEFAULT_PCT, style: "2d" };
     updateZooms([...timeline.zooms, zoom]);
     selectOnly("zoom", zoom.id);
   }
@@ -1235,6 +1329,7 @@ export function Timeline({
       startMs: w.start,
       durationMs: w.end - w.start,
       pct: ZOOM_DEFAULT_PCT,
+      style: "2d",
     }));
   }
 
@@ -1406,17 +1501,23 @@ export function Timeline({
       if (dur <= 0) return null; // emptiedTrack's zero-width "whole track deleted" placeholder
       const touching = cameraSnapPair !== null && (cameraSnapPair.dragged === clip.id || cameraSnapPair.touching === clip.id);
       const selected = isSelected("camera", clip.id);
+      // This piece's own resolved hidden state — its clipOverride's, if it has one and it
+      // sets `hidden`, else the Camera tab's master toggle (cameraHidden). Dims it in place
+      // so a cut hidden via its own per-cut override reads at a glance even while the
+      // master toggle itself is off (and the whole track isn't already dimmed/locked by
+      // cameraHidden below) — same treatment as a hidden Cursor/muted Sound cut.
+      const clipHidden = timeline.cameraClipOverrides[clip.id]?.hidden ?? cameraHidden;
       return (
         <div
           key={clip.id}
-          className={`tl-camera-fill${touching ? " tl-piece-touching" : ""}${selected ? " selected" : ""}`}
+          className={`tl-camera-fill${touching ? " tl-piece-touching" : ""}${selected ? " selected" : ""}${clipHidden ? " tl-segment-disabled" : ""}`}
           style={{ left: `${msToPct(clip.timelineStart, durationMs)}%`, width: `${msToPct(dur, durationMs)}%` }}
           onPointerDown={(e) => handleCameraClipBodyPointerDown(e, clip)}
           onPointerMove={handleCameraClipBodyPointerMove}
           onPointerUp={handleCameraClipBodyPointerUp}
           onPointerEnter={() => setHoveredCameraClipId(clip.id)}
           onPointerLeave={() => setHoveredCameraClipId((id) => (id === clip.id ? null : id))}
-          title={`${formatTime(clip.timelineStart)} – ${formatTime(clip.timelineStart + dur)} — click to select (Ctrl/Cmd+click to add), drag anywhere, even over another piece; drag an edge to trim`}
+          title={`${formatTime(clip.timelineStart)} – ${formatTime(clip.timelineStart + dur)}${clipHidden ? " · camera hidden" : ""} — click to select (Ctrl/Cmd+click to add), drag anywhere, even over another piece; drag an edge to trim`}
         >
           <div className="tl-piece-edge tl-piece-edge-left" onPointerDown={(e) => handleCameraClipEdgePointerDown(e, clip, "left")} onPointerMove={handleCameraClipEdgePointerMove} onPointerUp={handleCameraClipEdgePointerUp} />
           <div className="tl-piece-edge tl-piece-edge-right" onPointerDown={(e) => handleCameraClipEdgePointerDown(e, clip, "right")} onPointerMove={handleCameraClipEdgePointerMove} onPointerUp={handleCameraClipEdgePointerUp} />
@@ -1439,10 +1540,115 @@ export function Timeline({
     });
   }
 
+  // Cursor/Sound tracks' own hover-delete doesn't merge the cut away like Layout's (and
+  // every Clips/Camera piece's) does — it *disables* it in place instead, same idea as a
+  // deleted Camera piece leaving a real gap that reads as "camera hidden here": deleting a
+  // Cursor cut hides the synthetic cursor for just that span, deleting a Sound cut mutes
+  // audio for just that span. The cut itself stays a real, selectable segment (its own
+  // panel can always turn hidden/muted back off, on top of Undo), which is only possible
+  // because — unlike a Camera gap — there's always a TimelineSegment "there" to hold that
+  // state. Operates on the *effective* (already-materialized) list so this also works on
+  // an unedited track's single whole-timeline piece, not just after a real cut exists —
+  // hiding/muting the whole recording shouldn't require cutting first.
+  function hideCursorPiece(segments: TimelineSegment<CursorEditSettings>[], id: string): TimelineSegment<CursorEditSettings>[] {
+    const seg = segments.find((s) => s.id === id);
+    return setSegmentSettings(segments, id, { ...(seg?.settings ?? DEFAULT_CURSOR_EDIT_SETTINGS), hidden: true });
+  }
+  function muteSoundPiece(segments: TimelineSegment<SoundEditSettings>[], id: string): TimelineSegment<SoundEditSettings>[] {
+    const seg = segments.find((s) => s.id === id);
+    return setSegmentSettings(segments, id, { ...(seg?.settings ?? DEFAULT_SOUND_EDIT_SETTINGS), muted: true });
+  }
+
+  // Cursor/Layout/Sound tracks — unlike Clips/Camera/Zoom, these have no footage or free
+  // position of their own: each is just a config-only TimelineSegment strip (shared/lib/
+  // timelineSegments.ts) that tiles the whole timeline with no gaps. There's nothing to
+  // drag or trim — clicking a segment selects it, the cut tool splits it. One generic
+  // renderer, called once per track below (`T` is inferred per call from that track's own
+  // settings type). `deleteOptions` gives Cursor/Sound their own hide/mute-in-place hover-
+  // delete (see hideCursorPiece/muteSoundPiece above) — omitted entirely for Layout, which
+  // only supports cutting: a Layout cut can't be removed once made, only split further or
+  // undone.
+  function renderSegmentTrack<T>(
+    trackKind: "cursor" | "layout" | "sound",
+    trackRef: React.RefObject<HTMLDivElement>,
+    rawSegments: TimelineSegment<T>[],
+    updateFn: (next: TimelineSegment<T>[]) => void,
+    deleteOptions?: {
+      onDelete: (segments: TimelineSegment<T>[], id: string) => TimelineSegment<T>[];
+      title: string;
+      /** True once a piece has actually been hidden/muted (not just "customized" some
+       *  other way) — dims it on the Timeline, same at-a-glance "this stretch is disabled"
+       *  read a deleted Camera piece's own gap already gives for free. */
+      isDisabled: (settings: T | null) => boolean;
+      disabledLabel: string;
+    }
+  ) {
+    const segments = effectiveSegments(rawSegments, durationMs);
+    function handleTrackPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+      if (tool !== "cut") {
+        startMarquee(e);
+        return;
+      }
+      const track = trackRef.current;
+      if (!track) return;
+      const ms = pctToMs(e.clientX, track, durationMs);
+      updateFn(splitSegmentAtPoint(rawSegments, ms, durationMs));
+    }
+    function handleSegmentPointerDown(e: React.PointerEvent<HTMLDivElement>, segId: string) {
+      if (tool === "cut") return; // let it bubble to the track's cut-mode split handler above
+      e.stopPropagation();
+      if (e.ctrlKey || e.metaKey) {
+        toggleSelect(trackKind, segId);
+        return;
+      }
+      selectOnly(trackKind, segId);
+    }
+    return (
+      <div
+        className={`tl-track tl-track-${trackKind}${tool === "cut" ? " tl-track-cut-mode" : ""}`}
+        ref={trackRef}
+        onPointerDown={handleTrackPointerDown}
+        onPointerMove={handleMarqueeMove}
+        onPointerUp={handleMarqueeUp}
+      >
+        {segments.map((seg, i) => {
+          const selected = isSelected(trackKind, seg.id);
+          const disabled = deleteOptions?.isDisabled(seg.settings) ?? false;
+          const statusSuffix = disabled ? ` · ${deleteOptions!.disabledLabel}` : seg.settings ? " · customized" : "";
+          return (
+            <div
+              key={seg.id}
+              className={`tl-segment-piece${selected ? " selected" : ""}${disabled ? " tl-segment-disabled" : ""}`}
+              style={{ left: `${msToPct(seg.startMs, durationMs)}%`, width: `${msToPct(seg.endMs - seg.startMs, durationMs)}%` }}
+              onPointerDown={(e) => handleSegmentPointerDown(e, seg.id)}
+              title={`${formatTime(seg.startMs)} – ${formatTime(seg.endMs)}${statusSuffix} — click to select (Ctrl/Cmd+click to add)`}
+            >
+              {i > 0 && <div className="tl-segment-boundary" />}
+              <span className="tl-piece-time">{formatTimeSecs(seg.startMs)} – {formatTimeSecs(seg.endMs)}</span>
+              {deleteOptions && (
+                <button
+                  type="button"
+                  className="tl-piece-delete"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    updateFn(deleteOptions.onDelete(segments, seg.id));
+                  }}
+                  title={deleteOptions.title}
+                >
+                  <Trash2 size={12} />
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   const tickStep = pickTickStepMs(durationMs);
   const ticks: number[] = [];
   for (let t = 0; t <= durationMs; t += tickStep) ticks.push(t);
-  const sole = soleSelection();
 
   return (
     <div className="tl-root">
@@ -1502,7 +1708,7 @@ export function Timeline({
       </div>
 
       <div className="tl-row">
-        <div className="tl-row-header tl-row-header-clips">Clips</div>
+        <div className={`tl-row-header tl-row-header-clips${activeTrack === "clips" ? " tl-row-focused" : ""}`}>Clips</div>
         <div
           className={`tl-track tl-track-clips${tool === "cut" ? " tl-track-cut-mode" : ""}`}
           ref={clipsTrackRef}
@@ -1519,7 +1725,7 @@ export function Timeline({
       </div>
 
       <div className="tl-row">
-        <div className="tl-row-header tl-row-header-zoom">
+        <div className={`tl-row-header tl-row-header-zoom${activeTrack === "zoom" ? " tl-row-focused" : ""}`}>
           Zoom
           <button
             type="button"
@@ -1564,30 +1770,25 @@ export function Timeline({
               <div className="tl-piece-edge tl-piece-edge-left" onPointerDown={(e) => handleZoomEdgePointerDown(e, zoom, "left")} onPointerMove={handleZoomEdgePointerMove} onPointerUp={handleZoomEdgePointerUp} />
               <div className="tl-piece-edge tl-piece-edge-right" onPointerDown={(e) => handleZoomEdgePointerDown(e, zoom, "right")} onPointerMove={handleZoomEdgePointerMove} onPointerUp={handleZoomEdgePointerUp} />
               <span className="tl-zoom-pct-badge">{zoom.pct}%</span>
-              {sole?.track === "zoom" && sole.id === zoom.id && (
-                <div className="tl-zoom-toolbar" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                  {ZOOM_PCT_PRESETS.map((p) => (
-                    <button
-                      type="button"
-                      key={p}
-                      className={p === zoom.pct ? "active" : ""}
-                      onClick={() => setZoomPct(zoom.id, p)}
-                    >
-                      {p}%
-                    </button>
-                  ))}
-                  <button type="button" className="tl-zoom-remove" onClick={() => removeZoom(zoom.id)} title="Remove zoom">
-                    <X size={12} />
-                  </button>
-                </div>
-              )}
+              <button
+                type="button"
+                className="tl-piece-delete"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeZoom(zoom.id);
+                }}
+                title="Remove this zoom"
+              >
+                <Trash2 size={12} />
+              </button>
             </div>
           ))}
         </div>
       </div>
 
       <div className="tl-row">
-        <div className={`tl-row-header tl-row-header-camera${cameraHidden ? " disabled" : ""}`}>Camera</div>
+        <div className={`tl-row-header tl-row-header-camera${cameraHidden ? " disabled" : ""}${activeTrack === "camera" ? " tl-row-focused" : ""}`}>Camera</div>
         <div
           className={`tl-track tl-track-camera${tool === "cut" ? " tl-track-cut-mode" : ""}${cameraHidden ? " disabled" : ""}`}
           ref={cameraTrackRef}
@@ -1612,6 +1813,31 @@ export function Timeline({
             </>
           )}
         </div>
+      </div>
+
+      <div className="tl-row">
+        <div className={`tl-row-header tl-row-header-cursor${activeTrack === "cursor" ? " tl-row-focused" : ""}`}>Cursor</div>
+        {renderSegmentTrack("cursor", cursorTrackRef, timeline.cursorSegments, updateCursorSegments, {
+          onDelete: hideCursorPiece,
+          title: "Hide cursor for this stretch",
+          isDisabled: (s) => !!s?.hidden,
+          disabledLabel: "cursor hidden",
+        })}
+      </div>
+
+      <div className="tl-row">
+        <div className={`tl-row-header tl-row-header-layout${activeTrack === "layout" ? " tl-row-focused" : ""}`}>Layout</div>
+        {renderSegmentTrack("layout", layoutTrackRef, timeline.layoutSegments, updateLayoutSegments)}
+      </div>
+
+      <div className="tl-row">
+        <div className={`tl-row-header tl-row-header-sound${activeTrack === "sound" ? " tl-row-focused" : ""}`}>Sound</div>
+        {renderSegmentTrack("sound", soundTrackRef, timeline.soundSegments, updateSoundSegments, {
+          onDelete: muteSoundPiece,
+          title: "Mute sound for this stretch",
+          isDisabled: (s) => !!s?.muted,
+          disabledLabel: "muted",
+        })}
       </div>
 
       <div

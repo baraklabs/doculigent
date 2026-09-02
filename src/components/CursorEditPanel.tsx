@@ -8,6 +8,8 @@ import {
   Sparkles,
   Volume2,
   PaintBucket,
+  EyeOff,
+  Eye,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -19,6 +21,7 @@ import {
   type CursorStyle,
 } from "@shared/types/models";
 import { ResetRow } from "./ResetRow";
+import { CutChipRail, type CutChipRailCut } from "./CutChipRail";
 import "./CursorEditPanel.css";
 
 const STYLES: { id: CursorStyle; label: string; icon: LucideIcon }[] = [
@@ -54,6 +57,10 @@ interface CursorEditPanelProps {
    *  pixels (see EditProjectMedia.cursorBakedIn) — none of the controls below have
    *  anything to draw on top of it, so a real one shows through unstyled regardless. */
   cursorBakedIn?: boolean;
+  cuts: CutChipRailCut[];
+  activeCutId: string;
+  onActiveCutChange: (id: string) => void;
+  onClearOverride?: () => void;
 }
 
 export function CursorEditPanel({
@@ -62,6 +69,10 @@ export function CursorEditPanel({
   onResetAllToOriginal,
   onResetAllToDefault,
   cursorBakedIn,
+  cuts,
+  activeCutId,
+  onActiveCutChange,
+  onClearOverride,
 }: CursorEditPanelProps) {
   function patch(partial: Partial<CursorEditSettings>) {
     onChange({ ...cursor, ...partial });
@@ -71,12 +82,28 @@ export function CursorEditPanel({
 
   return (
     <div className="cursor-edit-panel">
+      <CutChipRail showMaster cuts={cuts} activeId={activeCutId} onSelect={onActiveCutChange} onClearOverride={onClearOverride} />
+
+      <div className="cursor-edit-row">
+        <span className="cursor-edit-label">Cursor</span>
+        <button
+          type="button"
+          className={`cursor-edit-hide-btn${cursor.hidden ? " on" : ""}`}
+          aria-pressed={cursor.hidden}
+          onClick={() => patch({ hidden: !cursor.hidden })}
+        >
+          {cursor.hidden ? <EyeOff size={14} /> : <Eye size={14} />}
+          {cursor.hidden ? "Hidden" : "Visible"}
+        </button>
+      </div>
+
       {cursorBakedIn && (
         <div className="cursor-edit-baked-in-note">
           This recording's cursor can't be restyled — it was captured without a way to
           keep the real one out of the video, so it always shows through as-is.
         </div>
       )}
+      <fieldset className="cursor-edit-fieldset" disabled={cursor.hidden}>
       <div className="cursor-edit-section">
         <span className="cursor-edit-label">Style</span>
         <div className="cursor-style-grid">
@@ -207,6 +234,7 @@ export function CursorEditPanel({
           </div>
         )}
       </div>
+      </fieldset>
 
       <ResetRow
         onResetOriginal={() => onChange(ORIGINAL_CURSOR_EDIT_SETTINGS)}

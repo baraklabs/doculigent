@@ -1,6 +1,7 @@
 import { Volume2, VolumeX } from "lucide-react";
 import { DEFAULT_SOUND_EDIT_SETTINGS, type SoundEditSettings } from "@shared/types/models";
 import { ResetRow } from "./ResetRow";
+import { CutChipRail, type CutChipRailCut } from "./CutChipRail";
 import "./SoundEditPanel.css";
 
 interface SoundEditPanelProps {
@@ -8,15 +9,30 @@ interface SoundEditPanelProps {
   onChange: (next: SoundEditSettings) => void;
   onResetAllToOriginal: () => void;
   onResetAllToDefault: () => void;
+  cuts: CutChipRailCut[];
+  activeCutId: string;
+  onActiveCutChange: (id: string) => void;
+  onClearOverride?: () => void;
 }
 
-export function SoundEditPanel({ sound, onChange, onResetAllToOriginal, onResetAllToDefault }: SoundEditPanelProps) {
+export function SoundEditPanel({
+  sound,
+  onChange,
+  onResetAllToOriginal,
+  onResetAllToDefault,
+  cuts,
+  activeCutId,
+  onActiveCutChange,
+  onClearOverride,
+}: SoundEditPanelProps) {
   function patch(partial: Partial<SoundEditSettings>) {
     onChange({ ...sound, ...partial });
   }
 
   return (
     <div className="sound-edit-panel">
+      <CutChipRail showMaster cuts={cuts} activeId={activeCutId} onSelect={onActiveCutChange} onClearOverride={onClearOverride} />
+
       <div className="sound-edit-section">
         <span className="sound-edit-label">Audio</span>
         <button

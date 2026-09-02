@@ -16,6 +16,7 @@ import {
 } from "@shared/types/models";
 import { frameDimensions, toFrameCoords } from "@shared/lib/cursorFrame";
 import { effectiveClips, resolveClipAt, sourceToEditedMs, splitClipAtSource, totalClipsExtentMs } from "@shared/lib/timelineClips";
+import { effectiveSegments, resolveSegmentSettings } from "@shared/lib/timelineSegments";
 import type { TimelineClip } from "@shared/types/models";
 import { mediaUrl } from "@shared/constants/media";
 import { BACKGROUND_IMAGE_URLS, BACKGROUND_TEXTURE_URLS } from "../assets/backgrounds";
@@ -411,6 +412,17 @@ function sizeFromBubbleDims(shape: CameraEditSettings["shape"], width: number, h
   return Math.min(width, height);
 }
 
+/** Whichever photo a given BackgroundEditSettings' fill actually needs — a curated
+ *  texture, a curated image, or the user's own imported one — or null for "color"/
+ *  "gradient"/"none", which don't need one. Pure so it can be called for the master
+ *  Screen backdrop *and* for any per-clip override (see PreviewCompositor's
+ *  ensureBackdropImageLoaded), not just whichever one happens to be the live React prop. */
+function backdropImageUrlFor(bg: BackgroundEditSettings): string | null {
+  if (bg.fill === "texture") return BACKGROUND_TEXTURE_URLS[bg.textureId] ?? null;
+  if (bg.fill === "image") return bg.customImagePath ? mediaUrl(bg.customImagePath) : (BACKGROUND_IMAGE_URLS[bg.imageId] ?? null);
+  return null;
+}
+
 /** Fills a rect with the Screen tab's backdrop (color/gradient/texture/image) — the base
  *  layer behind the (never-cropped) screen/camera content, so empty space reads as a
  *  deliberate design choice rather than dead black bars. */
@@ -445,7 +457,8 @@ function drawBackdrop(
   } else if (bg.fill === "texture" || bg.fill === "image") {
     // Both fills are a curated (or, for "image", user-imported) photo drawn cover-fit —
     // which photo is loaded into `backdropImg` is resolved by the caller (see
-    // PreviewCompositor's bgImageRef effect), keyed off textureId/imageId/customImagePath.
+    // backdropImageUrlFor/PreviewCompositor's ensureBackdropImageLoaded), keyed off
+    // textureId/imageId/customImagePath.
     if (backdropImg && backdropImg.naturalWidth) {
       const scale = Math.max(w / backdropImg.naturalWidth, h / backdropImg.naturalHeight);
       const dw = backdropImg.naturalWidth * scale;
@@ -1025,34 +1038,38 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     backgroundRef.current = background;
   }, [background]);
 
-  // Whichever photo the current backdrop fill needs — a curated texture, a curated
-  // image, or the user's own imported one — loaded here so drawBackdrop (which only
-  // touches the canvas, no network/asset resolution of its own) can just drawImage() it.
-  const backdropImageUrl =
-    background.fill === "texture"
-      ? (BACKGROUND_TEXTURE_URLS[background.textureId] ?? null)
-      : background.fill === "image"
-        ? background.customImagePath
-          ? mediaUrl(background.customImagePath)
-          : (BACKGROUND_IMAGE_URLS[background.imageId] ?? null)
-        : null;
-
-  const bgImageRef = useRef<HTMLImageElement | null>(null);
   // Memoized backdrop bitmap — see drawBackdropCached.
   const backdropCacheRef = useRef<BackdropCache | null>(null);
-  useEffect(() => {
-    bgImageRef.current = null;
-    if (!backdropImageUrl) return;
+  // Loaded backdrop images, keyed by URL — covers the master Screen backdrop *and* every
+  // per-clip override's own (timeline.clipOverrides), any of which can be the one actually
+  // resolved as `bg` at a given frame (see the draw loop's own per-clip override
+  // resolution). A single image ref keyed only off the master `background` prop used to
+  // mean a clip override that picked a *different* texture/image never actually loaded —
+  // the draw loop kept blitting whichever texture the master happened to have last loaded,
+  // regardless of what `bg.textureId`/`imageId` actually said for that frame. Entries are
+  // `"loading"` while in flight so concurrent frames don't kick off the same fetch twice;
+  // there's no eviction — bounded by however many distinct fills master+overrides actually
+  // use, never unbounded.
+  const backdropImagesRef = useRef<Map<string, HTMLImageElement | "loading">>(new Map());
+  function ensureBackdropImageLoaded(url: string): HTMLImageElement | null {
+    const cached = backdropImagesRef.current.get(url);
+    if (cached === "loading") return null;
+    if (cached) return cached;
+    backdropImagesRef.current.set(url, "loading");
     const img = new Image();
     // Needed for the media:// (custom-image backdrop) case — see screenVideo's own
     // crossOrigin comment below for why. A no-op for the bundled texture/preset URLs,
     // which are same-origin either way.
     img.crossOrigin = "anonymous";
     img.onload = () => {
-      bgImageRef.current = img;
+      backdropImagesRef.current.set(url, img);
     };
-    img.src = backdropImageUrl;
-  }, [backdropImageUrl]);
+    img.onerror = () => {
+      backdropImagesRef.current.delete(url);
+    };
+    img.src = url;
+    return null;
+  }
 
   const cursorRef = useRef(cursor);
   useEffect(() => {
@@ -1316,8 +1333,19 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       if (!canvas || !screenVideo || !screenVideo.videoWidth) return;
 
       const layoutSettings = layoutRef.current;
-      const cam = cameraRef.current;
-      const bg = backgroundRef.current;
+      const timelineState = timelineRef.current;
+      // Per-clip Screen/Camera overrides (timeline.clipOverrides/cameraClipOverrides),
+      // resolved against whichever clip was active as of the *previous* frame's resolution
+      // (activeClipIdRef/activeCameraClipIdRef aren't updated for *this* frame until the
+      // Clips/Camera resolution blocks below run) — during live playback this is off by at
+      // most one frame exactly at the instant a cut boundary is crossed, imperceptible and
+      // self-correcting the very next frame (same drift tolerance already accepted
+      // elsewhere in this file); during export, the export loop already sets both refs to
+      // this exact frame's resolved clip before calling draw(), so there's no lag there at
+      // all. Falls back to the tab's own master settings wherever the active clip (if any)
+      // has no override of its own.
+      const cam = (activeCameraClipIdRef.current && timelineState.cameraClipOverrides[activeCameraClipIdRef.current]) || cameraRef.current;
+      const bg = (activeClipIdRef.current && timelineState.clipOverrides[activeClipIdRef.current]) || backgroundRef.current;
       const cameraSource = blurVideoRef.current ?? cameraVideoRef.current;
       const hasCameraSource = !!cameraSource && !!cameraSource.videoWidth;
 
@@ -1342,7 +1370,9 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
 
-      drawBackdropCached(ctx, bg, bgImageRef.current, canvas.width, canvas.height, backdropCacheRef);
+      const backdropUrl = backdropImageUrlFor(bg);
+      const backdropImg = backdropUrl ? ensureBackdropImageLoaded(backdropUrl) : null;
+      drawBackdropCached(ctx, bg, backdropImg, canvas.width, canvas.height, backdropCacheRef);
 
       // Clips — each has its own independent timelineStart and can freely overlap another
       // (the last one in the array wins wherever they overlap); a stretch nothing covers
@@ -1352,7 +1382,8 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       // handing off to whatever (if anything) covers the moment right after it ends.
       // `currentMs` below — and therefore zoom/Camera-clip lookups — is edited time, not
       // raw source time, so those travel with the edited output, not with moved footage.
-      const timelineState = timelineRef.current;
+      // (`timelineState` itself is declared up above `cam`/`bg`, which resolve their own
+      // per-clip overrides from it before those clips are even known here.)
       const sourceDurationMs = (screenVideo.duration || 0) * 1000;
       // Sized off the camera file's own duration, not the screen recording's — the two are
       // separately captured and frequently differ by a couple of seconds (camera
@@ -1468,8 +1499,16 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         // is imperceptible; only live preview needs this at all — export's audio always
         // comes from a wholly separate offline render (see renderExportAudio), never from
         // this element's live playback.
+        // Per-cut Sound mute (timeline.soundSegments) — re-applied every live frame on top
+        // of whatever the coarser sound.muted-keyed effect set, so it tracks the playhead's
+        // own segment instead of only the tab's master toggle. Never cameraVideo — that
+        // element is always muted regardless (see its own doc comment, mutedRef's, and the
+        // Load effect above); its audio is carried by audioOnly instead.
+        const effectiveMuted = resolveSegmentSettings(timelineState.soundSegments, { muted: mutedRef.current }, currentMs, totalMs).muted;
+        screenVideo.muted = effectiveMuted;
         const audioOnly = audioOnlyRef.current;
         if (audioOnly) {
+          audioOnly.muted = effectiveMuted;
           // audioOnly's own t=0 falls sideClipOffsetMsRef.current ms into currentMs's
           // clock (see this ref's own doc comment) — before that point there's no audio to
           // play yet, so pause rather than clamp to 0 and play whatever's actually first.
@@ -1503,6 +1542,17 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       }
       activeCameraClipIdRef.current = cameraResolved ? cameraResolved.clip.id : null;
       const showCameraTrackContent = !!cameraResolved;
+
+      // Cursor/Layout per-cut overrides (timeline.cursorSegments/layoutSegments) —
+      // `currentMs`/`totalMs` are fully resolved by this point (unlike `cam`/`bg` above,
+      // which have to make do with last frame's active-clip id), so these need no lag at
+      // all: the exact segment covering this exact frame, every frame. `layoutOverride`
+      // only ever supplies the free-position/size fields actually read for box geometry
+      // further down — canvas dimensions (layoutSettings.format, sized above) stay
+      // master-only, and so do the on-canvas drag/resize interaction handlers (elsewhere in
+      // this file), which intentionally keep editing `layoutRef.current` directly.
+      const cursorSettings = resolveSegmentSettings(timelineState.cursorSegments, cursorRef.current, currentMs, totalMs);
+      const layoutOverride = resolveSegmentSettings(timelineState.layoutSegments, layoutSettings, currentMs, totalMs);
 
       // Zoom — a timeline zoom block temporarily overrides the Background tab's static
       // zoomPct with an eased-in/out target for the duration of its window.
@@ -1592,7 +1642,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         boxW: cameraSize.width,
         boxH: cameraSize.height,
       };
-      const cameraOrigin = resolveDragPos(layoutSettings.freeCameraPos, cameraDrag, { x: 100, y: 100 });
+      const cameraOrigin = resolveDragPos(layoutOverride.freeCameraPos, cameraDrag, { x: 100, y: 100 });
 
       const cameraRect: Rect | null =
         !cam.hidden && hasCameraSource && showCameraTrackContent
@@ -1608,8 +1658,8 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       // instead. The instant the user actually drags/resizes it, freeScreenPos becomes
       // non-null and this permanently stops applying — dragging still works throughout,
       // since screenDrag is rebuilt from *whichever* box's real dimensions end up in use.
-      const boxW = (layoutSettings.freeScreenSizePct / 100) * canvas.width;
-      const boxH = (layoutSettings.freeScreenHeightPct / 100) * canvas.height;
+      const boxW = (layoutOverride.freeScreenSizePct / 100) * canvas.width;
+      const boxH = (layoutOverride.freeScreenHeightPct / 100) * canvas.height;
       let screenDrag: DragRegion = {
         originX: 0,
         originY: 0,
@@ -1625,13 +1675,13 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       // meant genuinely full-bleed both ways. While reelScreenFull, freeScreenPos is
       // repurposed entirely as the pan offset below (dragging pans the crop, not the box —
       // see dragStateRef's "pan" mode), so the box's own position always stays neutral.
-      const screenOrigin = resolveDragPos(layoutSettings.reelScreenFull ? null : layoutSettings.freeScreenPos, screenDrag, {
+      const screenOrigin = resolveDragPos(layoutOverride.reelScreenFull ? null : layoutOverride.freeScreenPos, screenDrag, {
         x: 50,
         y: 50,
       });
       let screenBox: Rect = { x: screenOrigin.x, y: screenOrigin.y, w: boxW, h: boxH };
 
-      if (layoutSettings.format === "landscape" && layoutSettings.landscapeMode === "split" && layoutSettings.freeScreenPos === null && cameraRect) {
+      if (layoutSettings.format === "landscape" && layoutSettings.landscapeMode === "split" && layoutOverride.freeScreenPos === null && cameraRect) {
         const distLeft = cameraRect.x;
         const distRight = canvas.width - (cameraRect.x + cameraRect.w);
         const distTop = cameraRect.y;
@@ -1677,9 +1727,9 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         canvasH: canvas.height,
       };
 
-      const screenFitMode = layoutSettings.format === "reel" && layoutSettings.reelScreenFull ? "cover" : "contain";
-      const screenPanPct = layoutSettings.reelScreenFull
-        ? { x: layoutSettings.freeScreenPos?.xPct ?? 50, y: layoutSettings.freeScreenPos?.yPct ?? 50 }
+      const screenFitMode = layoutSettings.format === "reel" && layoutOverride.reelScreenFull ? "cover" : "contain";
+      const screenPanPct = layoutOverride.reelScreenFull
+        ? { x: layoutOverride.freeScreenPos?.xPct ?? 50, y: layoutOverride.freeScreenPos?.yPct ?? 50 }
         : { x: 50, y: 50 };
       const fit = drawScreenContent(ctx, screenVideo, zoomedBg, screenBox, screenFitMode, screenPanPct, showScreenContent, zoomFocusSrc);
       const { screenDrawX, screenDrawY, fitScale, srcX, srcY, svW, svH } = fit;
@@ -1690,12 +1740,12 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       // Skipped entirely during a deleted (blank) Clips stretch, same as the screen/camera
       // content — and skipped altogether when cursorBakedIn, since screenVideo *does* have
       // a real one baked in there and drawing this on top of it would show two cursors.
-      if (showScreenContent && track && cursorSample && !cursorBakedInRef.current) {
+      if (showScreenContent && track && cursorSample && !cursorBakedInRef.current && !cursorSettings.hidden) {
         const { point, pos } = cursorSample;
         const frame = frameDimensions(track.metadata);
         const icon = track.icons[point.icon];
         if (pos && icon) {
-          const cur = cursorRef.current;
+          const cur = cursorSettings;
           const scaleX = (svW / frame.width) * fitScale;
           const scaleY = (svH / frame.height) * fitScale;
           const sizeMul = cur.sizePct / 100;
@@ -1868,7 +1918,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
               rippleRef.current = null;
             } else {
               const t = elapsed / RIPPLE_DURATION_MS;
-              const color = cursorRef.current.color;
+              const color = cursorSettings.color;
               ctx.save();
               if (ripple.style === "pulse") {
                 ctx.beginPath();
@@ -2029,6 +2079,25 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     }
     activeCameraClipIdRef.current = cameraResolved ? cameraResolved.clip.id : null;
     setProgress(totalMs > 0 ? editedMsRef.current / totalMs : 0);
+    // Click-effect bookkeeping — any explicit jump (scrubbing the ruler, clicking a
+    // Timeline piece, the chip rail's own "seek to this cut") has to reset both of these,
+    // or they carry stale state into whatever plays next:
+    //  - rippleRef holds an in-flight ripple's `startedAt` in *edited* ms. A seek
+    //    backward past that point makes `currentMs - startedAt` go negative, which never
+    //    satisfies the ripple's own "> RIPPLE_DURATION_MS, clear it" check — so on the
+    //    very next forward playback, the stale ripple sits there rendering with negative
+    //    progress until currentMs climbs all the way back past where it originally
+    //    fired, reading as a click effect stuck "playing in slow motion" for however far
+    //    back the seek jumped.
+    //  - lastPlaybackMsRef is the click-sweep watermark, in raw *source* ms (cursorTMs) —
+    //    left stale after a seek, a later forward-playing frame can either skip every
+    //    click between the old watermark and the new position (watermark now ahead of
+    //    playback) or fire all of them at once the instant playback finally catches back
+    //    up to it (watermark left behind). Reset to wherever this seek actually landed so
+    //    the very next frame's sweep starts clean from here — a seek should never
+    //    retroactively trigger (or lose) a click, only playback moving through it should.
+    rippleRef.current = null;
+    lastPlaybackMsRef.current = screenVideo.currentTime * 1000;
   }
 
   function seekTo(fraction: number) {
@@ -2253,18 +2322,30 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     clips: TimelineClip[],
     decodeAudio: (filePath: string) => Promise<ArrayBuffer>
   ): Promise<ArrayBuffer | null> {
-    const muted = mutedRef.current;
     const cur = cursorRef.current;
     const track = cursorTrackRef.current;
     const clicks = !cursorBakedInRef.current && cur.clickSound ? (track?.metadata.clicks ?? []) : [];
 
-    if (muted && clicks.length === 0) return null;
+    // Per-cut Sound mute (timeline.soundSegments), as a list of [start, muted] breakpoints
+    // on the *edited* timeline — the same clock this function's own sources already play
+    // straight through on (see the "edited-ms and raw source-ms are the same clock for
+    // audio's purposes" comment below), so these breakpoints apply directly to every
+    // source's own gain node in ABSOLUTE offline-context time, regardless of that source's
+    // own start offset (a breakpoint scheduled before a source even starts just means its
+    // gain is already at that value once real audio from it arrives).
+    const muteWindows = effectiveSegments(timelineRef.current.soundSegments, totalMs).map((s) => ({
+      startSec: s.startMs / 1000,
+      muted: s.settings?.muted ?? mutedRef.current,
+    }));
+    const allMuted = muteWindows.every((w) => w.muted);
+
+    if (allMuted && clicks.length === 0) return null;
 
     const SAMPLE_RATE = 44100;
     const numSamples = Math.max(1, Math.ceil((totalMs / 1000) * SAMPLE_RATE));
     const offlineCtx = new OfflineAudioContext(2, numSamples, SAMPLE_RATE);
 
-    if (!muted) {
+    if (!allMuted) {
       // Two independent recorded sources, mixed here into one export track — the same two
       // the live preview plays through two separate elements (see mutedRef's own comment):
       //
@@ -2306,7 +2387,13 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
           if (durSec > 0) {
             const src = offlineCtx.createBufferSource();
             src.buffer = decoded;
-            src.connect(offlineCtx.destination);
+            // Routed through a gain node (rather than straight to destination) so the mute
+            // breakpoints above can silence specific cut spans — hard on/off steps, same as
+            // a <video>'s own .muted flag toggling live, no fades.
+            const gain = offlineCtx.createGain();
+            for (const w of muteWindows) gain.gain.setValueAtTime(w.muted ? 0 : 1, Math.max(0, w.startSec));
+            src.connect(gain);
+            gain.connect(offlineCtx.destination);
             src.start(startSec, 0, durSec);
           }
         } catch {
@@ -2604,6 +2691,14 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       }
 
       isExportingRef.current = true;
+      // Fresh click-effect bookkeeping for this export run — these two refs otherwise
+      // still hold whatever live preview last left them at (wherever the user last
+      // scrubbed/played before hitting Export), which the frame loop below has no reason
+      // to agree with (see seekToEditedMs's identical reset for the full reasoning: a
+      // stale rippleRef can render "stuck," and a stale lastPlaybackMsRef can skip or
+      // pile up click ripples on whichever frame first crosses it).
+      rippleRef.current = null;
+      lastPlaybackMsRef.current = -1;
       // Both videos get played forward (sped up) during capture — audio is already fully
       // rendered separately by this point (see above) and never needed from these
       // elements directly, so mute them for the duration regardless of the live Mute

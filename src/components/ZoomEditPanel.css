@@ -1,0 +1,41 @@
+.zoom-edit-panel {
+  flex: 1; min-width: 0; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 18px; padding: 16px;
+}
+.zoom-edit-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.zoom-edit-section { display: flex; flex-direction: column; gap: 8px; }
+.zoom-edit-hint { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+.zoom-edit-time-range {
+  font-size: 12px; font-weight: 600; color: var(--text);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 12px; width: fit-content;
+}
+
+.zoom-pct-presets { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.zoom-pct-btn {
+  font-size: 12px; font-weight: 600; color: var(--muted);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 14px;
+}
+.zoom-pct-btn:hover { border-color: var(--accent); color: var(--text); }
+.zoom-pct-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.zoom-style-segmented { display: flex; gap: 6px; }
+.zoom-style-seg-btn {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  font-size: 12px; font-weight: 600; color: var(--muted);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px;
+}
+.zoom-style-seg-btn:hover { border-color: var(--accent); color: var(--text); }
+.zoom-style-seg-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.zoom-style-note { font-size: 11px; color: var(--muted); min-height: 14px; }
+
+.zoom-edit-remove-btn {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  font-size: 12px; font-weight: 600; color: var(--danger);
+  background: transparent; border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 12px; margin-top: auto;
+}
+.zoom-edit-remove-btn:hover { background: rgba(179, 38, 30, .08); border-color: var(--danger); }

@@ -188,6 +188,10 @@ export type ClickAnimationStyle = "ripple" | "pulse" | "burst";
 export type ClickSoundStyle = "tick" | "pop" | "click";
 
 export interface CursorEditSettings {
+  /** Hides the synthetic cursor overlay entirely — set directly via the Cursor tab's own
+   *  Hidden/Visible toggle for the whole recording, or via a Cursor-track cut's "remove
+   *  cursor here" hover-delete on the Timeline, scoped to just that cut's span. */
+  hidden: boolean;
   style: CursorStyle;
   sizePct: number; // scale relative to the recorded cursor's original size, 50-1000
   /** Tint applied to the synthetic styles — ignored by "default", which draws the
@@ -334,17 +338,24 @@ export interface TimelineClip {
   timelineStart: number;
 }
 
+// The only zoom amounts offered in the Zoom Effect panel — a closed set of presets, no
+// free-form/custom % input.
 export const ZOOM_PCT_PRESETS = [150, 200, 250, 300] as const;
 export type TimelineZoomPct = (typeof ZOOM_PCT_PRESETS)[number];
 
+export type TimelineZoomStyle = "2d" | "3d";
+
 /** A movable, repeatable zoom-in effect anchored at a point on the timeline — eases from
  *  the base zoom up to `pct` and back down over ZOOM_TRANSITION_MS at each edge of its
- *  window, holding at `pct` in between. */
+ *  window, holding at `pct` in between. `style` is data-only for now — "2d" and "3d" both
+ *  render identically (today's flat scale zoom); it's stored/round-tripped so a later pass
+ *  can add a real 3D-perspective render without another data-model change. */
 export interface TimelineZoom {
   id: string;
   startMs: number;
   durationMs: number;
   pct: TimelineZoomPct;
+  style: TimelineZoomStyle;
 }
 
 /** Unused today — the Camera track's shown/hidden windows are defined by
@@ -355,6 +366,20 @@ export interface TimelineCameraHide {
   id: string;
   startMs: number;
   durationMs: number;
+}
+
+/** One config-only stretch of a footage-less track (Cursor/Layout/Sound) — no source
+ *  media of its own, so unlike TimelineClip there's nothing to trim: just a [startMs,
+ *  endMs) span on the edited timeline. `settings` is null while the segment inherits the
+ *  tab's master settings; setting it to a real (cloned) object customizes just that span.
+ *  Segments are always contiguous and cover the full timeline — see
+ *  shared/lib/timelineSegments.ts for the split/delete/resolve functions maintaining that
+ *  invariant. An empty array means "not cut yet" — the whole timeline is master-only. */
+export interface TimelineSegment<T> {
+  id: string;
+  startMs: number;
+  endMs: number;
+  settings: T | null;
 }
 
 export interface TimelineEditSettings {
@@ -374,6 +399,16 @@ export interface TimelineEditSettings {
    *  there, same as `cam.hidden` but scoped to that stretch. Empty means unedited (camera
    *  shown for the whole recording, in its original order). */
   cameraClips: TimelineClip[];
+  /** Per-cut visual-setting overrides for the Clips/Camera tracks, keyed by the owning
+   *  TimelineClip's id. TimelineClip itself stays a pure footage-piece type — a piece
+   *  with no entry here just inherits the Screen/Camera tab's master settings. */
+  clipOverrides: Record<string, BackgroundEditSettings>;
+  cameraClipOverrides: Record<string, CameraEditSettings>;
+  /** Cursor/Layout/Sound have no footage to cut, so they're divided into config-only
+   *  TimelineSegments instead of TimelineClips — see TimelineSegment's own doc comment. */
+  cursorSegments: TimelineSegment<CursorEditSettings>[];
+  layoutSegments: TimelineSegment<LayoutEditSettings>[];
+  soundSegments: TimelineSegment<SoundEditSettings>[];
 }
 
 export const DEFAULT_CAMERA_EDIT_SETTINGS: CameraEditSettings = {
@@ -391,6 +426,7 @@ export const DEFAULT_CAMERA_EDIT_SETTINGS: CameraEditSettings = {
 };
 
 export const DEFAULT_CURSOR_EDIT_SETTINGS: CursorEditSettings = {
+  hidden: false,
   style: "hand",
   sizePct: 500,
   color: "#f59e0b",
@@ -406,6 +442,7 @@ export const DEFAULT_CURSOR_EDIT_SETTINGS: CursorEditSettings = {
  *  click animation/sound) that DEFAULT_CURSOR_EDIT_SETTINGS applies as a starting
  *  preset for new projects. */
 export const ORIGINAL_CURSOR_EDIT_SETTINGS: CursorEditSettings = {
+  hidden: false,
   style: "default",
   sizePct: 100,
   color: "#ffffff",
@@ -463,6 +500,11 @@ export const DEFAULT_TIMELINE_EDIT_SETTINGS: TimelineEditSettings = {
   cameraHides: [],
   clips: [],
   cameraClips: [],
+  clipOverrides: {},
+  cameraClipOverrides: {},
+  cursorSegments: [],
+  layoutSegments: [],
+  soundSegments: [],
 };
 
 export const ZOOM_DEFAULT_PCT: TimelineZoomPct = 150;
