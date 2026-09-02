@@ -358,9 +358,12 @@ export function Timeline({
   const [hoveredClipId, setHoveredClipId] = useState<string | null>(null);
   const [hoveredCameraClipId, setHoveredCameraClipId] = useState<string | null>(null);
   // While the cut tool hovers one track, this is where the cut would land if the pointer
-  // is close enough to snap onto a piece boundary already sitting on the *other* track — a
+  // is close enough to snap onto a cut boundary already sitting on any *other* track — a
   // preview of "cut here and it'll line up with that one," shown before the click happens.
-  const [cutGuide, setCutGuide] = useState<{ track: "clips" | "camera"; ms: number } | null>(null);
+  // Every cuttable track takes part (see crossTrackBoundaryPoints), not just Clips/Camera:
+  // whichever piece the snapped ms belongs to lights up too, so it's clear *which* cut this
+  // one would line up with (see snapTargetKeys).
+  const [cutGuide, setCutGuide] = useState<{ track: TrackKind; ms: number } | null>(null);
   // While dragging (moving or edge-trimming) a Clips/Camera piece, which other piece on
   // that same track it's currently snapped flush against (no gap, no overlap) — both the
   // dragged piece and its neighbor get a highlight so the touch is obvious mid-drag.
@@ -580,21 +583,6 @@ export function Timeline({
   function clipsList(): TimelineClip[] {
     return effectiveClips(timeline.clips, sourceDurationMs, 0, alignedLengthMs, cameraStartOffsetMs ?? 0);
   }
-  // A track's own pieces' edges (start and end) — what the *other* track's cut tool snaps
-  // a new cut onto, so a Camera cut can land exactly where a Clips piece begins/ends (or
-  // vice versa).
-  function boundaryPointsOf(pieces: TimelineClip[]): number[] {
-    const points: number[] = [];
-    for (const c of pieces) {
-      const dur = c.sourceEnd - c.sourceStart;
-      points.push(c.timelineStart, c.timelineStart + dur);
-    }
-    return Array.from(new Set(points)).filter((ms) => ms >= 0 && ms <= durationMs);
-  }
-  function clipsBoundaryPoints(): number[] {
-    return boundaryPointsOf(clipsList());
-  }
-
   // Snap tolerance, converted from a fixed on-screen pixel radius to ms using the track's
   // current rendered width — so it feels the same regardless of the recording's length.
   const CUT_SNAP_PX = 8;
@@ -616,10 +604,10 @@ export function Timeline({
   }
 
   // Cut tool — splits whichever piece is on top at the click point (converting the click's
-  // edited-ms position to a source position first) into two, in place. Snaps onto a Camera
-  // piece boundary it's hovering near, so the two actually land on the same ms. Outside cut
-  // mode, a pointerdown on empty track space instead starts a marquee-select drag (see
-  // startMarquee) — the two are mutually exclusive by tool, so there's no conflict.
+  // edited-ms position to a source position first) into two, in place. Snaps onto any other
+  // track's existing cut boundary it's hovering near, so the two actually land on the same
+  // ms. Outside cut mode, a pointerdown on empty track space instead starts a marquee-select
+  // drag (see startMarquee) — the two are mutually exclusive by tool, so there's no conflict.
   function handleClipsTrackPointerDown(e: React.PointerEvent<HTMLDivElement>) {
     if (tool !== "cut") {
       startMarquee(e);
@@ -628,7 +616,7 @@ export function Timeline({
     const track = clipsTrackRef.current;
     if (!track) return;
     const rawMs = pctToMs(e.clientX, track, durationMs);
-    const snapMs = nearestPointMs(boundaryPointsOf(cameraClipsList()), rawMs, cutSnapToleranceMs(track));
+    const snapMs = nearestPointMs(crossTrackBoundaryPoints("clips"), rawMs, cutSnapToleranceMs(track));
     const editedMs = snapMs ?? rawMs;
     const clips = clipsList();
     const resolved = resolveClipAt(clips, editedMs);
@@ -641,7 +629,7 @@ export function Timeline({
     const track = clipsTrackRef.current;
     if (!track) return;
     const ms = pctToMs(e.clientX, track, durationMs);
-    const snapMs = nearestPointMs(boundaryPointsOf(cameraClipsList()), ms, cutSnapToleranceMs(track));
+    const snapMs = nearestPointMs(crossTrackBoundaryPoints("clips"), ms, cutSnapToleranceMs(track));
     setCutGuide(snapMs !== null ? { track: "clips", ms: snapMs } : null);
   }
   function handleClipsTrackPointerLeave() {
@@ -772,10 +760,11 @@ export function Timeline({
       if (dur <= 0) return null; // emptiedTrack's zero-width "whole track deleted" placeholder
       const touching = clipSnapPair !== null && (clipSnapPair.dragged === clip.id || clipSnapPair.touching === clip.id);
       const selected = isSelected("clips", clip.id);
+      const matching = !selected && isMatching("clips", clip.id);
       return (
         <div
           key={clip.id}
-          className={`tl-clip-base${touching ? " tl-piece-touching" : ""}${selected ? " selected" : ""}`}
+          className={`tl-clip-base${touching ? " tl-piece-touching" : ""}${selected ? " selected" : ""}${matching ? " matching" : ""}`}
           style={{ left: `${msToPct(clip.timelineStart, durationMs)}%`, width: `${msToPct(dur, durationMs)}%` }}
           onPointerDown={(e) => handleClipBodyPointerDown(e, clip)}
           onPointerMove={handleClipBodyPointerMove}
@@ -1477,8 +1466,8 @@ export function Timeline({
   }
 
   // Cut tool — same split behavior as the Clips track (see handleClipsTrackPointerDown),
-  // just splitting whichever Camera piece is on top instead. Snaps onto a Clips piece
-  // boundary it's hovering near so the two actually land on the same ms.
+  // just splitting whichever Camera piece is on top instead. Snaps onto any other track's
+  // existing cut boundary it's hovering near so the two actually land on the same ms.
   function handleCameraTrackPointerDown(e: React.PointerEvent<HTMLDivElement>) {
     if (tool !== "cut") {
       startMarquee(e);
@@ -1487,7 +1476,7 @@ export function Timeline({
     const track = cameraTrackRef.current;
     if (!track) return;
     const rawMs = pctToMs(e.clientX, track, durationMs);
-    const snapMs = nearestPointMs(clipsBoundaryPoints(), rawMs, cutSnapToleranceMs(track));
+    const snapMs = nearestPointMs(crossTrackBoundaryPoints("camera"), rawMs, cutSnapToleranceMs(track));
     const editedMs = snapMs ?? rawMs;
     const clips = cameraClipsList();
     const resolved = resolveClipAt(clips, editedMs);
@@ -1500,7 +1489,7 @@ export function Timeline({
     const track = cameraTrackRef.current;
     if (!track) return;
     const ms = pctToMs(e.clientX, track, durationMs);
-    const snapMs = nearestPointMs(clipsBoundaryPoints(), ms, cutSnapToleranceMs(track));
+    const snapMs = nearestPointMs(crossTrackBoundaryPoints("camera"), ms, cutSnapToleranceMs(track));
     setCutGuide(snapMs !== null ? { track: "camera", ms: snapMs } : null);
   }
   function handleCameraTrackPointerLeave() {
@@ -1519,10 +1508,11 @@ export function Timeline({
       // master toggle itself is off (and the whole track isn't already dimmed/locked by
       // cameraHidden below) — same treatment as a hidden Cursor/muted Sound cut.
       const clipHidden = timeline.cameraClipOverrides[clip.id]?.hidden ?? cameraHidden;
+      const matching = !selected && isMatching("camera", clip.id);
       return (
         <div
           key={clip.id}
-          className={`tl-camera-fill${touching ? " tl-piece-touching" : ""}${selected ? " selected" : ""}${clipHidden ? " tl-segment-disabled" : ""}`}
+          className={`tl-camera-fill${touching ? " tl-piece-touching" : ""}${selected ? " selected" : ""}${matching ? " matching" : ""}${clipHidden ? " tl-segment-disabled" : ""}`}
           style={{ left: `${msToPct(clip.timelineStart, durationMs)}%`, width: `${msToPct(dur, durationMs)}%` }}
           onPointerDown={(e) => handleCameraClipBodyPointerDown(e, clip)}
           onPointerMove={handleCameraClipBodyPointerMove}
@@ -1596,6 +1586,9 @@ export function Timeline({
     }
   ) {
     const segments = effectiveSegments(rawSegments, durationMs);
+    // Same cut-tool snapping the Clips/Camera tracks have always had, now that these three
+    // take part in it too (see crossTrackBoundaryPoints): a cut lands exactly on a boundary
+    // already sitting on another track when the pointer is hovering close enough to one.
     function handleTrackPointerDown(e: React.PointerEvent<HTMLDivElement>) {
       if (tool !== "cut") {
         startMarquee(e);
@@ -1603,8 +1596,22 @@ export function Timeline({
       }
       const track = trackRef.current;
       if (!track) return;
+      const rawMs = pctToMs(e.clientX, track, durationMs);
+      const snapMs = nearestPointMs(crossTrackBoundaryPoints(trackKind), rawMs, cutSnapToleranceMs(track));
+      updateFn(splitSegmentAtPoint(rawSegments, snapMs ?? rawMs, durationMs));
+      setCutGuide(null);
+    }
+    function handleTrackPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+      if (handleMarqueeMove(e)) return;
+      if (tool !== "cut") return;
+      const track = trackRef.current;
+      if (!track) return;
       const ms = pctToMs(e.clientX, track, durationMs);
-      updateFn(splitSegmentAtPoint(rawSegments, ms, durationMs));
+      const snapMs = nearestPointMs(crossTrackBoundaryPoints(trackKind), ms, cutSnapToleranceMs(track));
+      setCutGuide(snapMs !== null ? { track: trackKind, ms: snapMs } : null);
+    }
+    function handleTrackPointerLeave() {
+      setCutGuide((g) => (g?.track === trackKind ? null : g));
     }
     function handleSegmentPointerDown(e: React.PointerEvent<HTMLDivElement>, segId: string) {
       if (tool === "cut") return; // let it bubble to the track's cut-mode split handler above
@@ -1620,17 +1627,19 @@ export function Timeline({
         className={`tl-track tl-track-${trackKind}${tool === "cut" ? " tl-track-cut-mode" : ""}`}
         ref={trackRef}
         onPointerDown={handleTrackPointerDown}
-        onPointerMove={handleMarqueeMove}
+        onPointerMove={handleTrackPointerMove}
         onPointerUp={handleMarqueeUp}
+        onPointerLeave={handleTrackPointerLeave}
       >
         {segments.map((seg, i) => {
           const selected = isSelected(trackKind, seg.id);
+          const matching = !selected && isMatching(trackKind, seg.id);
           const disabled = deleteOptions?.isDisabled(seg.settings) ?? false;
           const statusSuffix = disabled ? ` · ${deleteOptions!.disabledLabel}` : seg.settings ? " · customized" : "";
           return (
             <div
               key={seg.id}
-              className={`tl-segment-piece${selected ? " selected" : ""}${disabled ? " tl-segment-disabled" : ""}`}
+              className={`tl-segment-piece${selected ? " selected" : ""}${matching ? " matching" : ""}${disabled ? " tl-segment-disabled" : ""}`}
               style={{ left: `${msToPct(seg.startMs, durationMs)}%`, width: `${msToPct(seg.endMs - seg.startMs, durationMs)}%` }}
               onPointerDown={(e) => handleSegmentPointerDown(e, seg.id)}
               title={`${formatTime(seg.startMs)} – ${formatTime(seg.endMs)}${statusSuffix} — click to select (Ctrl/Cmd+click to add)`}
@@ -1654,8 +1663,115 @@ export function Timeline({
             </div>
           );
         })}
+        {renderCutGuide(trackKind)}
       </div>
     );
+  }
+
+  // Cross-track "matching cut" highlight — while exactly one piece is selected (any of the
+  // 6 below, on any track), every *other* track's piece covering that same stretch of time
+  // gets a lighter highlight, answering "which cut over there is this the same moment as."
+  // Pure visual and recomputed fresh each render from the current piece lists — there's no
+  // separate state to keep in sync, and it self-clears the instant the selection changes
+  // (a multi-selection or an empty one shows no matching at all, same as onSoleSelect above).
+  // Placed here (not up by discardFromSelection/isSelected, where it first lived) because
+  // matchableTrackItems reads clipsList/cameraClipsList, which in turn read alignedLengthMs
+  // — a `const` declared further down (right above clipsList itself) — and a function
+  // component's body runs top-to-bottom every render, so calling them from any earlier point
+  // hits alignedLengthMs's temporal dead zone and throws. Every render function this needs
+  // (clipsList, cameraClipsList, renderSegmentTrack's own effectiveSegments calls) is a
+  // hoisted `function` declaration, so only the *consts* they close over need to already be
+  // initialized — true anywhere after alignedLengthMs's own line, and definitely true here,
+  // the last thing before the JSX return.
+  const MATCHABLE_TRACKS: TrackKind[] = ["clips", "camera", "cursor", "layout", "sound", "zoom"];
+  function matchableTrackItems(track: TrackKind): { id: string; startMs: number; endMs: number }[] {
+    switch (track) {
+      case "clips":
+        return clipsList().map((c) => ({ id: c.id, startMs: c.timelineStart, endMs: c.timelineStart + (c.sourceEnd - c.sourceStart) }));
+      case "camera":
+        return cameraClipsList().map((c) => ({ id: c.id, startMs: c.timelineStart, endMs: c.timelineStart + (c.sourceEnd - c.sourceStart) }));
+      case "cursor":
+        return effectiveSegments(timeline.cursorSegments, durationMs).map((s) => ({ id: s.id, startMs: s.startMs, endMs: s.endMs }));
+      case "layout":
+        return effectiveSegments(timeline.layoutSegments, durationMs).map((s) => ({ id: s.id, startMs: s.startMs, endMs: s.endMs }));
+      case "sound":
+        return effectiveSegments(timeline.soundSegments, durationMs).map((s) => ({ id: s.id, startMs: s.startMs, endMs: s.endMs }));
+      case "zoom":
+        return timeline.zooms.map((z) => ({ id: z.id, startMs: z.startMs, endMs: z.startMs + z.durationMs }));
+      default:
+        return [];
+    }
+  }
+  const matchingKeys = new Set<string>();
+  if (selection.size === 1) {
+    const [soleKey] = selection;
+    const soleIdx = soleKey.indexOf(":");
+    const soleTrack = soleKey.slice(0, soleIdx) as TrackKind;
+    const soleId = soleKey.slice(soleIdx + 1);
+    if (MATCHABLE_TRACKS.includes(soleTrack)) {
+      const soleItem = matchableTrackItems(soleTrack).find((it) => it.id === soleId);
+      if (soleItem) {
+        for (const track of MATCHABLE_TRACKS) {
+          if (track === soleTrack) continue;
+          for (const it of matchableTrackItems(track)) {
+            if (it.endMs > soleItem.startMs && it.startMs < soleItem.endMs) matchingKeys.add(keyOf(track, it.id));
+          }
+        }
+      }
+    }
+  }
+
+  /** Every cut boundary on every track *except* `exceptTrack` — what that track's cut tool
+   *  snaps a new cut onto, so a cut made on any track can land exactly where one already
+   *  sits on another. The timeline's own two outer ends are dropped: nothing can be cut
+   *  there, so a guide pointing at them would only ever be a dead end. Called from the cut
+   *  tool's pointer handlers (which run well after this render pass finishes), never during
+   *  render itself — see the TDZ note above for why that distinction matters here. */
+  function crossTrackBoundaryPoints(exceptTrack: TrackKind): number[] {
+    const points: number[] = [];
+    for (const track of MATCHABLE_TRACKS) {
+      if (track === exceptTrack) continue;
+      for (const it of matchableTrackItems(track)) points.push(it.startMs, it.endMs);
+    }
+    return Array.from(new Set(points)).filter((ms) => ms > 0 && ms < durationMs);
+  }
+
+  // The other half of the cut guide — which tracks already have a cut exactly where the
+  // guide has snapped to. Deliberately identifies *tracks*, not pieces: a boundary is shared
+  // by the piece on either side of it, so highlighting the pieces themselves lights up two
+  // whole blocks for one cut and reads as "these two are involved" rather than "this line is
+  // the cut you'd match." Drawing the line itself on each track that has it (renderCutGuide
+  // below) says exactly that instead, and stays legible however narrow the pieces are.
+  const snapTargetTracks = new Set<TrackKind>();
+  if (cutGuide) {
+    for (const track of MATCHABLE_TRACKS) {
+      if (track === cutGuide.track) continue;
+      for (const it of matchableTrackItems(track)) {
+        if (it.startMs === cutGuide.ms || it.endMs === cutGuide.ms) {
+          snapTargetTracks.add(track);
+          break;
+        }
+      }
+    }
+  }
+
+  /** The cut guide on one track: the live "your cut lands here" line on whichever track the
+   *  cut tool is actually hovering, and a dimmer echo of it on every other track that
+   *  already has a cut at that same ms — the matched cuts, lined up vertically with it. */
+  function renderCutGuide(track: TrackKind) {
+    if (!cutGuide) return null;
+    const isHovered = cutGuide.track === track;
+    if (!isHovered && !snapTargetTracks.has(track)) return null;
+    return (
+      <div
+        className={`tl-cut-guide${isHovered ? "" : " tl-cut-guide-echo"}`}
+        style={{ left: `${msToPct(cutGuide.ms, durationMs)}%` }}
+      />
+    );
+  }
+
+  function isMatching(track: TrackKind, id: string): boolean {
+    return matchingKeys.has(keyOf(track, id));
   }
 
   const tickStep = pickTickStepMs(durationMs);
@@ -1730,9 +1846,7 @@ export function Timeline({
           onPointerLeave={handleClipsTrackPointerLeave}
         >
           {renderClipsPieces()}
-          {cutGuide?.track === "clips" && (
-            <div className="tl-cut-guide" style={{ left: `${msToPct(cutGuide.ms, durationMs)}%` }} />
-          )}
+          {renderCutGuide("clips")}
         </div>
       </div>
 
@@ -1769,10 +1883,13 @@ export function Timeline({
           onPointerMove={handleZoomTrackPointerMove}
           onPointerUp={handleMarqueeUp}
         >
-          {timeline.zooms.map((zoom) => (
+          {timeline.zooms.map((zoom) => {
+            const zoomSelected = isSelected("zoom", zoom.id);
+            const zoomMatching = !zoomSelected && isMatching("zoom", zoom.id);
+            return (
             <div
               key={zoom.id}
-              className={`tl-zoom-block${isSelected("zoom", zoom.id) ? " selected" : ""}`}
+              className={`tl-zoom-block${zoomSelected ? " selected" : ""}${zoomMatching ? " matching" : ""}`}
               style={{ left: `${msToPct(zoom.startMs, durationMs)}%`, width: `${msToPct(zoom.durationMs, durationMs)}%` }}
               onPointerDown={(e) => handleZoomBlockPointerDown(e, zoom)}
               onPointerMove={handleZoomBlockPointerMove}
@@ -1795,7 +1912,9 @@ export function Timeline({
                 <Trash2 size={12} />
               </button>
             </div>
-          ))}
+            );
+          })}
+          {renderCutGuide("zoom")}
         </div>
       </div>
 
@@ -1819,9 +1938,7 @@ export function Timeline({
           {!hasCamera ? null : (
             <>
               {renderCameraPieces()}
-              {cutGuide?.track === "camera" && (
-                <div className="tl-cut-guide" style={{ left: `${msToPct(cutGuide.ms, durationMs)}%` }} />
-              )}
+              {renderCutGuide("camera")}
             </>
           )}
         </div>

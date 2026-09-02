@@ -152,6 +152,20 @@
 .tl-camera-fill.selected {
   outline: 2px solid var(--accent); outline-offset: 1px; z-index: 3;
 }
+/* "Related to what you're doing right now" — either the cross-track echo of the current
+   selection (every other track's piece covering that same stretch of time, answering
+   "which cut over here is this the same moment as") or, while the cut tool is snapping,
+   the pieces the guide's boundary actually belongs to. See Timeline.tsx's matchingKeys /
+   snapTargetKeys, both read through isMatching. Never applied together with .selected on
+   the same piece — that one already has the solid outline above (see the `!selected &&`
+   guard on every isMatching call site). Insets the outline (negative offset) rather than
+   drawing it outside like .selected does: a piece spanning its whole track — an uncut
+   Cursor/Layout/Sound strip, most often — would otherwise draw its outline over the
+   track's own border, where it reads as nothing at all. */
+.tl-clip-base.matching,
+.tl-camera-fill.matching {
+  outline: 2px dashed var(--accent); outline-offset: -2px; z-index: 2;
+}
 /* Pieces tile the whole track, so their own cursor would otherwise mask the track's
    scissors cursor everywhere — inherit it instead while the cut tool is active. */
 .tl-track-cut-mode .tl-clip-base,
@@ -207,6 +221,7 @@
 .tl-track-sound .tl-segment-piece { background: linear-gradient(180deg, #6ee7b7, #059669); border-color: #047857; }
 .tl-segment-piece .tl-piece-time { color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .35); }
 .tl-segment-piece.selected { outline: 2px solid var(--accent); outline-offset: 1px; z-index: 3; opacity: 1; }
+.tl-segment-piece.matching { outline: 2px dashed var(--accent); outline-offset: -2px; z-index: 2; opacity: 1; }
 /* Hidden (Cursor/Camera) / muted (Sound) — dimmed and desaturated so a disabled stretch
    reads at a glance. Not scoped to .tl-segment-piece: a Camera piece (.tl-camera-fill)
    whose own clip override — or the Camera tab's master toggle — sets `hidden` gets the
@@ -232,6 +247,7 @@
 }
 .tl-zoom-block:active { cursor: grabbing; }
 .tl-zoom-block.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tl-zoom-block.matching { outline: 2px dashed var(--accent); outline-offset: -2px; }
 .tl-zoom-pct-badge { font-size: 9px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .35); pointer-events: none; }
 
 /* Invisible hover/drag target straddling the seam between two available pieces — wide
@@ -242,13 +258,23 @@
   cursor: ew-resize;
 }
 
-/* Shown while the cut tool hovers near a piece boundary already sitting on the other
-   track — a preview of "cut here and it'll land on the exact same point," before the
-   click happens. */
+/* Shown while the cut tool hovers near a cut boundary already sitting on any other track
+   — a preview of "cut here and it'll land on the exact same point," before the click
+   happens. Every cuttable track (Clips/Camera and Cursor/Layout/Sound alike) both shows
+   this and contributes its own boundaries as snap targets; the pieces that boundary
+   belongs to light up at the same time (see .matching / snapTargetKeys). z-index clears
+   the segment tracks' edge-to-edge pieces, which would otherwise cover it. */
 .tl-cut-guide {
   position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; z-index: 4;
   background: repeating-linear-gradient(180deg, var(--accent) 0 4px, transparent 4px 8px);
   box-shadow: 0 0 5px rgba(91, 75, 245, .7); pointer-events: none;
+}
+/* The same line drawn on the tracks that *already* have a cut at that ms — the ones the
+   hovered track's guide has snapped onto. Solid rather than dashed, and dimmer: it marks a
+   cut that exists, not the one about to be made, and the pair reading differently is what
+   makes "this new one lines up with that one" obvious at a glance. */
+.tl-cut-guide-echo {
+  background: var(--accent); opacity: .55; box-shadow: none;
 }
 
 .tl-playhead {
