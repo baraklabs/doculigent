@@ -16,10 +16,16 @@ const SHAPES: { id: CameraEditShape; label: string; icon: LucideIcon }[] = [
   { id: "rectangle-vertical", label: "Vertical", icon: RectangleVertical },
 ];
 
-const BLUR_LEVELS: { id: CameraBlurLevel; label: string }[] = [
-  { id: "none", label: "Off" },
-  { id: "soft", label: "Soft" },
-  { id: "aggressive", label: "Strong" },
+/** Rendered as one segmented control even though it's backed by two independent fields
+ *  (blur/removeBackground) — "remove" takes over from blur entirely (see
+ *  CameraEditSettings.removeBackground), so from the user's point of view there's really
+ *  just one "what happens behind me" choice. */
+type BackgroundMode = CameraBlurLevel | "remove";
+const BACKGROUND_MODES: { id: BackgroundMode; label: string }[] = [
+  { id: "none", label: "Show" },
+  { id: "soft", label: "Soft blur" },
+  { id: "aggressive", label: "Strong blur" },
+  { id: "remove", label: "Remove" },
 ];
 
 interface CameraEditPanelProps {
@@ -143,20 +149,70 @@ export function CameraEditPanel({
           <span className="camera-edit-slider-value">{camera.zoomPct}%</span>
         </label>
 
+        <label className="camera-edit-slider-row">
+          <span className="camera-edit-label">Crop top</span>
+          <input
+            type="range"
+            min={0}
+            max={45}
+            value={camera.cropTopPct}
+            onChange={(e) => patch({ cropTopPct: Number(e.target.value) })}
+          />
+          <span className="camera-edit-slider-value">{camera.cropTopPct}%</span>
+        </label>
+        <label className="camera-edit-slider-row">
+          <span className="camera-edit-label">Crop right</span>
+          <input
+            type="range"
+            min={0}
+            max={45}
+            value={camera.cropRightPct}
+            onChange={(e) => patch({ cropRightPct: Number(e.target.value) })}
+          />
+          <span className="camera-edit-slider-value">{camera.cropRightPct}%</span>
+        </label>
+        <label className="camera-edit-slider-row">
+          <span className="camera-edit-label">Crop bottom</span>
+          <input
+            type="range"
+            min={0}
+            max={45}
+            value={camera.cropBottomPct}
+            onChange={(e) => patch({ cropBottomPct: Number(e.target.value) })}
+          />
+          <span className="camera-edit-slider-value">{camera.cropBottomPct}%</span>
+        </label>
+        <label className="camera-edit-slider-row">
+          <span className="camera-edit-label">Crop left</span>
+          <input
+            type="range"
+            min={0}
+            max={45}
+            value={camera.cropLeftPct}
+            onChange={(e) => patch({ cropLeftPct: Number(e.target.value) })}
+          />
+          <span className="camera-edit-slider-value">{camera.cropLeftPct}%</span>
+        </label>
+
         <div className="camera-edit-section">
-          <span className="camera-edit-label">Background blur</span>
+          <span className="camera-edit-label">Background</span>
           <div className="camera-blur-segmented">
-            {BLUR_LEVELS.map((b) => (
-              <button
-                key={b.id}
-                type="button"
-                className={`camera-blur-seg-btn${camera.blur === b.id ? " active" : ""}`}
-                aria-pressed={camera.blur === b.id}
-                onClick={() => patch({ blur: b.id })}
-              >
-                {b.label}
-              </button>
-            ))}
+            {BACKGROUND_MODES.map((b) => {
+              const selected = camera.removeBackground ? "remove" : camera.blur;
+              return (
+                <button
+                  key={b.id}
+                  type="button"
+                  className={`camera-blur-seg-btn${selected === b.id ? " active" : ""}`}
+                  aria-pressed={selected === b.id}
+                  onClick={() =>
+                    b.id === "remove" ? patch({ removeBackground: true }) : patch({ removeBackground: false, blur: b.id })
+                  }
+                >
+                  {b.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       </fieldset>

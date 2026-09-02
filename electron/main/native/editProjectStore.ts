@@ -29,6 +29,11 @@ function overlayToCameraSettings(overlay: OverlayConfig): CameraEditSettings {
     cornerRadiusPct: DEFAULT_CAMERA_EDIT_SETTINGS.cornerRadiusPct,
     zoomPct: DEFAULT_CAMERA_EDIT_SETTINGS.zoomPct,
     blur: overlay.cameraBlur,
+    cropTopPct: DEFAULT_CAMERA_EDIT_SETTINGS.cropTopPct,
+    cropRightPct: DEFAULT_CAMERA_EDIT_SETTINGS.cropRightPct,
+    cropBottomPct: DEFAULT_CAMERA_EDIT_SETTINGS.cropBottomPct,
+    cropLeftPct: DEFAULT_CAMERA_EDIT_SETTINGS.cropLeftPct,
+    removeBackground: DEFAULT_CAMERA_EDIT_SETTINGS.removeBackground,
   };
 }
 

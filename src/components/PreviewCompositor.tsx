@@ -19,7 +19,7 @@ import { effectiveClips, resolveClipAt, sourceToEditedMs, splitClipAtSource, tot
 import type { TimelineClip } from "@shared/types/models";
 import { mediaUrl } from "@shared/constants/media";
 import { BACKGROUND_IMAGE_URLS, BACKGROUND_TEXTURE_URLS } from "../assets/backgrounds";
-import { applyCameraBlur, type CameraBlurHandle } from "../services/camera/cameraBlur";
+import { applyCameraBlur, startCameraSegmentation, type CameraBlurHandle, type CameraSegmentationHandle } from "../services/camera/cameraBlur";
 import type { TimelineTool } from "./Timeline";
 import "./PreviewCompositor.css";
 
@@ -519,9 +519,43 @@ function cameraBubbleSize(cam: CameraEditSettings, referenceBox: { w: number; h:
   return bubbleDimensions(cam.shape, (cam.sizePct / 100) * shorter);
 }
 
-/** Draws the camera as a shaped/sized bubble at an already-resolved origin. `zoomPct`
- *  crops into the center of the source feed before fitting it, the same crop-in idea as
- *  the Background tab's zoom. */
+let cameraCutoutScratch: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null = null;
+
+/** A background-removed camera frame can't be composited straight onto the main canvas
+ *  with destination-in the way the bubble outline/etc. are drawn elsewhere: the video is
+ *  drawn fully opaque first (there's no other way to get its pixels onto a canvas), which
+ *  already overwrites whatever screen/backdrop content sat underneath in that same spot —
+ *  destination-in afterward can only shrink the *camera* draw's own alpha, it can't bring
+ *  back pixel data the canvas no longer has. Worse, a canvas's alpha channel is typically
+ *  stored premultiplied, so zeroing alpha over already-opaque camera pixels drags their
+ *  RGB toward black too, rather than leaving anything meaningfully "transparent" to see
+ *  through — hence a black cutout instead of the screen recording showing through.
+ *  The fix is to build the masked cutout on its own scratch canvas (which starts empty
+ *  each frame, so destination-in there only ever erases pixels this same draw just put
+ *  down, never anything real), then blit the *finished*, already-transparent-where-it-
+ *  should-be result onto the main canvas with a normal source-over draw — which correctly
+ *  blends over whatever's still intact underneath instead of replacing it. */
+function getCameraCutoutScratch(w: number, h: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
+  if (!cameraCutoutScratch) {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
+    cameraCutoutScratch = { canvas, ctx };
+  }
+  const { canvas } = cameraCutoutScratch;
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  return cameraCutoutScratch;
+}
+
+/** Draws the camera as a shaped/sized bubble at an already-resolved origin. Per-side crop
+ *  narrows the source feed first, `zoomPct` then crops into the center of what's left —
+ *  same idea as the Background tab's screen crop/zoom. `mask`, when `removeBackground` is
+ *  on, is the live segmentation alpha (see startCameraSegmentation) — cropped/scaled to
+ *  line up with the same source rect as the video, then composited with destination-in so
+ *  only the person stays opaque, letting whatever's already painted behind the bubble
+ *  (screen recording, backdrop) show through the rest. */
 function drawCameraBubbleAt(
   ctx: CanvasRenderingContext2D,
   source: HTMLVideoElement,
@@ -529,7 +563,8 @@ function drawCameraBubbleAt(
   x: number,
   y: number,
   width: number,
-  height: number
+  height: number,
+  mask: HTMLCanvasElement | null
 ): void {
   const size = Math.min(width, height);
   const radius = cam.shape !== "round" ? (cam.cornerRadiusPct / 100) * (size / 2) : 0;
@@ -545,25 +580,53 @@ function drawCameraBubbleAt(
 
   const camW = source.videoWidth || 1;
   const camH = source.videoHeight || 1;
+  const cropL = (cam.cropLeftPct / 100) * camW;
+  const cropR = (cam.cropRightPct / 100) * camW;
+  const cropT = (cam.cropTopPct / 100) * camH;
+  const cropB = (cam.cropBottomPct / 100) * camH;
+  const cropW = Math.max(1, camW - cropL - cropR);
+  const cropH = Math.max(1, camH - cropT - cropB);
   const zoom = Math.max(1, cam.zoomPct / 100);
-  const srcCropW = camW / zoom;
-  const srcCropH = camH / zoom;
-  const srcCropX = (camW - srcCropW) / 2;
-  const srcCropY = (camH - srcCropH) / 2;
+  const srcCropW = cropW / zoom;
+  const srcCropH = cropH / zoom;
+  const srcCropX = cropL + (cropW - srcCropW) / 2;
+  const srcCropY = cropT + (cropH - srcCropH) / 2;
   const scale = Math.max(width / srcCropW, height / srcCropH);
   const drawW = srcCropW * scale;
   const drawH = srcCropH * scale;
-  ctx.drawImage(
-    source,
-    srcCropX,
-    srcCropY,
-    srcCropW,
-    srcCropH,
-    x + (width - drawW) / 2,
-    y + (height - drawH) / 2,
-    drawW,
-    drawH
-  );
+
+  if (cam.removeBackground && mask) {
+    // Built on its own scratch canvas — see getCameraCutoutScratch for why this can't be
+    // masked directly against the main canvas.
+    const scratchW = Math.max(1, Math.round(width));
+    const scratchH = Math.max(1, Math.round(height));
+    const { canvas: scratch, ctx: scratchCtx } = getCameraCutoutScratch(scratchW, scratchH);
+    const localX = (width - drawW) / 2;
+    const localY = (height - drawH) / 2;
+    scratchCtx.clearRect(0, 0, scratchW, scratchH);
+    scratchCtx.drawImage(source, srcCropX, srcCropY, srcCropW, srcCropH, localX, localY, drawW, drawH);
+    // mask covers the same full camW x camH frame, just downscaled (see
+    // startCameraSegmentation) — its crop rect is the same fractional region, just
+    // rescaled to the mask's own smaller dimensions.
+    const maskScaleX = mask.width / camW;
+    const maskScaleY = mask.height / camH;
+    scratchCtx.globalCompositeOperation = "destination-in";
+    scratchCtx.drawImage(
+      mask,
+      srcCropX * maskScaleX,
+      srcCropY * maskScaleY,
+      srcCropW * maskScaleX,
+      srcCropH * maskScaleY,
+      localX,
+      localY,
+      drawW,
+      drawH
+    );
+    scratchCtx.globalCompositeOperation = "source-over";
+    ctx.drawImage(scratch, x, y);
+  } else {
+    ctx.drawImage(source, srcCropX, srcCropY, srcCropW, srcCropH, x + (width - drawW) / 2, y + (height - drawH) / 2, drawW, drawH);
+  }
   ctx.restore();
 
   ctx.save();
@@ -823,6 +886,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   const audioOnlyRef = useRef<HTMLAudioElement | null>(null);
   const blurVideoRef = useRef<HTMLVideoElement | null>(null);
   const blurHandleRef = useRef<CameraBlurHandle | null>(null);
+  const segmentationRef = useRef<CameraSegmentationHandle | null>(null);
   const rafRef = useRef(0);
   const rippleRef = useRef<ClickRipple | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -1200,12 +1264,15 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   }, [screenFilePath, cameraFilePath, audioFilePath]);
 
   // Background blur — rebuild the blurred camera output whenever the level changes.
+  // Skipped while removeBackground is on: it takes over from blur entirely (see the
+  // segmentation effect below), and a capture-stream video can't carry alpha anyway, so
+  // there'd be nothing useful to build here.
   useEffect(() => {
     blurHandleRef.current?.stop();
     blurHandleRef.current = null;
     blurVideoRef.current = null;
     const cameraVideo = cameraVideoRef.current;
-    if (!cameraVideo || camera.blur === "none") return;
+    if (!cameraVideo || camera.removeBackground || camera.blur === "none") return;
     const captureable = cameraVideo as HTMLVideoElement & { captureStream?: () => MediaStream };
     if (!captureable.captureStream) return;
     const handle = applyCameraBlur(captureable.captureStream(), camera.blur);
@@ -1219,7 +1286,22 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     return () => {
       handle.stop();
     };
-  }, [camera.blur, cameraFilePath]);
+  }, [camera.blur, camera.removeBackground, cameraFilePath]);
+
+  // Background removal — runs live segmentation directly against the raw camera video
+  // (see startCameraSegmentation) whenever it's on; draw() reads its latest mask each
+  // frame via segmentationRef and composites it onto the camera bubble itself.
+  useEffect(() => {
+    segmentationRef.current?.stop();
+    segmentationRef.current = null;
+    const cameraVideo = cameraVideoRef.current;
+    if (!cameraVideo || !camera.removeBackground) return;
+    segmentationRef.current = startCameraSegmentation(cameraVideo);
+    return () => {
+      segmentationRef.current?.stop();
+      segmentationRef.current = null;
+    };
+  }, [camera.removeBackground, cameraFilePath]);
 
   // Draw loop — background fill, screen content (padded/rounded), camera bubble on top.
   useEffect(() => {
@@ -1823,7 +1905,8 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
 
       const source = cameraSource;
       if (cameraRect && source) {
-        drawCameraBubbleAt(ctx, source, cam, cameraRect.x, cameraRect.y, cameraRect.w, cameraRect.h);
+        const mask = cam.removeBackground ? (segmentationRef.current?.getMask() ?? null) : null;
+        drawCameraBubbleAt(ctx, source, cam, cameraRect.x, cameraRect.y, cameraRect.w, cameraRect.h, mask);
       }
 
       // Drag/resize affordance — a faint outline plus a handle at each of a box's 4

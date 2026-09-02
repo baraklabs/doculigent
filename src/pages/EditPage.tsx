@@ -140,7 +140,9 @@ export function EditPage() {
   // default anymore. Still waits on `media` purely so this doesn't race the media fetch.
   useEffect(() => {
     if (id && project && media && cameraLoadedForIdRef.current !== id) {
-      setCamera(project.camera ?? DEFAULT_CAMERA_EDIT_SETTINGS);
+      // Merged with defaults, not just falling back to them wholesale — see the identical
+      // note on background below (project.background ?? ...).
+      setCamera({ ...DEFAULT_CAMERA_EDIT_SETTINGS, ...(project.camera ?? {}) });
       cameraLoadedForIdRef.current = id;
     }
   }, [id, project, media]);

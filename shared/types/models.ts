@@ -167,6 +167,19 @@ export interface CameraEditSettings {
    *  effect, same idea as the Background tab's screen zoom. */
   zoomPct: number; // 100-300
   blur: CameraBlurLevel;
+  /** Crops the camera feed from each edge before zoom/fit is applied, each as a % of the
+   *  source feed's own width (left/right) or height (top/bottom), 0-45 — same idea as the
+   *  Background tab's screen crop. Composes with `removeBackground`: the mask is cropped
+   *  the same way, so the segmented cutout still lines up with the cropped frame. */
+  cropTopPct: number;
+  cropRightPct: number;
+  cropBottomPct: number;
+  cropLeftPct: number;
+  /** Segments the person out of the feed live (see startCameraSegmentation) and draws
+   *  only them — the background is cut away entirely rather than blurred, letting
+   *  whatever's already behind the bubble (screen recording, backdrop) show through.
+   *  Takes over from `blur` while on, which becomes moot (nothing left to blur behind). */
+  removeBackground: boolean;
 }
 
 export type CursorStyle = "default" | "arrow" | "circle" | "hand" | "crosshair" | "mouse-pointer" | "mouse-simple";
@@ -370,6 +383,11 @@ export const DEFAULT_CAMERA_EDIT_SETTINGS: CameraEditSettings = {
   cornerRadiusPct: 20,
   zoomPct: 100, // 100 = the slider's own "no zoom" floor (its range is 100-300)
   blur: "none",
+  cropTopPct: 0,
+  cropRightPct: 0,
+  cropBottomPct: 0,
+  cropLeftPct: 0,
+  removeBackground: false,
 };
 
 export const DEFAULT_CURSOR_EDIT_SETTINGS: CursorEditSettings = {
