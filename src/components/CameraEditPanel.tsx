@@ -7,6 +7,7 @@ import {
   type EditProjectMedia,
 } from "@shared/types/models";
 import { ResetRow } from "./ResetRow";
+import { CutChipRail, type CutChipRailCut } from "./CutChipRail";
 import "./CameraEditPanel.css";
 
 const SHAPES: { id: CameraEditShape; label: string; icon: LucideIcon }[] = [
@@ -39,6 +40,12 @@ interface CameraEditPanelProps {
   /** Global resets — same "original"/"default" distinction, applied across every tab. */
   onResetAllToOriginal: () => void;
   onResetAllToDefault: () => void;
+  /** Master/Cut chip rail — `camera`/`onChange` above always mean "whatever's currently
+   *  active" (master or a specific cut's override), routed by EditPage. */
+  cuts: CutChipRailCut[];
+  activeCutId: string;
+  onActiveCutChange: (id: string) => void;
+  onClearOverride?: () => void;
 }
 
 export function CameraEditPanel({
@@ -49,6 +56,10 @@ export function CameraEditPanel({
   onChange,
   onResetAllToOriginal,
   onResetAllToDefault,
+  cuts,
+  activeCutId,
+  onActiveCutChange,
+  onClearOverride,
 }: CameraEditPanelProps) {
   function patch(partial: Partial<CameraEditSettings>) {
     onChange({ ...camera, ...partial });
@@ -76,6 +87,8 @@ export function CameraEditPanel({
 
   return (
     <div className="camera-edit-panel">
+      <CutChipRail showMaster cuts={cuts} activeId={activeCutId} onSelect={onActiveCutChange} onClearOverride={onClearOverride} />
+
       <div className="camera-edit-row">
         <span className="camera-edit-label">Camera</span>
         <button

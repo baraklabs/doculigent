@@ -6,6 +6,18 @@
 .cursor-edit-section { display: flex; flex-direction: column; gap: 8px; }
 .cursor-edit-section.disabled { opacity: .45; }
 
+.cursor-edit-row { display: flex; align-items: center; justify-content: space-between; }
+.cursor-edit-hide-btn {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+  padding: 5px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+}
+.cursor-edit-hide-btn:hover { border-color: var(--accent); color: var(--text); }
+.cursor-edit-hide-btn.on { color: var(--danger); border-color: var(--danger); background: rgba(179, 38, 30, .08); }
+
+.cursor-edit-fieldset { border: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 18px; }
+.cursor-edit-fieldset:disabled { opacity: .45; }
+
 .cursor-style-grid { display: grid; grid-template-columns: repeat(auto-fill, 64px); gap: 6px; width: 100%; }
 .cursor-style-tile {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;

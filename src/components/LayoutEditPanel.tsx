@@ -18,6 +18,7 @@ import {
   type LayoutFormat,
 } from "@shared/types/models";
 import { ResetRow } from "./ResetRow";
+import { CutChipRail, MASTER_CUT_ID, type CutChipRailCut } from "./CutChipRail";
 import "./LayoutEditPanel.css";
 
 const FORMATS: { id: LayoutFormat; label: string; sublabel: string; icon: LucideIcon }[] = [
@@ -184,6 +185,10 @@ interface LayoutEditPanelProps {
   onChange: (next: LayoutEditSettings) => void;
   onResetAllToOriginal: () => void;
   onResetAllToDefault: () => void;
+  cuts: CutChipRailCut[];
+  activeCutId: string;
+  onActiveCutChange: (id: string) => void;
+  onClearOverride?: () => void;
 }
 
 export function LayoutEditPanel({
@@ -193,7 +198,12 @@ export function LayoutEditPanel({
   onChange,
   onResetAllToOriginal,
   onResetAllToDefault,
+  cuts,
+  activeCutId,
+  onActiveCutChange,
+  onClearOverride,
 }: LayoutEditPanelProps) {
+  const isMaster = activeCutId === MASTER_CUT_ID;
   function patch(partial: Partial<LayoutEditSettings>) {
     onChange({ ...layout, ...partial });
   }
@@ -226,6 +236,8 @@ export function LayoutEditPanel({
 
   return (
     <div className="layout-edit-panel">
+      <CutChipRail showMaster cuts={cuts} activeId={activeCutId} onSelect={onActiveCutChange} onClearOverride={onClearOverride} />
+
       <div className="layout-edit-section">
         <span className="layout-edit-label">Format</span>
         <div className="layout-mode-grid">
@@ -314,9 +326,9 @@ export function LayoutEditPanel({
       )}
 
       <p className="layout-edit-hint">
-        Drag the screen and camera directly in the preview to place them, or drag their bottom-right corner to
-        resize — they snap to guide lines at the canvas edges and center, and can be dragged partially or fully
-        out of frame. Camera, sound, and cursor each render exactly as set on their own tab.
+        {isMaster
+          ? "Drag the screen and camera directly in the preview to place them, or drag their bottom-right corner to resize — they snap to guide lines at the canvas edges and center, and can be dragged partially or fully out of frame. Camera, sound, and cursor each render exactly as set on their own tab."
+          : "Quick layouts apply to this cut only. Dragging the screen/camera directly in the preview still repositions Main, not this cut — use a quick layout above to set this cut's own position."}
       </p>
 
       <ResetRow

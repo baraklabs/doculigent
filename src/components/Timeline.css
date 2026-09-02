@@ -35,13 +35,23 @@
 }
 .tl-row-header-clips,
 .tl-row-header-zoom,
-.tl-row-header-camera {
+.tl-row-header-camera,
+.tl-row-header-cursor,
+.tl-row-header-layout,
+.tl-row-header-sound {
   display: flex; align-items: center; justify-content: center; width: 100%;
   border-radius: 6px; padding: 3px 7px; border: 1px solid transparent;
 }
 .tl-row-header-clips { color: #1e40af; background: #dbeafe; border-color: #bfdbfe; }
 .tl-row-header-zoom { color: #6b21a8; background: #f3e8ff; border-color: #e9d5ff; gap: 3px; padding: 3px 5px; }
 .tl-row-header-camera { color: #0f766e; background: #ccfbf1; border-color: #99f6e4; }
+.tl-row-header-cursor { color: #92400e; background: #fef3c7; border-color: #fde68a; }
+.tl-row-header-layout { color: #334155; background: #f1f5f9; border-color: #e2e8f0; }
+.tl-row-header-sound { color: #065f46; background: #d1fae5; border-color: #a7f3d0; }
+
+/* Highlights whichever row's track matches the currently-open edit tab (see Timeline's
+   `activeTrack` prop) — purely a visual cue, every row stays interactive regardless. */
+.tl-row-focused { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* "Magic" auto-zoom button, next to the Zoom row's label — regenerates the whole Zoom
    track from recorded clicks (see Timeline.tsx's autoZoomFromClicks). */
@@ -89,6 +99,9 @@
 .tl-track-clips { cursor: pointer; background: transparent; }
 .tl-track-zoom { cursor: copy; }
 .tl-track-camera { cursor: pointer; background: transparent; }
+.tl-track-cursor,
+.tl-track-layout,
+.tl-track-sound { cursor: pointer; background: transparent; }
 .tl-track-cut-mode {
   /* Lucide's "scissors-line-dashed" icon, rotated -90deg so the dashed cut line (originally
      trailing right) points up toward the hotspot and the blade handles hang below. */
@@ -174,8 +187,41 @@
   opacity: 0; pointer-events: none; transition: opacity .1s; z-index: 4;
 }
 .tl-clip-base:hover .tl-piece-delete,
-.tl-camera-fill:hover .tl-piece-delete { opacity: 1; pointer-events: auto; }
+.tl-camera-fill:hover .tl-piece-delete,
+.tl-zoom-block:hover .tl-piece-delete { opacity: 1; pointer-events: auto; }
 .tl-piece-delete:hover { background: rgba(239, 68, 68, .12); filter: none; }
+
+/* Cursor/Layout/Sound tracks — config-only TimelineSegments that always tile the whole
+   track edge to edge (no gaps, nothing to trim/drag — see Timeline.tsx's
+   renderSegmentTrack). Each track's pieces are tinted to match its own row header color
+   (same gradient-fill treatment as .tl-clip-base/.tl-camera-fill/.tl-zoom-block above);
+   alternating opacity distinguishes adjacent segments at a glance, and
+   .tl-segment-boundary draws the actual cut line between them. */
+.tl-segment-piece {
+  position: absolute; top: 0; bottom: 0; cursor: pointer;
+  border-width: 1px; border-style: solid;
+}
+.tl-segment-piece:nth-child(even) { opacity: .72; }
+.tl-track-cursor .tl-segment-piece { background: linear-gradient(180deg, #fde68a, #d97706); border-color: #b45309; }
+.tl-track-layout .tl-segment-piece { background: linear-gradient(180deg, #cbd5e1, #475569); border-color: #334155; }
+.tl-track-sound .tl-segment-piece { background: linear-gradient(180deg, #6ee7b7, #059669); border-color: #047857; }
+.tl-segment-piece .tl-piece-time { color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .35); }
+.tl-segment-piece.selected { outline: 2px solid var(--accent); outline-offset: 1px; z-index: 3; opacity: 1; }
+/* Hidden (Cursor/Camera) / muted (Sound) — dimmed and desaturated so a disabled stretch
+   reads at a glance. Not scoped to .tl-segment-piece: a Camera piece (.tl-camera-fill)
+   whose own clip override — or the Camera tab's master toggle — sets `hidden` gets the
+   same treatment (see renderCameraPieces), on top of Cursor/Sound's hover-delete-in-place.
+   Comes after every other piece-background rule (incl. the even/odd alternation and
+   .selected) so it always wins regardless of track/index/selection. */
+.tl-segment-disabled,
+.tl-camera-fill.tl-segment-disabled { opacity: .32; filter: grayscale(.6); }
+.tl-segment-disabled.selected { opacity: .55; }
+.tl-segment-boundary {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px;
+  background: rgba(255, 255, 255, .85); box-shadow: 0 0 2px rgba(0, 0, 0, .4);
+}
+.tl-track-cut-mode .tl-segment-piece { cursor: inherit; }
+.tl-segment-piece:hover .tl-piece-delete { opacity: 1; pointer-events: auto; }
 
 .tl-zoom-block {
   position: absolute; top: 3px; bottom: 3px; min-width: 10px; cursor: grab;
@@ -187,21 +233,6 @@
 .tl-zoom-block:active { cursor: grabbing; }
 .tl-zoom-block.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tl-zoom-pct-badge { font-size: 9px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .35); pointer-events: none; }
-
-.tl-zoom-toolbar {
-  position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 10;
-  display: flex; align-items: center; gap: 3px; white-space: nowrap;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
-  padding: 4px; box-shadow: 0 6px 18px rgba(30, 30, 60, .16);
-}
-.tl-zoom-toolbar button {
-  font-size: 10px; font-weight: 600; color: var(--muted);
-  background: transparent; border: none; border-radius: 5px; padding: 4px 6px;
-}
-.tl-zoom-toolbar button:hover { background: var(--bg); }
-.tl-zoom-toolbar button.active { background: var(--accent); color: #fff; }
-.tl-zoom-remove { display: flex; align-items: center; justify-content: center; color: var(--danger) !important; }
-.tl-zoom-remove:hover { background: rgba(239, 68, 68, .12) !important; }
 
 /* Invisible hover/drag target straddling the seam between two available pieces — wide
    enough to hit with a pointer even though the pieces themselves butt up with no gap.

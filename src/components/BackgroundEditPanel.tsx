@@ -24,6 +24,7 @@ import { mediaUrl } from "@shared/constants/media";
 import { BACKGROUND_IMAGE_URLS, BACKGROUND_TEXTURE_URLS } from "../assets/backgrounds";
 import { EditProjectService } from "../services/editProjects/EditProjectService";
 import { ResetRow } from "./ResetRow";
+import { CutChipRail, MASTER_CUT_ID, type CutChipRailCut } from "./CutChipRail";
 import "./BackgroundEditPanel.css";
 
 const FILLS: { id: BackgroundFill; label: string; icon: LucideIcon }[] = [
@@ -67,6 +68,10 @@ interface BackgroundEditPanelProps {
   onScreenSizeChange: (sizePct: number, heightPct: number) => void;
   onResetAllToOriginal: () => void;
   onResetAllToDefault: () => void;
+  cuts: CutChipRailCut[];
+  activeCutId: string;
+  onActiveCutChange: (id: string) => void;
+  onClearOverride?: () => void;
 }
 
 export function BackgroundEditPanel({
@@ -78,8 +83,13 @@ export function BackgroundEditPanel({
   onScreenSizeChange,
   onResetAllToOriginal,
   onResetAllToDefault,
+  cuts,
+  activeCutId,
+  onActiveCutChange,
+  onClearOverride,
 }: BackgroundEditPanelProps) {
   const [importing, setImporting] = useState(false);
+  const isMaster = activeCutId === MASTER_CUT_ID;
   function patch(partial: Partial<BackgroundEditSettings>) {
     onChange({ ...background, ...partial });
   }
@@ -101,6 +111,8 @@ export function BackgroundEditPanel({
 
   return (
     <div className="background-edit-panel">
+      <CutChipRail showMaster cuts={cuts} activeId={activeCutId} onSelect={onActiveCutChange} onClearOverride={onClearOverride} />
+
       <div className="background-edit-section">
         <span className="background-edit-label">Backdrop</span>
         <div className="background-fill-grid">
@@ -304,6 +316,9 @@ export function BackgroundEditPanel({
         />
         <span className="background-edit-slider-value">{Math.round((screenSizePct + screenHeightPct) / 2)}%</span>
       </label>
+      {!isMaster && (
+        <p className="background-edit-hint">Size positions the screen box for the whole recording (set on the Layout tab), not just this cut.</p>
+      )}
 
       <div className="background-edit-section">
         {OS_CHROME_CROPS.map((chrome) => {

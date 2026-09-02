@@ -1,0 +1,51 @@
+/* Wraps the scrollable chip row plus whatever sits below it (empty-state hint, "Reset to
+   Main" button) — kept as a normal block-flow column so those can wrap onto their own line
+   on a narrow sidebar, rather than fighting the chips for width inside the row's own
+   `white-space: nowrap` and getting visually clipped. */
+.cut-chip-rail-wrap {
+  display: flex; flex-direction: column; gap: 6px;
+  padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--border);
+}
+
+/* The "scrollable small rectangle" — horizontally-scrolling pill row at the top of every
+   edit panel (Screen/Cursor/Camera/Layout/Sound/Zoom). No "+" button: a new cut/segment is
+   always created via the Timeline's own Cut tool (clicking that track at the playhead) —
+   one mental model across every track instead of a second, redundant "create a cut" path.
+   This list just reflects whatever's currently on the Timeline, live. flex-shrink: 0 and an
+   explicit min-height keep it from ever being squeezed to nothing by a constrained
+   ancestor — a chip is a scroll target, never something that should get clipped. */
+.cut-chip-rail {
+  flex: 0 0 auto; min-height: 28px;
+  display: flex; align-items: center; gap: 6px; overflow-x: auto; overflow-y: hidden; white-space: nowrap;
+  scrollbar-width: thin;
+}
+
+.cut-chip-rail-empty {
+  font-size: 11px; color: var(--muted); padding: 6px 2px 10px; border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.cut-chip {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 600; line-height: 1.4; color: var(--muted);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 999px;
+  padding: 5px 12px; cursor: pointer; white-space: nowrap;
+}
+.cut-chip:hover { background: var(--border); color: var(--text); }
+.cut-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Marks a cut/segment whose settings have actually diverged from Main — a quick visual
+   scan of the rail shows which cuts have been customized. */
+.cut-chip-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: 0 0 auto;
+}
+
+.cut-chip-hint { font-size: 10px; color: var(--muted); padding: 0 4px; white-space: normal; }
+
+.cut-chip-clear-btn {
+  align-self: flex-start; display: flex; align-items: center; gap: 4px;
+  font-size: 10px; font-weight: 600; color: var(--muted);
+  background: transparent; border: 1px dashed var(--border-strong); border-radius: 999px;
+  padding: 4px 10px; cursor: pointer; white-space: nowrap;
+}
+.cut-chip-clear-btn:hover { background: var(--bg); color: var(--text); }

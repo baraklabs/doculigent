@@ -6,6 +6,7 @@ import {
   ImageIcon,
   LayoutTemplate,
   Volume2,
+  ZoomIn,
   FolderOpen,
   Upload,
   Check,
@@ -20,9 +21,11 @@ import { CursorEditPanel } from "../components/CursorEditPanel";
 import { BackgroundEditPanel } from "../components/BackgroundEditPanel";
 import { SoundEditPanel } from "../components/SoundEditPanel";
 import { LayoutEditPanel } from "../components/LayoutEditPanel";
+import { ZoomEditPanel } from "../components/ZoomEditPanel";
+import { MASTER_CUT_ID, type CutChipRailCut } from "../components/CutChipRail";
 import { PreviewCompositor, type PreviewCompositorHandle } from "../components/PreviewCompositor";
 import { ExportDialog } from "../components/ExportDialog";
-import { Timeline, type TimelineTool } from "../components/Timeline";
+import { Timeline, type TimelineTool, type TrackKind } from "../components/Timeline";
 import {
   useCreateEditProject,
   useEditProject,
@@ -48,11 +51,17 @@ import {
   type CursorEditSettings,
   type SoundEditSettings,
   type LayoutEditSettings,
+  type TimelineClip,
   type TimelineEditSettings,
+  type TimelineSegment,
+  type TimelineZoomStyle,
 } from "@shared/types/models";
+import { effectiveClips } from "@shared/lib/timelineClips";
+import { setSegmentSettings } from "@shared/lib/timelineSegments";
+import { normalizeTimelineZooms, removeZoom as removeZoomLib, setZoomPct as setZoomPctLib, setZoomStyle as setZoomStyleLib } from "@shared/lib/timelineZooms";
 import "./EditPage.css";
 
-type EditTab = "camera" | "cursor" | "background" | "layout" | "sound";
+type EditTab = "camera" | "cursor" | "background" | "layout" | "sound" | "zoom";
 
 /** A fresh project's (and "Reset to default"'s) starting crop — trims off roughly where
  *  this platform's own OS chrome sits, so an unedited recording doesn't show it by
@@ -88,7 +97,37 @@ const TABS: { id: EditTab; label: string; icon: LucideIcon }[] = [
   { id: "camera", label: "Camera", icon: Camera },
   { id: "layout", label: "Layout", icon: LayoutTemplate },
   { id: "sound", label: "Sound", icon: Volume2 },
+  { id: "zoom", label: "Zoom", icon: ZoomIn },
 ];
+
+/** Maps an edit tab to the Timeline track it edits — used for the Timeline's `activeTrack`
+ *  row highlight. */
+const TAB_TRACK: Record<EditTab, TrackKind> = {
+  background: "clips",
+  cursor: "cursor",
+  camera: "camera",
+  layout: "layout",
+  sound: "sound",
+  zoom: "zoom",
+};
+
+/** Chip-rail entries for a Clips/Camera track's real cuts (raw `clips`/`cameraClips` —
+ *  NOT effectiveClips' fabricated single-piece default, which would otherwise show a
+ *  phantom "Cut 1" for a track that hasn't actually been split yet). Sorted by
+ *  `timelineStart` so the numbering stays stable/meaningful even though the underlying
+ *  array's own order doubles as z-stacking order (see TimelineClip's doc comment). */
+function clipCuts(clips: TimelineClip[], overrides: Record<string, unknown>): CutChipRailCut[] {
+  return [...clips]
+    .sort((a, b) => a.timelineStart - b.timelineStart)
+    .map((c, i) => ({ id: c.id, label: `Cut ${i + 1}`, hasOverride: c.id in overrides }));
+}
+
+/** Chip-rail entries for a Cursor/Layout/Sound track's real segments (raw, same "empty
+ *  means not cut yet" convention as clipCuts above) — already in timeline order by
+ *  construction (splitSegmentAtPoint/deleteSegment never reorder). */
+function segmentCuts<T>(segments: TimelineSegment<T>[]): CutChipRailCut[] {
+  return segments.map((s, i) => ({ id: s.id, label: `Cut ${i + 1}`, hasOverride: s.settings !== null }));
+}
 const EDIT_TAB_IDS = TABS.map((t) => t.id) as readonly string[];
 
 // Constrain drag so neither pane can be squeezed to uselessness.
@@ -195,7 +234,9 @@ export function EditPage() {
   const cursorLoadedForIdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (id && project && cursorLoadedForIdRef.current !== id) {
-      setCursor(project.cursor ?? DEFAULT_CURSOR_EDIT_SETTINGS);
+      // Merged with defaults, not just falling back to them wholesale — projects saved
+      // before `hidden` existed still have a `cursor` object, just missing that field.
+      setCursor({ ...DEFAULT_CURSOR_EDIT_SETTINGS, ...(project.cursor ?? {}) });
       cursorLoadedForIdRef.current = id;
     }
   }, [id, project]);
@@ -332,7 +373,10 @@ export function EditPage() {
     if (id && project && timelineLoadedForIdRef.current !== id) {
       // Merged with defaults, not just falling back to them wholesale — projects saved
       // before cameraHides existed still have a `timeline` object, just missing that field.
-      setTimeline({ ...DEFAULT_TIMELINE_EDIT_SETTINGS, ...(project.timeline ?? {}) });
+      // normalizeTimelineZooms back-fills fields added to TimelineZoom itself after some
+      // projects were already saved (style, and pct's clamp range) — the spread above only
+      // fills in a missing top-level key, not fields missing from existing zoom entries.
+      setTimeline({ ...DEFAULT_TIMELINE_EDIT_SETTINGS, ...(project.timeline ?? {}), zooms: normalizeTimelineZooms(project.timeline?.zooms ?? []) });
       timelineLoadedForIdRef.current = id;
     }
   }, [id, project]);
@@ -359,6 +403,32 @@ export function EditPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Master/Cut chip-rail selection, one per tab — MASTER_CUT_ID means "editing the tab's
+  // own master settings" (the usual `camera`/`cursor`/etc. state above); any other value
+  // is a real TimelineClip/TimelineSegment id whose override is being edited instead (see
+  // the cuts/activeXCut/onActiveXCutChange wiring right before the render below). Zoom has
+  // no master concept (see ZoomEditPanel) so its own selection is nullable instead.
+  const [activeScreenCut, setActiveScreenCut] = useState(MASTER_CUT_ID);
+  const [activeCursorCut, setActiveCursorCut] = useState(MASTER_CUT_ID);
+  const [activeCameraCut, setActiveCameraCut] = useState(MASTER_CUT_ID);
+  const [activeLayoutCut, setActiveLayoutCut] = useState(MASTER_CUT_ID);
+  const [activeSoundCut, setActiveSoundCut] = useState(MASTER_CUT_ID);
+  const [activeZoomId, setActiveZoomId] = useState<string | null>(null);
+  // Set whenever a chip-rail selection changes, so the Timeline highlights the matching
+  // piece too (one-directional — see Timeline's own `focusRequest` prop doc comment).
+  const [timelineFocusRequest, setTimelineFocusRequest] = useState<{ track: TrackKind; id: string } | null>(null);
+
+  // A stray chip selection from the previous project must never carry over onto a newly
+  // loaded one (its clip/segment/zoom ids mean nothing there).
+  useEffect(() => {
+    setActiveScreenCut(MASTER_CUT_ID);
+    setActiveCursorCut(MASTER_CUT_ID);
+    setActiveCameraCut(MASTER_CUT_ID);
+    setActiveLayoutCut(MASTER_CUT_ID);
+    setActiveSoundCut(MASTER_CUT_ID);
+    setActiveZoomId(null);
+  }, [id]);
 
   // Undo/redo — a single history spanning every tab's settings and the Timeline (cuts,
   // zooms, camera hides), since from the user's perspective it's all "the edit," not five
@@ -758,6 +828,162 @@ export function EditPage() {
     localStorage.setItem(LEFT_PCT_KEY, String(DEFAULT_LEFT_PCT));
   }, []);
 
+  // Bundles everything a panel needs to work against either its tab's master settings or
+  // one specific cut's override, given the chip-rail selection for that tab — shared by
+  // the Screen/Camera tabs (footage pieces, override kept in a side map keyed by clip id)
+  // and by clipCutRouting/segmentCutRouting below. `activeId` is re-validated against the
+  // live `cuts` list every render (falling back to master) so a stale selection — e.g. the
+  // active cut got deleted elsewhere — self-heals instead of pointing at nothing.
+  interface CutRouting<T> {
+    cuts: CutChipRailCut[];
+    activeCutId: string;
+    value: T;
+    onChange: (next: T) => void;
+    onActiveCutChange: (id: string) => void;
+    onClearOverride: () => void;
+  }
+  function clipCutRouting<T>(
+    track: TrackKind,
+    clips: TimelineClip[],
+    overrides: Record<string, T>,
+    activeId: string,
+    setActiveId: (id: string) => void,
+    master: T,
+    onMasterChange: (next: T) => void,
+    writeOverrides: (next: Record<string, T>) => void
+  ): CutRouting<T> {
+    const cuts = clipCuts(clips, overrides);
+    const safeId = cuts.some((c) => c.id === activeId) ? activeId : MASTER_CUT_ID;
+    return {
+      cuts,
+      activeCutId: safeId,
+      value: safeId === MASTER_CUT_ID ? master : (overrides[safeId] ?? master),
+      onChange: (next) => {
+        if (safeId === MASTER_CUT_ID) onMasterChange(next);
+        else writeOverrides({ ...overrides, [safeId]: next });
+      },
+      onActiveCutChange: (cutId) => {
+        setActiveId(cutId);
+        if (cutId === MASTER_CUT_ID) return;
+        setTimelineFocusRequest({ track, id: cutId });
+        const clip = clips.find((c) => c.id === cutId);
+        if (clip) handleTimelineSeek(clip.timelineStart);
+      },
+      onClearOverride: () => {
+        if (safeId === MASTER_CUT_ID) return;
+        const next = { ...overrides };
+        delete next[safeId];
+        writeOverrides(next);
+      },
+    };
+  }
+  function segmentCutRouting<T>(
+    track: TrackKind,
+    segments: TimelineSegment<T>[],
+    activeId: string,
+    setActiveId: (id: string) => void,
+    master: T,
+    onMasterChange: (next: T) => void,
+    writeSegments: (next: TimelineSegment<T>[]) => void
+  ): CutRouting<T> {
+    const cuts = segmentCuts(segments);
+    const safeId = cuts.some((c) => c.id === activeId) ? activeId : MASTER_CUT_ID;
+    const seg = segments.find((s) => s.id === safeId);
+    return {
+      cuts,
+      activeCutId: safeId,
+      value: safeId === MASTER_CUT_ID ? master : (seg?.settings ?? master),
+      onChange: (next) => {
+        if (safeId === MASTER_CUT_ID) onMasterChange(next);
+        else writeSegments(setSegmentSettings(segments, safeId, next));
+      },
+      onActiveCutChange: (cutId) => {
+        setActiveId(cutId);
+        if (cutId === MASTER_CUT_ID) return;
+        setTimelineFocusRequest({ track, id: cutId });
+        const s = segments.find((x) => x.id === cutId);
+        if (s) handleTimelineSeek(s.startMs);
+      },
+      onClearOverride: () => {
+        if (safeId === MASTER_CUT_ID) return;
+        writeSegments(setSegmentSettings(segments, safeId, null));
+      },
+    };
+  }
+
+  const screenRouting = clipCutRouting(
+    "clips", timeline.clips, timeline.clipOverrides, activeScreenCut, setActiveScreenCut,
+    background, handleBackgroundChange, (next) => handleTimelineChange({ ...timeline, clipOverrides: next })
+  );
+  const cameraRouting = clipCutRouting(
+    "camera", timeline.cameraClips, timeline.cameraClipOverrides, activeCameraCut, setActiveCameraCut,
+    camera, handleCameraChange, (next) => handleTimelineChange({ ...timeline, cameraClipOverrides: next })
+  );
+  const cursorRouting = segmentCutRouting(
+    "cursor", timeline.cursorSegments, activeCursorCut, setActiveCursorCut,
+    cursor, handleCursorChange, (next) => handleTimelineChange({ ...timeline, cursorSegments: next })
+  );
+  const layoutRouting = segmentCutRouting(
+    "layout", timeline.layoutSegments, activeLayoutCut, setActiveLayoutCut,
+    layout, handleLayoutChange, (next) => handleTimelineChange({ ...timeline, layoutSegments: next })
+  );
+  const soundRouting = segmentCutRouting(
+    "sound", timeline.soundSegments, activeSoundCut, setActiveSoundCut,
+    sound, handleSoundChange, (next) => handleTimelineChange({ ...timeline, soundSegments: next })
+  );
+
+  const safeActiveZoomId = activeZoomId && timeline.zooms.some((z) => z.id === activeZoomId) ? activeZoomId : null;
+  function selectZoom(zoomId: string) {
+    setActiveZoomId(zoomId);
+    setTimelineFocusRequest({ track: "zoom", id: zoomId });
+    const z = timeline.zooms.find((zm) => zm.id === zoomId);
+    if (z) handleTimelineSeek(z.startMs);
+  }
+  function handleZoomSetPct(zoomId: string, pct: number) {
+    handleTimelineChange({ ...timeline, zooms: setZoomPctLib(timeline.zooms, zoomId, pct) });
+  }
+  function handleZoomSetStyle(zoomId: string, style: TimelineZoomStyle) {
+    handleTimelineChange({ ...timeline, zooms: setZoomStyleLib(timeline.zooms, zoomId, style) });
+  }
+  function handleZoomRemove(zoomId: string) {
+    handleTimelineChange({ ...timeline, zooms: removeZoomLib(timeline.zooms, zoomId) });
+    if (activeZoomId === zoomId) setActiveZoomId(null);
+  }
+
+  // The reverse of each xRouting.onActiveCutChange above — clicking (or marquee-selecting
+  // down to) one piece directly in the Timeline switches to that track's own tab and
+  // selects the matching cut/zoom there, so its settings show in the panel immediately.
+  // Doesn't touch `timelineFocusRequest` — the Timeline's own selection already reflects
+  // this piece, nothing needs to be pushed back onto it.
+  function handleTimelineSoleSelect(track: TrackKind, id: string) {
+    switch (track) {
+      case "clips":
+        setActiveTab("background");
+        setActiveScreenCut(id);
+        break;
+      case "camera":
+        setActiveTab("camera");
+        setActiveCameraCut(id);
+        break;
+      case "cursor":
+        setActiveTab("cursor");
+        setActiveCursorCut(id);
+        break;
+      case "layout":
+        setActiveTab("layout");
+        setActiveLayoutCut(id);
+        break;
+      case "sound":
+        setActiveTab("sound");
+        setActiveSoundCut(id);
+        break;
+      case "zoom":
+        setActiveTab("zoom");
+        setActiveZoomId(id);
+        break;
+    }
+  }
+
   return (
     <section className="panel edit-page">
       <div className="edit-topbar">
@@ -874,25 +1100,33 @@ export function EditPage() {
                     <CameraEditPanel
                       media={media}
                       mediaLoading={mediaLoading}
-                      camera={camera}
+                      camera={cameraRouting.value}
                       originalCamera={media?.recordedCamera ?? DEFAULT_CAMERA_EDIT_SETTINGS}
-                      onChange={handleCameraChange}
+                      onChange={cameraRouting.onChange}
                       onResetAllToOriginal={resetAllToOriginal}
                       onResetAllToDefault={resetAllToDefault}
+                      cuts={cameraRouting.cuts}
+                      activeCutId={cameraRouting.activeCutId}
+                      onActiveCutChange={cameraRouting.onActiveCutChange}
+                      onClearOverride={cameraRouting.onClearOverride}
                     />
                   ) : activeTab === "cursor" ? (
                     <CursorEditPanel
-                      cursor={cursor}
-                      onChange={handleCursorChange}
+                      cursor={cursorRouting.value}
+                      onChange={cursorRouting.onChange}
                       onResetAllToOriginal={resetAllToOriginal}
                       onResetAllToDefault={resetAllToDefault}
                       cursorBakedIn={media!.cursorBakedIn}
+                      cuts={cursorRouting.cuts}
+                      activeCutId={cursorRouting.activeCutId}
+                      onActiveCutChange={cursorRouting.onActiveCutChange}
+                      onClearOverride={cursorRouting.onClearOverride}
                     />
                   ) : activeTab === "background" ? (
                     <BackgroundEditPanel
-                      background={background}
+                      background={screenRouting.value}
                       defaultBackground={defaultBackgroundEditSettingsForPlatform()}
-                      onChange={handleBackgroundChange}
+                      onChange={screenRouting.onChange}
                       screenSizePct={layout.freeScreenSizePct}
                       screenHeightPct={layout.freeScreenHeightPct}
                       onScreenSizeChange={(sizePct, heightPct) =>
@@ -914,22 +1148,43 @@ export function EditPage() {
                       }
                       onResetAllToOriginal={resetAllToOriginal}
                       onResetAllToDefault={resetAllToDefault}
+                      cuts={screenRouting.cuts}
+                      activeCutId={screenRouting.activeCutId}
+                      onActiveCutChange={screenRouting.onActiveCutChange}
+                      onClearOverride={screenRouting.onClearOverride}
                     />
                   ) : activeTab === "layout" ? (
                     <LayoutEditPanel
                       media={media}
                       mediaLoading={mediaLoading}
-                      layout={layout}
-                      onChange={handleLayoutChange}
+                      layout={layoutRouting.value}
+                      onChange={layoutRouting.onChange}
                       onResetAllToOriginal={resetAllToOriginal}
                       onResetAllToDefault={resetAllToDefault}
+                      cuts={layoutRouting.cuts}
+                      activeCutId={layoutRouting.activeCutId}
+                      onActiveCutChange={layoutRouting.onActiveCutChange}
+                      onClearOverride={layoutRouting.onClearOverride}
+                    />
+                  ) : activeTab === "sound" ? (
+                    <SoundEditPanel
+                      sound={soundRouting.value}
+                      onChange={soundRouting.onChange}
+                      onResetAllToOriginal={resetAllToOriginal}
+                      onResetAllToDefault={resetAllToDefault}
+                      cuts={soundRouting.cuts}
+                      activeCutId={soundRouting.activeCutId}
+                      onActiveCutChange={soundRouting.onActiveCutChange}
+                      onClearOverride={soundRouting.onClearOverride}
                     />
                   ) : (
-                    <SoundEditPanel
-                      sound={sound}
-                      onChange={handleSoundChange}
-                      onResetAllToOriginal={resetAllToOriginal}
-                      onResetAllToDefault={resetAllToDefault}
+                    <ZoomEditPanel
+                      zooms={timeline.zooms}
+                      activeZoomId={safeActiveZoomId}
+                      onActiveZoomChange={selectZoom}
+                      onSetPct={handleZoomSetPct}
+                      onSetStyle={handleZoomSetStyle}
+                      onRemove={handleZoomRemove}
                     />
                   )}
                 </div>
@@ -1002,6 +1257,10 @@ export function EditPage() {
                 cameraStartOffsetMs={media!.sideClipStartOffsetMs}
                 cursorMetadataPath={media!.cursorMetadataPath}
                 autoZoomOnLoad={project ? project.timeline === undefined : false}
+                focusRequest={timelineFocusRequest}
+                onFocusConsumed={() => setTimelineFocusRequest(null)}
+                activeTrack={TAB_TRACK[activeTab]}
+                onSoleSelect={handleTimelineSoleSelect}
               />
             </div>
           </>
