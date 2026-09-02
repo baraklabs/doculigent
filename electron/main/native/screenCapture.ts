@@ -199,12 +199,20 @@ function matchPhysicalMonitor(
   return primaryIndex >= 0 ? { monitor: monitors[primaryIndex], index: primaryIndex } : null;
 }
 
-async function resolveMonitor(targetId: string): Promise<{ rect: PhysicalMonitor["rect"]; index: number } | null> {
+/** Electron's own Display for a desktopCapturer "screen:..." target — shared by every
+ *  platform-specific display/monitor resolver below, which each then narrow it down to
+ *  whatever their own native API needs (a physical-pixel monitor rect, an avfoundation
+ *  device index, a CGDirectDisplayID, ...). */
+async function resolveElectronDisplay(targetId: string): Promise<Electron.Display | null> {
   const sources = await desktopCapturer.getSources({ types: ["screen"] });
   const source = sources.find((s) => s.id === targetId);
   if (!source) return null;
-  const display =
-    screen.getAllDisplays().find((d) => String(d.id) === source.display_id) ?? screen.getPrimaryDisplay();
+  return screen.getAllDisplays().find((d) => String(d.id) === source.display_id) ?? screen.getPrimaryDisplay();
+}
+
+async function resolveMonitor(targetId: string): Promise<{ rect: PhysicalMonitor["rect"]; index: number } | null> {
+  const display = await resolveElectronDisplay(targetId);
+  if (!display) return null;
 
   const monitors = listPhysicalMonitors();
   if (monitors.length === 0) return null;
@@ -812,12 +820,8 @@ async function concatSegments(segmentPaths: string[]): Promise<string> {
 /** Electron's Display.id is documented as the platform display identifier, which on
  *  macOS is the CGDirectDisplayID ScreenCaptureKit's APIs expect directly. */
 async function resolveMacDisplayId(targetId: string): Promise<number | null> {
-  const sources = await desktopCapturer.getSources({ types: ["screen"] });
-  const source = sources.find((s) => s.id === targetId);
-  if (!source) return null;
-  const display =
-    screen.getAllDisplays().find((d) => String(d.id) === source.display_id) ?? screen.getPrimaryDisplay();
-  return display.id;
+  const display = await resolveElectronDisplay(targetId);
+  return display?.id ?? null;
 }
 
 export async function startScreenCapture(
@@ -838,6 +842,16 @@ export async function startScreenCapture(
   clockReset();
   if (!canCaptureTarget(targetId)) return false;
 
+  // Captures the display's full bounds by default — NOT its OS-reported work area. That
+  // was tried (excluding the taskbar/menu bar at the capture source, matching
+  // workAreaFraction below) and reverted: it permanently discards those pixels, so the
+  // Edit screen's "Remove taskbar"/"Remove menu bar" toggle (BackgroundEditPanel's
+  // OS_CHROME_CROP) could never actually restore them by unchecking it — confirmed on a
+  // real recording (screen.mp4 came out 1920x1020, the Windows taskbar's ~60px already
+  // gone, with no way to bring it back short of re-recording). A user-drawn custom area
+  // (AreaSelectPage) still applies as-is; only the "whole screen" default changed back.
+  const resolvedArea = area;
+
   if (process.platform === "win32" && mode === "quick") {
     const helperPath = await resolveWindowsCaptureHelperPath();
     if (helperPath) {
@@ -847,10 +861,10 @@ export async function startScreenCapture(
           kind: "wgc",
           monitorIndex: resolved.index + 1,
           showCursor: !hideCursor,
-          areaX: area?.x,
-          areaY: area?.y,
-          areaWidth: area?.width,
-          areaHeight: area?.height,
+          areaX: resolvedArea?.x,
+          areaY: resolvedArea?.y,
+          areaWidth: resolvedArea?.width,
+          areaHeight: resolvedArea?.height,
           current: null,
           segments: [],
         };
@@ -907,10 +921,10 @@ export async function startScreenCapture(
           fps: FPS,
           displayId,
           outputPath,
-          areaX: area?.x,
-          areaY: area?.y,
-          areaWidth: area?.width,
-          areaHeight: area?.height,
+          areaX: resolvedArea?.x,
+          areaY: resolvedArea?.y,
+          areaWidth: resolvedArea?.width,
+          areaHeight: resolvedArea?.height,
           showsCursor: !hideCursor,
           capturesAudio: captureSystemAudio,
         });
@@ -934,11 +948,11 @@ export async function startScreenCapture(
     const capture: FfmpegCapture = {
       kind: "ffmpeg",
       hideCursor,
-      isArea: !!area,
+      isArea: !!resolvedArea,
       current: null,
       segments: [],
       macDeviceIndex,
-      macArea: area ?? null,
+      macArea: resolvedArea ?? null,
     };
     const segment = await spawnSegment(capture, clockCapturing);
     if (!segment) return false;
@@ -950,16 +964,23 @@ export async function startScreenCapture(
   const displayRect = await resolveDisplayRect(targetId);
   if (!displayRect) return false;
 
-  const winRect = area
+  const winRect = resolvedArea
     ? {
-        x: displayRect.x + Math.round(area.x * displayRect.width),
-        y: displayRect.y + Math.round(area.y * displayRect.height),
-        width: Math.max(2, Math.round(area.width * displayRect.width)),
-        height: Math.max(2, Math.round(area.height * displayRect.height)),
+        x: displayRect.x + Math.round(resolvedArea.x * displayRect.width),
+        y: displayRect.y + Math.round(resolvedArea.y * displayRect.height),
+        width: Math.max(2, Math.round(resolvedArea.width * displayRect.width)),
+        height: Math.max(2, Math.round(resolvedArea.height * displayRect.height)),
       }
     : displayRect;
 
-  const capture: FfmpegCapture = { kind: "ffmpeg", winRect, hideCursor, isArea: !!area, current: null, segments: [] };
+  const capture: FfmpegCapture = {
+    kind: "ffmpeg",
+    winRect,
+    hideCursor,
+    isArea: !!resolvedArea,
+    current: null,
+    segments: [],
+  };
   const segment = await spawnSegment(capture, clockCapturing);
   if (!segment) return false;
   capture.current = segment;

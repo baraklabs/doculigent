@@ -1,11 +1,22 @@
 import { useState } from "react";
-import { Ban, Palette, Sparkles, Image as ImageIcon, Images, Upload, Loader2, Pipette, type LucideIcon } from "lucide-react";
+import {
+  Ban,
+  Palette,
+  Sparkles,
+  Image as ImageIcon,
+  Images,
+  Upload,
+  Loader2,
+  Pipette,
+  PanelBottomClose,
+  PanelTopClose,
+  type LucideIcon,
+} from "lucide-react";
 import {
   BACKGROUND_COLORS,
   BACKGROUND_GRADIENTS,
   BACKGROUND_IMAGES,
   BACKGROUND_TEXTURES,
-  DEFAULT_BACKGROUND_EDIT_SETTINGS,
   type BackgroundEditSettings,
   type BackgroundFill,
 } from "@shared/types/models";
@@ -23,8 +34,29 @@ const FILLS: { id: BackgroundFill; label: string; icon: LucideIcon }[] = [
   { id: "image", label: "Image", icon: Images },
 ];
 
+/** The edge(s) a platform's own OS chrome typically occupies — macOS has two independent
+ *  ones (menu bar at the top, Dock at the bottom, toggled separately since either can be
+ *  on/off/repositioned independently of the other), Windows and most Linux desktop
+ *  environments just the one (taskbar/panel, bottom). Backs the "Remove menu bar"/"Remove
+ *  Dock"/"Remove taskbar" quick toggles below: checked sets that side's crop to
+ *  `presetPct` (roughly its real size), unchecked sets it back to 0 — the four granular
+ *  Crop sliders further down stay available for anything more specific (a custom amount,
+ *  cropping a side neither toggle covers, ...). */
+const OS_CHROME_CROPS: { field: "cropTopPct" | "cropBottomPct"; label: string; presetPct: number; icon: LucideIcon }[] =
+  window.api.system.platform === "darwin"
+    ? [
+        { field: "cropTopPct", label: "Remove menu bar", presetPct: 3, icon: PanelTopClose },
+        { field: "cropBottomPct", label: "Remove Dock", presetPct: 6, icon: PanelBottomClose },
+      ]
+    : [{ field: "cropBottomPct", label: "Remove taskbar", presetPct: 4, icon: PanelBottomClose }];
+
 interface BackgroundEditPanelProps {
   background: BackgroundEditSettings;
+  /** What "Reset to original"/"Reset to default" restore — a fresh project's own starting
+   *  point (see EditPage's defaultBackgroundEditSettingsForPlatform), which is
+   *  platform-aware: a default crop matching OS_CHROME_CROP below, rather than the same
+   *  fixed constant everywhere. */
+  defaultBackground: BackgroundEditSettings;
   onChange: (next: BackgroundEditSettings) => void;
   /** The screen box's current width/height, each as a % of the canvas's own width/height
    *  — the same underlying values (LayoutEditSettings.freeScreenSizePct/HeightPct) that
@@ -39,6 +71,7 @@ interface BackgroundEditPanelProps {
 
 export function BackgroundEditPanel({
   background,
+  defaultBackground,
   onChange,
   screenSizePct,
   screenHeightPct,
@@ -272,6 +305,25 @@ export function BackgroundEditPanel({
         <span className="background-edit-slider-value">{Math.round((screenSizePct + screenHeightPct) / 2)}%</span>
       </label>
 
+      <div className="background-edit-section">
+        {OS_CHROME_CROPS.map((chrome) => {
+          const on = background[chrome.field] > 0;
+          return (
+            <button
+              key={chrome.field}
+              type="button"
+              className={`background-mini-toggle${on ? " active" : ""}`}
+              aria-pressed={on}
+              onClick={() => patch({ [chrome.field]: on ? 0 : chrome.presetPct })}
+            >
+              <chrome.icon size={13} />
+              {chrome.label}
+              <span className="background-toggle-switch" data-on={on} />
+            </button>
+          );
+        })}
+      </div>
+
       <label className="background-edit-slider-row">
         <span className="background-edit-label">Crop top</span>
         <input
@@ -331,8 +383,8 @@ export function BackgroundEditPanel({
       </label>
 
       <ResetRow
-        onResetOriginal={() => onChange(DEFAULT_BACKGROUND_EDIT_SETTINGS)}
-        onResetDefault={() => onChange(DEFAULT_BACKGROUND_EDIT_SETTINGS)}
+        onResetOriginal={() => onChange(defaultBackground)}
+        onResetDefault={() => onChange(defaultBackground)}
         onResetAllToOriginal={onResetAllToOriginal}
         onResetAllToDefault={onResetAllToDefault}
       />

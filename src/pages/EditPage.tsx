@@ -54,6 +54,25 @@ import "./EditPage.css";
 
 type EditTab = "camera" | "cursor" | "background" | "layout" | "sound";
 
+/** A fresh project's (and "Reset to default"'s) starting crop — trims off roughly where
+ *  this platform's own OS chrome sits, so an unedited recording doesn't show it by
+ *  default: macOS's menu bar (top) and Dock (bottom) get their own independent crops,
+ *  Windows/Linux just the one (taskbar, bottom). This is the *only* place that crop
+ *  happens — capturing at the source (the display's OS-reported work area instead of its
+ *  full bounds) was tried and reverted: it permanently discards those pixels, so unchecking
+ *  BackgroundEditPanel's "Remove taskbar"/"Remove menu bar"/"Remove Dock" toggle could
+ *  never actually bring them back (confirmed against a real recording that came out
+ *  1920x1020, the Windows taskbar's ~60px already gone with no way to restore it short of
+ *  re-recording — see native/screenCapture.ts's startScreenCapture for that revert).
+ *  Cropping here instead, at edit time, is fully reversible. Same preset amounts as
+ *  BackgroundEditPanel's own OS_CHROME_CROPS, which start checked to match this. */
+function defaultBackgroundEditSettingsForPlatform(): BackgroundEditSettings {
+  if (window.api.system.platform === "darwin") {
+    return { ...DEFAULT_BACKGROUND_EDIT_SETTINGS, cropTopPct: 3, cropBottomPct: 6 };
+  }
+  return { ...DEFAULT_BACKGROUND_EDIT_SETTINGS, cropBottomPct: 4 };
+}
+
 interface EditSnapshot {
   camera: CameraEditSettings;
   cursor: CursorEditSettings;
@@ -204,14 +223,15 @@ export function EditPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const [background, setBackground] = useState<BackgroundEditSettings>(DEFAULT_BACKGROUND_EDIT_SETTINGS);
+  const [background, setBackground] = useState<BackgroundEditSettings>(defaultBackgroundEditSettingsForPlatform);
   const backgroundLoadedForIdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (id && project && backgroundLoadedForIdRef.current !== id) {
-      // Merged with defaults, not just falling back to them wholesale — projects saved
-      // before newer fields (e.g. crop) existed still have a `background` object, just
-      // missing those keys.
-      setBackground({ ...DEFAULT_BACKGROUND_EDIT_SETTINGS, ...(project.background ?? {}) });
+      // Merged with the platform default, not just falling back to it wholesale —
+      // projects saved before newer fields (e.g. crop) existed still have a `background`
+      // object, just missing those keys; a genuinely new project (background entirely
+      // absent) gets the platform default's crop as its starting point.
+      setBackground({ ...defaultBackgroundEditSettingsForPlatform(), ...(project.background ?? {}) });
       backgroundLoadedForIdRef.current = id;
     }
   }, [id, project]);
@@ -688,14 +708,14 @@ export function EditPage() {
   function resetAllToDefault() {
     handleCameraChange(DEFAULT_CAMERA_EDIT_SETTINGS);
     handleCursorChange(DEFAULT_CURSOR_EDIT_SETTINGS);
-    handleBackgroundChange(DEFAULT_BACKGROUND_EDIT_SETTINGS);
+    handleBackgroundChange(defaultBackgroundEditSettingsForPlatform());
     handleSoundChange(DEFAULT_SOUND_EDIT_SETTINGS);
     handleLayoutChange(DEFAULT_LAYOUT_EDIT_SETTINGS);
   }
   function resetAllToOriginal() {
     handleCameraChange(media?.recordedCamera ?? DEFAULT_CAMERA_EDIT_SETTINGS);
     handleCursorChange(ORIGINAL_CURSOR_EDIT_SETTINGS);
-    handleBackgroundChange(DEFAULT_BACKGROUND_EDIT_SETTINGS);
+    handleBackgroundChange(defaultBackgroundEditSettingsForPlatform());
     handleSoundChange(DEFAULT_SOUND_EDIT_SETTINGS);
     handleLayoutChange(DEFAULT_LAYOUT_EDIT_SETTINGS);
   }
@@ -871,6 +891,7 @@ export function EditPage() {
                   ) : activeTab === "background" ? (
                     <BackgroundEditPanel
                       background={background}
+                      defaultBackground={defaultBackgroundEditSettingsForPlatform()}
                       onChange={handleBackgroundChange}
                       screenSizePct={layout.freeScreenSizePct}
                       screenHeightPct={layout.freeScreenHeightPct}
