@@ -212,6 +212,14 @@ export interface BackgroundEditSettings {
   cornerRadiusPct: number; // rounded corner radius on the screen content, 0-20
   blurPct: number; // blur applied to the backdrop showing through the padding, 0-100
   zoomPct: number; // zooms into the center of the screen recording, 100-300
+  /** Crops the screen recording from each edge before zoom/fit is applied, each as a % of
+   *  the source video's own width (left/right) or height (top/bottom), 0-45 — independent
+   *  per side, so e.g. cropping a browser chrome strip off the top doesn't need to also
+   *  crop the bottom. */
+  cropTopPct: number;
+  cropRightPct: number;
+  cropBottomPct: number;
+  cropLeftPct: number;
 }
 
 export interface SoundEditSettings {
@@ -403,6 +411,10 @@ export const DEFAULT_BACKGROUND_EDIT_SETTINGS: BackgroundEditSettings = {
   cornerRadiusPct: 10,
   blurPct: 0,
   zoomPct: 100,
+  cropTopPct: 0,
+  cropRightPct: 0,
+  cropBottomPct: 0,
+  cropLeftPct: 0,
 };
 
 export const DEFAULT_LAYOUT_EDIT_SETTINGS: LayoutEditSettings = {

@@ -634,16 +634,29 @@ function computeScreenContentFit(
 
   const svW = screenVideo.videoWidth;
   const svH = screenVideo.videoHeight;
+  // Per-side crop narrows the frame zoom/pan then operates within, applied first so the
+  // two compose naturally — zooming still homes in on focusSrc's position within the
+  // cropped frame exactly as it would the full one.
+  const cropL = (bg.cropLeftPct / 100) * svW;
+  const cropR = (bg.cropRightPct / 100) * svW;
+  const cropT = (bg.cropTopPct / 100) * svH;
+  const cropB = (bg.cropBottomPct / 100) * svH;
+  const cropW = Math.max(1, svW - cropL - cropR);
+  const cropH = Math.max(1, svH - cropT - cropB);
   const zoom = Math.max(1, bg.zoomPct / 100);
-  const srcW = svW / zoom;
-  const srcH = svH / zoom;
+  const srcW = cropW / zoom;
+  const srcH = cropH / zoom;
   // Keeps focusSrc at the same fractional position within the crop that it holds within
-  // the full frame (focusSrc.x/svW), rather than forcing it to the crop's own center
-  // (focusSrc.x - srcW / 2, which is what a plain "centered crop" would do) — e.g. at 2x
-  // zoom the crop is half-width, so a point 80% of the way across the full frame sits at
-  // srcX + 0.8*srcW only when srcX = focusSrc.x * (1 - srcW / svW) = focusSrc.x * (1 - 1/zoom).
-  const srcX = focusSrc ? clamp(focusSrc.x * (1 - 1 / zoom), 0, Math.max(0, svW - srcW)) : (svW - srcW) / 2;
-  const srcY = focusSrc ? clamp(focusSrc.y * (1 - 1 / zoom), 0, Math.max(0, svH - srcH)) : (svH - srcH) / 2;
+  // the cropped frame (relative to cropL/cropT), rather than forcing it to the crop's own
+  // center (which is what a plain "centered crop" would do) — e.g. at 2x zoom the crop is
+  // half-width, so a point 80% of the way across the cropped frame sits at
+  // srcX + 0.8*srcW only when srcX = cropL + (focusSrc.x - cropL) * (1 - 1/zoom).
+  const srcX = focusSrc
+    ? cropL + clamp((focusSrc.x - cropL) * (1 - 1 / zoom), 0, Math.max(0, cropW - srcW))
+    : cropL + (cropW - srcW) / 2;
+  const srcY = focusSrc
+    ? cropT + clamp((focusSrc.y - cropT) * (1 - 1 / zoom), 0, Math.max(0, cropH - srcH))
+    : cropT + (cropH - srcH) / 2;
   const fitScale =
     fitMode === "cover" ? Math.max(contentW / srcW, contentH / srcH) : Math.min(contentW / srcW, contentH / srcH);
   const fitW = srcW * fitScale;
