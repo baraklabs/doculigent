@@ -103,7 +103,7 @@ export function CursorEditPanel({
         <input
           type="range"
           min={50}
-          max={500}
+          max={1000}
           step={5}
           value={cursor.sizePct}
           onChange={(e) => patch({ sizePct: Number(e.target.value) })}

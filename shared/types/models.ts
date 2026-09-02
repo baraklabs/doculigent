@@ -176,7 +176,7 @@ export type ClickSoundStyle = "tick" | "pop" | "click";
 
 export interface CursorEditSettings {
   style: CursorStyle;
-  sizePct: number; // scale relative to the recorded cursor's original size, 50-500
+  sizePct: number; // scale relative to the recorded cursor's original size, 50-1000
   /** Tint applied to the synthetic styles — ignored by "default", which draws the
    *  actual captured cursor image and can't be reliably recolored (the OS bitmap
    *  doesn't carry trustworthy per-pixel alpha to tint against). */

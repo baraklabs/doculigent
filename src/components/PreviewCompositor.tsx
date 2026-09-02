@@ -238,16 +238,6 @@ const HAND_POINTING_FILL_PATH = new Path2D(
 );
 const HAND_POINTING_HOTSPOT = { x: 116, y: 16 }; // tip of the extended index finger
 
-// Shown in place of the pointing hand for a brief moment right after a detected click.
-const HAND_GRABBING_REGULAR_PATH = new Path2D(
-  "M188,80a27.79,27.79,0,0,0-13.36,3.4,28,28,0,0,0-46.64-11A28,28,0,0,0,80,92v20H68a28,28,0,0,0-28,28v12a88,88,0,0,0,176,0V108A28,28,0,0,0,188,80Zm12,72a72,72,0,0,1-144,0V140a12,12,0,0,1,12-12H80v24a8,8,0,0,0,16,0V92a12,12,0,0,1,24,0v28a8,8,0,0,0,16,0V92a12,12,0,0,1,24,0v28a8,8,0,0,0,16,0V108a12,12,0,0,1,24,0Z"
-);
-const HAND_GRABBING_FILL_PATH = new Path2D(
-  "M216,104v48a88,88,0,0,1-176,0V136a16,16,0,0,1,32,0v8a8,8,0,0,0,16,0V88a16,16,0,0,1,32,0v16a8,8,0,0,0,16,0V88a16,16,0,0,1,32,0v16a8,8,0,0,0,16,0,16,16,0,0,1,32,0Z"
-);
-const HAND_GRABBING_HOTSPOT = { x: 128, y: 90 }; // center of the closed fist
-const GRAB_FLASH_MS = 300; // how long the grabbed-hand pose stays up after a click
-
 // "Mouse" — Phosphor's mouse-simple glyph.
 const MOUSE_SIMPLE_REGULAR_PATH = new Path2D(
   "M144,16H112A64.07,64.07,0,0,0,48,80v96a64.07,64.07,0,0,0,64,64h32a64.07,64.07,0,0,0,64-64V80A64.07,64.07,0,0,0,144,16Zm48,160a48.05,48.05,0,0,1-48,48H112a48.05,48.05,0,0,1-48-48V80a48.05,48.05,0,0,1,48-48h32a48.05,48.05,0,0,1,48,48ZM136,64v48a8,8,0,0,1-16,0V64a8,8,0,0,1,16,0Z"
@@ -870,7 +860,6 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   // The user's actual play/pause intent — distinct from screenVideo.paused, which the
   // draw loop itself toggles while passing through a gap.
   const isPlayingRef = useRef(false);
-  const lastClickAtRef = useRef(-Infinity); // currentMs (edited-timeline ms) — drives the hand style's brief grab pose
 
   // Drag-to-position/resize — the screen and camera can always be moved (dragging the
   // body) and resized (dragging any of its 4 corner handles) directly on the canvas,
@@ -1030,7 +1019,6 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     cursorTrackRef.current = null;
     lastPlaybackMsRef.current = -1;
     rippleRef.current = null;
-    lastClickAtRef.current = -Infinity;
     if (!cursorMetadataPath || !cursorIconsDir) return;
     (async () => {
       try {
@@ -1661,18 +1649,10 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
               ctx.strokeStyle = cur.color;
               ctx.stroke();
             } else if (cur.style === "hand") {
-              // Pointing hand normally, swapping briefly to a closed "grab" fist right
-              // after a detected click. The two glyphs' hotspots aren't identical (a
-              // fist has no fingertip to anchor to) so the swap shifts slightly — that
-              // reads as the hand actually closing around the click point, not a glitch.
-              const grabbing = currentMs - lastClickAtRef.current < GRAB_FLASH_MS;
-              const regularPath = grabbing ? HAND_GRABBING_REGULAR_PATH : HAND_POINTING_REGULAR_PATH;
-              const fillPath = grabbing ? HAND_GRABBING_FILL_PATH : HAND_POINTING_FILL_PATH;
-              const hotspot = grabbing ? HAND_GRABBING_HOTSPOT : HAND_POINTING_HOTSPOT;
               const scale = (r * 2.6) / 256;
               ctx.translate(px, py);
               ctx.scale(scale, scale);
-              ctx.translate(-hotspot.x, -hotspot.y);
+              ctx.translate(-HAND_POINTING_HOTSPOT.x, -HAND_POINTING_HOTSPOT.y);
               ctx.lineJoin = "round";
               // Both Phosphor weights are closed, solid shapes (unlike lucide's open
               // strokes) — "filled" is the bold "fill" weight with a dark backing stroke
@@ -1682,12 +1662,12 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
               if (cur.filled) {
                 ctx.strokeStyle = "rgba(0, 0, 0, .45)";
                 ctx.lineWidth = 10;
-                ctx.stroke(fillPath);
+                ctx.stroke(HAND_POINTING_FILL_PATH);
                 ctx.fillStyle = cur.color;
-                ctx.fill(fillPath);
+                ctx.fill(HAND_POINTING_FILL_PATH);
               } else {
                 ctx.fillStyle = cur.color;
-                ctx.fill(regularPath);
+                ctx.fill(HAND_POINTING_REGULAR_PATH);
               }
             } else if (cur.style === "mouse-simple") {
               const scale = (r * 2.6) / 256;
@@ -1767,15 +1747,14 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
 
           // Click animation/sound — advances only while playback moves forward, so
           // pausing or scrubbing backward can't re-trigger a click that already fired.
-          // Timed off currentMs (edited-timeline ms), not wall-clock — so the ripple/grab
-          // pose durations below track actual playback progress (freezing correctly if
-          // paused) and stay correct during export's non-realtime frame stepping, where
+          // Timed off currentMs (edited-timeline ms), not wall-clock — so the ripple
+          // duration below tracks actual playback progress (freezing correctly if
+          // paused) and stays correct during export's non-realtime frame stepping, where
           // real elapsed time bears no relation to how much edited time a frame covers.
           const clicks = track.metadata.clicks;
           if (clicks && clicks.length > 0 && cursorTMs > lastPlaybackMsRef.current) {
             for (const clickT of clicks) {
               if (clickT > lastPlaybackMsRef.current && clickT <= cursorTMs) {
-                lastClickAtRef.current = currentMs;
                 if (cur.clickEffect) {
                   rippleRef.current = { startedAt: currentMs, x: px, y: py, r, style: cur.clickAnimationStyle };
                 }
