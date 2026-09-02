@@ -13,6 +13,7 @@ import {
   type SoundEditSettings,
   type TimelineEditSettings,
   type TimelineZoom,
+  type TimelineZoomTilt,
 } from "@shared/types/models";
 import { frameDimensions, toFrameCoords } from "@shared/lib/cursorFrame";
 import { effectiveClips, resolveClipAt, sourceToEditedMs, splitClipAtSource, totalClipsExtentMs } from "@shared/lib/timelineClips";
@@ -663,6 +664,13 @@ interface ScreenFit {
   srcY: number;
   svW: number;
   svH: number;
+  /** Set only while an active "3d"-style zoom block's tilt is actually warping the drawn
+   *  content (see drawScreenContent) — maps a point computed in this fit's own flat,
+   *  untilted coordinate space (canvas px) through the same perspective projection, so the
+   *  cursor overlay (the one thing still positioned from this fit after the warp) can follow
+   *  the tilt instead of floating over it. `scale` is the local depth-based scale factor at
+   *  that point, for sizing the cursor to match. */
+  warpPoint?: (x: number, y: number) => { x: number; y: number; scale: number };
 }
 
 interface ScreenContentFit {
@@ -741,6 +749,147 @@ function computeScreenContentFit(
   return { contentX, contentY, contentW, contentH, srcX, srcY, srcW, srcH, fitW, fitH, fitScale };
 }
 
+// Perspective strength for the 3D zoom style's tilt — the assumed distance (in multiples
+// of the tilted plane's own longer side) from the "camera" to the plane. Smaller pulls the
+// camera closer, exaggerating the distortion; larger flattens it. Tuned so the Tilt preset
+// grid's TILT_PRESET_ANGLE_DEG swatches read as a clear but not cartoonish tilt.
+const TILT_PERSPECTIVE_DEPTH_FACTOR = 1.4;
+// Mesh resolution for the perspective warp below — coarse enough to stay cheap per frame
+// (both live preview and export re-run this every frame a 3D zoom is active), fine enough
+// that the per-cell affine approximation of a true 4-point perspective quad (see
+// drawTiltedPlane) has no visible faceting at these tilt angles.
+const TILT_GRID_COLS = 16;
+const TILT_GRID_ROWS = 9;
+
+/** Projects a point on the zoom's tilted plane (normalized -0.5..0.5 across `planeW`/
+ *  `planeH`, plane-center-relative) into a 2D offset from that same center — rotate around
+ *  the horizontal axis (xDeg) then the vertical one (yDeg), then a simple perspective
+ *  divide. `scale` is the resulting depth-based scale factor at that point (1 at the
+ *  plane's own resting depth, z=0), returned so a single overlay point (the cursor) can be
+ *  sized to match rather than just repositioned. (xDeg, yDeg) = (0, 0) leaves z untouched
+ *  at every point, so scale is always exactly 1 and (x, y) exactly (nx*planeW, ny*planeH)
+ *  — a flat, untilted zoom, pixel-for-pixel identical to before this existed. */
+function project3D(
+  nx: number,
+  ny: number,
+  planeW: number,
+  planeH: number,
+  xDeg: number,
+  yDeg: number
+): { x: number; y: number; scale: number } {
+  const x = nx * planeW;
+  const y = ny * planeH;
+  const rx = (xDeg * Math.PI) / 180;
+  const ry = (yDeg * Math.PI) / 180;
+  const y1 = y * Math.cos(rx);
+  const z1 = y * Math.sin(rx);
+  const x2 = x * Math.cos(ry) + z1 * Math.sin(ry);
+  const z2 = z1 * Math.cos(ry) - x * Math.sin(ry);
+  const depth = Math.max(planeW, planeH) * TILT_PERSPECTIVE_DEPTH_FACTOR;
+  const scale = depth / (depth - z2);
+  return { x: x2 * scale, y: y1 * scale, scale };
+}
+
+let tiltScratch: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null = null;
+
+/** Same one-scratch-canvas-reused-every-frame pattern as getCameraCutoutScratch above —
+ *  avoids allocating (and GC-ing) a whole canvas per frame for as long as a 3D zoom block
+ *  stays active. */
+function getTiltScratchCanvas(w: number, h: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
+  if (!tiltScratch) {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
+    tiltScratch = { canvas, ctx };
+  }
+  const { canvas } = tiltScratch;
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  return tiltScratch;
+}
+
+// Adjacent cells below are defined so they share their corner points exactly in
+// *continuous* math, but rasterizing each one separately (its own drawImage call, its own
+// edge antialiasing) still leaves a hairline of partial-coverage pixels right at every
+// shared edge — visible, once dozens of cells tile the whole tilted plane, as a faint grid
+// of squares over the content (like a checkerboard). Overdrawing each cell slightly past
+// its own edge into its neighbors papers over exactly that hairline; the same overdraw
+// bleeding a fraction of a pixel past the plane's own *outer* edge (nothing to seam with
+// there) is too small to read as a mismatch against the rounded corners drawn into
+// srcCanvas.
+const TILT_CELL_BLEED_PX = 1;
+
+/** Warps `srcCanvas` (the screen content already fit/cropped/corner-rounded flat into an
+ *  offscreen buffer by drawScreenContent, at its own natural size) onto `ctx` as a
+ *  perspective-tilted plane occupying `planeX/planeY/planeW/planeH` at rest — subdivides it
+ *  into a TILT_GRID_COLS x TILT_GRID_ROWS grid and draws each cell with its own 3-point
+ *  affine transform (source rect -> that cell's 3 projected corners: top-left, top-right,
+ *  bottom-left; see TILT_CELL_BLEED_PX above for why each cell then overdraws slightly past
+ *  those exact corners). The one approximation is the 4th corner (bottom-right), which a
+ *  true 4-point perspective quad would bow slightly from — imperceptible at cells this
+ *  small. Returns a function that maps a point in the *original, untilted* content-box
+ *  space (what the cursor overlay already computes its position in) through the same
+ *  projection, so that overlay can be repositioned to follow the tilt instead of floating
+ *  over it. */
+function drawTiltedPlane(
+  ctx: CanvasRenderingContext2D,
+  srcCanvas: HTMLCanvasElement,
+  planeX: number,
+  planeY: number,
+  planeW: number,
+  planeH: number,
+  tilt: TimelineZoomTilt
+): (x: number, y: number) => { x: number; y: number; scale: number } {
+  const cx = planeX + planeW / 2;
+  const cy = planeY + planeH / 2;
+
+  const project = (nx: number, ny: number) => {
+    const p = project3D(nx, ny, planeW, planeH, tilt.xDeg, tilt.yDeg);
+    return { x: cx + p.x, y: cy + p.y, scale: p.scale };
+  };
+
+  ctx.save();
+  for (let row = 0; row < TILT_GRID_ROWS; row++) {
+    const ny0 = row / TILT_GRID_ROWS - 0.5;
+    const ny1 = (row + 1) / TILT_GRID_ROWS - 0.5;
+    const sy = (row / TILT_GRID_ROWS) * planeH;
+    const sh = planeH / TILT_GRID_ROWS;
+    for (let col = 0; col < TILT_GRID_COLS; col++) {
+      const nx0 = col / TILT_GRID_COLS - 0.5;
+      const nx1 = (col + 1) / TILT_GRID_COLS - 0.5;
+      const sx = (col / TILT_GRID_COLS) * planeW;
+      const sw = planeW / TILT_GRID_COLS;
+
+      const tl = project(nx0, ny0);
+      const tr = project(nx1, ny0);
+      const bl = project(nx0, ny1);
+
+      // The affine matrix mapping this cell's *exact* (unbled) source rect corners
+      // (sx,sy) / (sx+sw,sy) / (sx,sy+sh) onto (tl) / (tr) / (bl) — computed before bleed
+      // is applied below, so the bleed extends this same mapping outward rather than
+      // shifting it.
+      const a = (tr.x - tl.x) / sw;
+      const b = (tr.y - tl.y) / sw;
+      const c = (bl.x - tl.x) / sh;
+      const d = (bl.y - tl.y) / sh;
+      const e = tl.x - a * sx - c * sy;
+      const f = tl.y - b * sx - d * sy;
+
+      const bsx = sx - TILT_CELL_BLEED_PX;
+      const bsy = sy - TILT_CELL_BLEED_PX;
+      const bsw = sw + TILT_CELL_BLEED_PX * 2;
+      const bsh = sh + TILT_CELL_BLEED_PX * 2;
+
+      ctx.setTransform(a, b, c, d, e, f);
+      ctx.drawImage(srcCanvas, bsx, bsy, bsw, bsh, bsx, bsy, bsw, bsh);
+    }
+  }
+  ctx.restore();
+
+  return (x: number, y: number) => project((x - planeX) / planeW - 0.5, (y - planeY) / planeH - 0.5);
+}
+
 /** Draws the screen recording (inset by padding, corners rounded) into an arbitrary box
  *  — the box itself is always a plain, freely drag/resizable rectangle (see draw()'s
  *  screenBox), independent of this function — and returns the fit metrics needed to map
@@ -753,7 +902,11 @@ function computeScreenContentFit(
  *  part of a "cover"-cropped recording shows; left at its default (centered) everywhere
  *  this is actually called from. `focusSrc` — see computeScreenContentFit — is the point
  *  a timeline zoom block zooms toward while active, keeping its own on-screen position
- *  instead of both the video's center *and* instead of recentering onto it. */
+ *  instead of both the video's center *and* instead of recentering onto it. `tilt` — set
+ *  only while an active "3d"-style zoom block's eased tilt is non-zero (see the draw
+ *  loop's own computeActiveZoomTilt call) — routes the draw through drawTiltedPlane above
+ *  instead of a plain drawImage; left null/all-zero everywhere else, which renders exactly
+ *  as before. */
 function drawScreenContent(
   ctx: CanvasRenderingContext2D,
   screenVideo: HTMLVideoElement,
@@ -765,39 +918,54 @@ function drawScreenContent(
   // drawn, just the backdrop showing through — rather than freezing on whatever frame
   // screenVideo was paused on when the gap was entered.
   showFrame = true,
-  focusSrc?: { x: number; y: number } | null
+  focusSrc?: { x: number; y: number } | null,
+  tilt?: TimelineZoomTilt | null
 ): ScreenFit {
   const m = computeScreenContentFit(box, bg, screenVideo, fitMode, focusSrc);
   const screenDrawX = m.contentX + (panPct.x / 100) * (m.contentW - m.fitW);
   const screenDrawY = m.contentY + (panPct.y / 100) * (m.contentH - m.fitH);
 
-  if (showFrame && fitMode === "cover") {
-    // The drawn image now overflows the content box on one axis by design — clip against
-    // the box itself (not the oversized image rect) so that overflow is what gets cropped.
-    const contentRadius = (bg.cornerRadiusPct / 100) * (Math.min(m.contentW, m.contentH) / 2);
-    ctx.save();
-    ctx.beginPath();
-    roundedRectPath(ctx, m.contentX, m.contentY, m.contentW, m.contentH, contentRadius);
-    ctx.clip();
-    ctx.drawImage(screenVideo, m.srcX, m.srcY, m.srcW, m.srcH, screenDrawX, screenDrawY, m.fitW, m.fitH);
-    ctx.restore();
-  } else if (showFrame) {
-    // Rounded against the video's own drawn rect, not the (possibly larger, aspect-
-    // mismatched) padded content box — letterboxing means those rarely coincide, and a
-    // corner rounded only where the box meets the padding is invisible against a backdrop
-    // that fills both the letterbox gap and the padding with the same color.
-    const contentRadius = (bg.cornerRadiusPct / 100) * (Math.min(m.fitW, m.fitH) / 2);
-    ctx.save();
-    ctx.beginPath();
-    roundedRectPath(ctx, screenDrawX, screenDrawY, m.fitW, m.fitH, contentRadius);
-    ctx.clip();
-    ctx.drawImage(screenVideo, m.srcX, m.srcY, m.srcW, m.srcH, screenDrawX, screenDrawY, m.fitW, m.fitH);
-    ctx.restore();
+  // The "visible" rect — what's actually left on screen once the corner-round clip is
+  // applied — differs by fitMode: "cover" clips to the content box itself (the image
+  // deliberately overflows it), "contain" clips to the image's own drawn rect (which is
+  // never larger than the content box, so it's the tighter of the two there instead).
+  const visX = fitMode === "cover" ? m.contentX : screenDrawX;
+  const visY = fitMode === "cover" ? m.contentY : screenDrawY;
+  const visW = fitMode === "cover" ? m.contentW : m.fitW;
+  const visH = fitMode === "cover" ? m.contentH : m.fitH;
+  const contentRadius = (bg.cornerRadiusPct / 100) * (Math.min(visW, visH) / 2);
+
+  // Paints the fit/crop/round exactly as before, just parameterized on which context and
+  // origin offset to paint into — (ctx, 0, 0) for the plain path below, or an offscreen
+  // scratch buffer (translated so the visible rect's own top-left lands at its origin) when
+  // a tilt is about to warp the result.
+  const paint = (targetCtx: CanvasRenderingContext2D, ox: number, oy: number) => {
+    targetCtx.save();
+    targetCtx.beginPath();
+    roundedRectPath(targetCtx, visX + ox, visY + oy, visW, visH, contentRadius);
+    targetCtx.clip();
+    targetCtx.drawImage(screenVideo, m.srcX, m.srcY, m.srcW, m.srcH, screenDrawX + ox, screenDrawY + oy, m.fitW, m.fitH);
+    targetCtx.restore();
+  };
+
+  let warpPoint: ScreenFit["warpPoint"];
+
+  if (showFrame) {
+    const hasTilt = !!tilt && (tilt.xDeg !== 0 || tilt.yDeg !== 0);
+    if (!hasTilt) {
+      paint(ctx, 0, 0);
+    } else {
+      const { canvas: scratchCanvas, ctx: scratchCtx } = getTiltScratchCanvas(Math.max(1, Math.ceil(visW)), Math.max(1, Math.ceil(visH)));
+      scratchCtx.clearRect(0, 0, scratchCanvas.width, scratchCanvas.height);
+      paint(scratchCtx, -visX, -visY);
+      warpPoint = drawTiltedPlane(ctx, scratchCanvas, visX, visY, visW, visH, tilt!);
+    }
   }
 
   return {
     screenDrawX,
     screenDrawY,
+    warpPoint,
     fitScale: m.fitScale,
     srcX: m.srcX,
     srcY: m.srcY,
@@ -832,13 +1000,33 @@ function computeZoomEnvelope(zoom: TimelineZoom | null, currentMs: number): numb
   return Math.max(0, Math.min(tIn, tOut));
 }
 
+/** The cosine ease-in-out computeActiveZoomPct and computeActiveZoomTilt both ride the
+ *  0..1 envelope through — one shared curve so a zoom block's scale and tilt always move
+ *  together, never drifting apart into two visibly different speeds. */
+function easeZoomEnvelope(envelope: number): number {
+  return (1 - Math.cos(envelope * Math.PI)) / 2;
+}
+
 /** Eases from `baselinePct` up to the active zoom block's pct and back down over
  *  ZOOM_TRANSITION_MS at each edge of its window, holding at the target in between —
  *  a trapezoid envelope, not a hard cut in zoom level. */
 function computeActiveZoomPct(baselinePct: number, zoom: TimelineZoom | null, envelope: number): number {
   if (!zoom) return baselinePct;
-  const eased = (1 - Math.cos(envelope * Math.PI)) / 2;
-  return baselinePct + (zoom.pct - baselinePct) * eased;
+  return baselinePct + (zoom.pct - baselinePct) * easeZoomEnvelope(envelope);
+}
+
+/** The "3d" style's tilt equivalent of computeActiveZoomPct above — eases from flat (no
+ *  tilt has a baseline to return to outside an active block, unlike pct's bg.zoomPct) up to
+ *  the zoom's own tilt and back down over the same envelope. A "2d" block (or one with an
+ *  all-zero tilt already) returns all-zero either way, so drawScreenContent's hasTilt check
+ *  skips the warp path entirely rather than running it for a no-op tilt. */
+function computeActiveZoomTilt(zoom: TimelineZoom | null, envelope: number): TimelineZoomTilt {
+  if (!zoom || zoom.style !== "3d") return { xDeg: 0, yDeg: 0 };
+  const eased = easeZoomEnvelope(envelope);
+  return {
+    xDeg: zoom.tilt.xDeg * eased,
+    yDeg: zoom.tilt.yDeg * eased,
+  };
 }
 
 function formatTime(secs: number): string {
@@ -1559,6 +1747,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       const activeZoom = findActiveZoom(timelineState.zooms, currentMs);
       const zoomEnvelope = computeZoomEnvelope(activeZoom, currentMs);
       const zoomedBg: BackgroundEditSettings = { ...bg, zoomPct: computeActiveZoomPct(bg.zoomPct, activeZoom, zoomEnvelope) };
+      const activeZoomTilt = computeActiveZoomTilt(activeZoom, zoomEnvelope);
 
       // Sample the recorded cursor track early (before the crop is computed below) so an
       // active zoom block can center its crop on the cursor's actual position instead of
@@ -1731,8 +1920,18 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       const screenPanPct = layoutOverride.reelScreenFull
         ? { x: layoutOverride.freeScreenPos?.xPct ?? 50, y: layoutOverride.freeScreenPos?.yPct ?? 50 }
         : { x: 50, y: 50 };
-      const fit = drawScreenContent(ctx, screenVideo, zoomedBg, screenBox, screenFitMode, screenPanPct, showScreenContent, zoomFocusSrc);
-      const { screenDrawX, screenDrawY, fitScale, srcX, srcY, svW, svH } = fit;
+      const fit = drawScreenContent(
+        ctx,
+        screenVideo,
+        zoomedBg,
+        screenBox,
+        screenFitMode,
+        screenPanPct,
+        showScreenContent,
+        zoomFocusSrc,
+        activeZoomTilt
+      );
+      const { screenDrawX, screenDrawY, fitScale, srcX, srcY, svW, svH, warpPoint } = fit;
 
       // Synthetic cursor overlay — screenVideo never has the cursor baked in (see
       // getEditProjectMedia), so it's drawn live here from the recorded track (reusing the
@@ -1746,11 +1945,21 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         const icon = track.icons[point.icon];
         if (pos && icon) {
           const cur = cursorSettings;
-          const scaleX = (svW / frame.width) * fitScale;
-          const scaleY = (svH / frame.height) * fitScale;
+          let scaleX = (svW / frame.width) * fitScale;
+          let scaleY = (svH / frame.height) * fitScale;
           const sizeMul = cur.sizePct / 100;
-          const px = screenDrawX + (pos.x * (svW / frame.width) - srcX) * fitScale;
-          const py = screenDrawY + (pos.y * (svH / frame.height) - srcY) * fitScale;
+          let px = screenDrawX + (pos.x * (svW / frame.width) - srcX) * fitScale;
+          let py = screenDrawY + (pos.y * (svH / frame.height) - srcY) * fitScale;
+          // An active 3D zoom's tilt has already warped the content itself (see fit.warpPoint,
+          // set by drawScreenContent) — reposition/rescale the cursor overlay to match, so it
+          // rides the tilted plane instead of floating over it at its old flat position.
+          if (warpPoint) {
+            const warped = warpPoint(px, py);
+            px = warped.x;
+            py = warped.y;
+            scaleX *= warped.scale;
+            scaleY *= warped.scale;
+          }
           const r = Math.max(1, 9 * ((scaleX + scaleY) / 2) * sizeMul);
 
           if (cur.style === "default") {

@@ -55,10 +55,17 @@ import {
   type TimelineEditSettings,
   type TimelineSegment,
   type TimelineZoomStyle,
+  type TimelineZoomTilt,
 } from "@shared/types/models";
 import { effectiveClips } from "@shared/lib/timelineClips";
 import { setSegmentSettings } from "@shared/lib/timelineSegments";
-import { normalizeTimelineZooms, removeZoom as removeZoomLib, setZoomPct as setZoomPctLib, setZoomStyle as setZoomStyleLib } from "@shared/lib/timelineZooms";
+import {
+  normalizeTimelineZooms,
+  removeZoom as removeZoomLib,
+  setZoomPct as setZoomPctLib,
+  setZoomStyle as setZoomStyleLib,
+  setZoomTilt as setZoomTiltLib,
+} from "@shared/lib/timelineZooms";
 import "./EditPage.css";
 
 type EditTab = "camera" | "cursor" | "background" | "layout" | "sound" | "zoom";
@@ -945,6 +952,9 @@ export function EditPage() {
   function handleZoomSetStyle(zoomId: string, style: TimelineZoomStyle) {
     handleTimelineChange({ ...timeline, zooms: setZoomStyleLib(timeline.zooms, zoomId, style) });
   }
+  function handleZoomSetTilt(zoomId: string, patch: Partial<TimelineZoomTilt>) {
+    handleTimelineChange({ ...timeline, zooms: setZoomTiltLib(timeline.zooms, zoomId, patch) });
+  }
   function handleZoomRemove(zoomId: string) {
     handleTimelineChange({ ...timeline, zooms: removeZoomLib(timeline.zooms, zoomId) });
     if (activeZoomId === zoomId) setActiveZoomId(null);
@@ -1184,6 +1194,7 @@ export function EditPage() {
                       onActiveZoomChange={selectZoom}
                       onSetPct={handleZoomSetPct}
                       onSetStyle={handleZoomSetStyle}
+                      onSetTilt={handleZoomSetTilt}
                       onRemove={handleZoomRemove}
                     />
                   )}

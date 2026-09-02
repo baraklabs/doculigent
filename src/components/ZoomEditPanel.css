@@ -30,7 +30,37 @@
 }
 .zoom-style-seg-btn:hover { border-color: var(--accent); color: var(--text); }
 .zoom-style-seg-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
-.zoom-style-note { font-size: 11px; color: var(--muted); min-height: 14px; }
+
+.tilt-preset-grid { display: flex; flex-wrap: wrap; gap: 5px; }
+.tilt-preset-btn {
+  width: 36px; height: 36px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 7px; padding: 5px;
+}
+.tilt-preset-btn:hover { border-color: var(--accent); }
+.tilt-preset-btn.active { background: var(--accent-soft); border-color: var(--accent); }
+.tilt-preset-swatch {
+  display: block; width: 100%; height: 100%; border-radius: 2px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-soft));
+  transform-style: preserve-3d;
+}
+.tilt-preset-btn:not(.active) .tilt-preset-swatch { background: var(--muted); opacity: .55; }
+
+.tilt-custom-label {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+  color: var(--muted); margin-top: 4px;
+}
+
+.tilt-custom-sliders { display: flex; flex-direction: column; gap: 12px; }
+
+.tilt-slider-row { display: flex; flex-direction: column; gap: 6px; }
+.tilt-slider-header { display: flex; align-items: center; justify-content: space-between; }
+.tilt-slider-label { font-size: 12px; font-weight: 600; color: var(--text); }
+.tilt-slider-header-right { display: flex; align-items: center; gap: 8px; }
+.tilt-slider-reset { font-size: 11px; font-weight: 600; color: var(--accent); }
+.tilt-slider-reset:hover { text-decoration: underline; }
+.tilt-slider-reset:disabled { color: var(--muted); text-decoration: none; cursor: default; }
+.tilt-slider-value { font-size: 12px; font-weight: 600; color: var(--muted); min-width: 24px; text-align: right; }
+.tilt-slider-input { width: 100%; }
 
 .zoom-edit-remove-btn {
   display: flex; align-items: center; justify-content: center; gap: 6px;

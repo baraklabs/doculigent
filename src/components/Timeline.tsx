@@ -20,7 +20,11 @@ import {
 } from "@shared/types/models";
 import { bringClipToFront, deleteClip, effectiveClips, resolveClipAt, sourceToEditedMs, splitClipAtSource } from "@shared/lib/timelineClips";
 import { effectiveSegments, setSegmentSettings, splitSegmentAtPoint } from "@shared/lib/timelineSegments";
-import { removeZoom as removeZoomLib } from "@shared/lib/timelineZooms";
+import {
+  DEFAULT_NEW_ZOOM_STYLE,
+  DEFAULT_NEW_ZOOM_TILT,
+  removeZoom as removeZoomLib,
+} from "@shared/lib/timelineZooms";
 import { frameDimensions, toFrameCoords } from "@shared/lib/cursorFrame";
 import { mediaUrl } from "@shared/constants/media";
 import "./Timeline.css";
@@ -1223,7 +1227,14 @@ export function Timeline({
   function addZoomAt(anchorMs: number) {
     const startMs = Math.max(0, anchorMs - ZOOM_LEAD_MS);
     const blockDuration = Math.min(ZOOM_DEFAULT_DURATION_MS, Math.max(200, durationMs - startMs));
-    const zoom: TimelineZoom = { id: newId(), startMs, durationMs: blockDuration, pct: ZOOM_DEFAULT_PCT, style: "2d" };
+    const zoom: TimelineZoom = {
+      id: newId(),
+      startMs,
+      durationMs: blockDuration,
+      pct: ZOOM_DEFAULT_PCT,
+      style: DEFAULT_NEW_ZOOM_STYLE,
+      tilt: { ...DEFAULT_NEW_ZOOM_TILT },
+    };
     updateZooms([...timeline.zooms, zoom]);
     selectOnly("zoom", zoom.id);
   }
@@ -1329,7 +1340,8 @@ export function Timeline({
       startMs: w.start,
       durationMs: w.end - w.start,
       pct: ZOOM_DEFAULT_PCT,
-      style: "2d",
+      style: DEFAULT_NEW_ZOOM_STYLE,
+      tilt: { ...DEFAULT_NEW_ZOOM_TILT },
     }));
   }
 

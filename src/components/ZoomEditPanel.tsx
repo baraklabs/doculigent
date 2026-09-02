@@ -1,5 +1,6 @@
 import { Box, Square, Trash2 } from "lucide-react";
-import { ZOOM_PCT_PRESETS, type TimelineZoom, type TimelineZoomStyle } from "@shared/types/models";
+import { ZOOM_PCT_PRESETS, type TimelineZoom, type TimelineZoomStyle, type TimelineZoomTilt } from "@shared/types/models";
+import { TILT_CUSTOM_ANGLE_LIMIT_DEG, TILT_DIRECTION_PRESETS } from "@shared/lib/timelineZooms";
 import { CutChipRail, type CutChipRailCut } from "./CutChipRail";
 import "./ZoomEditPanel.css";
 
@@ -16,12 +17,50 @@ const STYLES: { id: TimelineZoomStyle; label: string; icon: typeof Square }[] = 
   { id: "3d", label: "3D", icon: Box },
 ];
 
+interface TiltSliderRowProps {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (value: number) => void;
+  onReset: () => void;
+}
+
+/** One "label / Reset link + value / slider" row, for the Custom section's Tilt X/Tilt Y
+ *  sliders — label top-left, a "Reset" link plus the current value top-right, full-width
+ *  slider below. Reset always goes to 0, the neutral value on both axes. */
+function TiltSliderRow({ label, value, min, max, onChange, onReset }: TiltSliderRowProps) {
+  return (
+    <div className="tilt-slider-row">
+      <div className="tilt-slider-header">
+        <span className="tilt-slider-label">{label}</span>
+        <div className="tilt-slider-header-right">
+          <button type="button" className="tilt-slider-reset" onClick={onReset} disabled={value === 0}>
+            Reset
+          </button>
+          <span className="tilt-slider-value">{Math.round(value)}</span>
+        </div>
+      </div>
+      <input
+        type="range"
+        className="tilt-slider-input"
+        min={min}
+        max={max}
+        step={1}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
+    </div>
+  );
+}
+
 interface ZoomEditPanelProps {
   zooms: TimelineZoom[];
   activeZoomId: string | null;
   onActiveZoomChange: (id: string) => void;
   onSetPct: (id: string, pct: number) => void;
   onSetStyle: (id: string, style: TimelineZoomStyle) => void;
+  onSetTilt: (id: string, patch: Partial<TimelineZoomTilt>) => void;
   onRemove: (id: string) => void;
 }
 
@@ -30,7 +69,7 @@ interface ZoomEditPanelProps {
  *  The chip rail lists every zoom block already on the Timeline's Zoom track — there's no
  *  "Master" concept here (see CutChipRail's showMaster=false), each block is fully its own
  *  config. */
-export function ZoomEditPanel({ zooms, activeZoomId, onActiveZoomChange, onSetPct, onSetStyle, onRemove }: ZoomEditPanelProps) {
+export function ZoomEditPanel({ zooms, activeZoomId, onActiveZoomChange, onSetPct, onSetStyle, onSetTilt, onRemove }: ZoomEditPanelProps) {
   const cuts: CutChipRailCut[] = zooms.map((z, i) => ({ id: z.id, label: `Zoom ${i + 1}`, hasOverride: false }));
   const activeZoom = zooms.find((z) => z.id === activeZoomId) ?? null;
 
@@ -83,12 +122,54 @@ export function ZoomEditPanel({ zooms, activeZoomId, onActiveZoomChange, onSetPc
                 );
               })}
             </div>
-            {/* 3D is data-only for now — both styles render the same flat zoom until a
-                later pass adds the real perspective effect; the choice still saves. */}
-            <p className="zoom-style-note">
-              {activeZoom.style === "3d" ? "3D rendering is coming soon" : ""}
-            </p>
           </div>
+
+          {activeZoom.style === "3d" && (
+            <div className="zoom-edit-section">
+              <span className="zoom-edit-label">Tilt</span>
+              <div className="tilt-preset-grid">
+                {TILT_DIRECTION_PRESETS.map((p) => {
+                  const isActive = activeZoom.tilt.xDeg === p.xDeg && activeZoom.tilt.yDeg === p.yDeg;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={`tilt-preset-btn${isActive ? " active" : ""}`}
+                      title={p.label}
+                      aria-label={p.label}
+                      aria-pressed={isActive}
+                      onClick={() => onSetTilt(activeZoom.id, { xDeg: p.xDeg, yDeg: p.yDeg })}
+                    >
+                      <span
+                        className="tilt-preset-swatch"
+                        style={{ transform: `perspective(60px) rotateX(${p.xDeg}deg) rotateY(${p.yDeg}deg)` }}
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+
+              <span className="tilt-custom-label">Custom</span>
+              <div className="tilt-custom-sliders">
+                <TiltSliderRow
+                  label="Tilt X"
+                  value={activeZoom.tilt.xDeg}
+                  min={-TILT_CUSTOM_ANGLE_LIMIT_DEG}
+                  max={TILT_CUSTOM_ANGLE_LIMIT_DEG}
+                  onChange={(v) => onSetTilt(activeZoom.id, { xDeg: v })}
+                  onReset={() => onSetTilt(activeZoom.id, { xDeg: 0 })}
+                />
+                <TiltSliderRow
+                  label="Tilt Y"
+                  value={activeZoom.tilt.yDeg}
+                  min={-TILT_CUSTOM_ANGLE_LIMIT_DEG}
+                  max={TILT_CUSTOM_ANGLE_LIMIT_DEG}
+                  onChange={(v) => onSetTilt(activeZoom.id, { yDeg: v })}
+                  onReset={() => onSetTilt(activeZoom.id, { yDeg: 0 })}
+                />
+              </div>
+            </div>
+          )}
 
           <button type="button" className="zoom-edit-remove-btn" onClick={() => onRemove(activeZoom.id)}>
             <Trash2 size={13} />

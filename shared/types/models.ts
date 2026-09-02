@@ -345,17 +345,34 @@ export type TimelineZoomPct = (typeof ZOOM_PCT_PRESETS)[number];
 
 export type TimelineZoomStyle = "2d" | "3d";
 
+/** The "3D" style's tilt controls — a perspective rotation around the horizontal/vertical
+ *  axes, eased in/out together with `pct` while the block is active. Kept on every zoom
+ *  block regardless of `style` (not just "3d" ones) so toggling styles back and forth never
+ *  loses a tilt the user already dialed in. All-zero renders pixel-identical to "2d" (a
+ *  flat, untilted zoom) — see drawScreenContent's tilt branch in PreviewCompositor.tsx. */
+export interface TimelineZoomTilt {
+  /** Degrees, rotation around the horizontal axis — tilts the top/bottom edge toward/away
+   *  from the viewer. The Tilt preset grid uses ±TILT_PRESET_ANGLE_DEG; Custom allows the
+   *  full -30..30 range (clamped by setZoomTilt). */
+  xDeg: number;
+  /** Degrees, rotation around the vertical axis — tilts the left/right edge toward/away
+   *  from the viewer. Same range as xDeg. */
+  yDeg: number;
+}
+
+export const DEFAULT_TIMELINE_ZOOM_TILT: TimelineZoomTilt = { xDeg: 0, yDeg: 0 };
+
 /** A movable, repeatable zoom-in effect anchored at a point on the timeline — eases from
  *  the base zoom up to `pct` and back down over ZOOM_TRANSITION_MS at each edge of its
- *  window, holding at `pct` in between. `style` is data-only for now — "2d" and "3d" both
- *  render identically (today's flat scale zoom); it's stored/round-tripped so a later pass
- *  can add a real 3D-perspective render without another data-model change. */
+ *  window, holding at `pct` in between. `style` picks between a flat scale zoom ("2d") and
+ *  one that also tilts the content in perspective per `tilt` ("3d"). */
 export interface TimelineZoom {
   id: string;
   startMs: number;
   durationMs: number;
   pct: TimelineZoomPct;
   style: TimelineZoomStyle;
+  tilt: TimelineZoomTilt;
 }
 
 /** Unused today — the Camera track's shown/hidden windows are defined by
