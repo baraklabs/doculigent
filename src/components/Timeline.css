@@ -32,6 +32,13 @@
   flex: 0 0 72px; width: 72px; min-width: 0; display: flex; align-items: center; gap: 4px;
   font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
   color: var(--muted);
+  /* Pinned to the left edge so the row labels (and the tool buttons) stay put once the view
+     zoom makes the timeline wider than its pane and .tl-root starts scrolling sideways —
+     without this you lose track of which row is which the moment you scroll. Needs its own
+     background to cover the pieces sliding underneath, and a z-index above all of them
+     (pieces top out at 4, .tl-cut-guide included) — --panel being the pane this sits in,
+     see EditPage.css's .edit-timeline. No effect at zoom 1: nothing scrolls. */
+  position: sticky; left: 0; z-index: 7; background: var(--panel);
 }
 .tl-row-header-clips,
 .tl-row-header-zoom,
@@ -85,12 +92,40 @@
 .tl-reset-default-btn:hover { background: rgba(91, 75, 245, .14); color: var(--accent); }
 .tl-reset-original-btn:hover { background: rgba(239, 68, 68, .12); color: var(--danger); }
 
+/* Timeline view zoom, on its own wrapped line under the tool buttons (see .tl-tool-toggle's
+   flex-wrap) — flex-basis 100% is what forces that break. Magnifies how wide the timeline
+   draws itself; .tl-root scrolls once it outgrows the pane.
+   min-width: 0 is load-bearing: a range input's *automatic minimum size* is its intrinsic
+   width (~130px in Chromium), which outranks the 72px flex basis and pushed the slider
+   right out of the header column and under the ruler until this let it shrink. */
+.tl-view-zoom { flex: 0 0 100%; min-width: 0; display: flex; align-items: center; gap: 1px; margin-top: 2px; }
+.tl-view-zoom-slider {
+  flex: 1; min-width: 0; width: 100%; height: 10px; margin: 0;
+  accent-color: var(--accent); cursor: pointer;
+}
+/* Step buttons either side of the slider. Deliberately tiny — the whole row has 72px to
+   live in, and every pixel these take is one the slider loses. */
+.tl-view-zoom-btn {
+  flex: none; width: 12px; height: 12px; padding: 0; border: none; border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.tl-view-zoom-btn:hover:not(:disabled) { background: var(--border); color: var(--text); }
+.tl-view-zoom-btn:disabled { opacity: .35; cursor: default; }
+
 .tl-ruler {
   position: relative; flex: 1; height: 20px; cursor: pointer; user-select: none;
   border-bottom: 1px solid var(--border-strong);
 }
 .tl-tick { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--border); padding-left: 4px; }
 .tl-tick-label { font-size: 9px; color: var(--muted); white-space: nowrap; }
+/* Total length, pinned to the ruler's right edge. Its own background so the last tick's
+   label passing underneath it stays readable rather than overlapping into mush. */
+.tl-ruler-end {
+  position: absolute; top: 0; right: 0; padding-left: 5px; z-index: 1;
+  font-size: 9px; font-weight: 600; color: var(--text); white-space: nowrap;
+  background: var(--panel); pointer-events: none;
+}
 
 .tl-track {
   position: relative; flex: 1; height: 44px;

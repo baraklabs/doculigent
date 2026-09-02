@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { MousePointer2, RotateCcw, RotateCw, Scissors, Trash2 } from "lucide-react";
+import { Minus, MousePointer2, Plus, RotateCcw, RotateCw, Scissors, Trash2 } from "lucide-react";
 import { MagicWand } from "@phosphor-icons/react";
 import {
   DEFAULT_CURSOR_EDIT_SETTINGS,
@@ -39,8 +39,21 @@ export type TrackKind = "clips" | "camera" | "zoom" | "cursor" | "layout" | "sou
 
 // Every .tl-row's header column (72px) plus the gap Timeline.css puts between it and the
 // track (10px) — where the playhead's own left offset below has to start too, so it lines
-// up with the ruler/Clips/Zoom/Camera tracks instead of the header column.
+// up with the ruler/Clips/Zoom/Camera tracks instead of the header column. Unaffected by
+// the view zoom below: the header column keeps its fixed width at every zoom level, so only
+// the tracks themselves stretch.
 const TL_TRACK_START_PX = 82;
+
+// View-zoom range for the slider under the tool buttons — 1 is fit-to-width (the default,
+// and how the timeline has always drawn), 8 spreads the same recording over eight screens.
+// The minimum goes one step *below* fit, so the whole timeline can also be pulled in
+// slightly narrower than its pane rather than always butting up against both edges.
+const VIEW_ZOOM_MIN = 0.9;
+const VIEW_ZOOM_MAX = 8;
+const VIEW_ZOOM_STEP = 0.1;
+// Coarser than the slider's own drag step — a click on -/+ should move the view by an
+// obvious amount rather than the barely-visible nudge a 0.1 would give.
+const VIEW_ZOOM_BUTTON_STEP = 0.5;
 
 interface TimelineProps {
   timeline: TimelineEditSettings;
@@ -129,6 +142,15 @@ function formatTime(ms: number): string {
 function formatTimeSecs(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) return "0.0s";
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+// Full hh:mm:ss, for the ruler's end label — the one place the recording's *total* length is
+// spelled out, so unlike the ticks' running m:ss it stays unambiguous past an hour.
+function formatHms(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "00:00:00";
+  const totalSecs = Math.floor(ms / 1000);
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${pad(Math.floor(totalSecs / 3600))}:${pad(Math.floor((totalSecs % 3600) / 60))}:${pad(totalSecs % 60)}`;
 }
 
 // Picks a "nice" tick spacing that lands roughly 6-10 ticks across the ruler.
@@ -361,9 +383,21 @@ export function Timeline({
   // is close enough to snap onto a cut boundary already sitting on any *other* track — a
   // preview of "cut here and it'll line up with that one," shown before the click happens.
   // Every cuttable track takes part (see crossTrackBoundaryPoints), not just Clips/Camera:
-  // whichever piece the snapped ms belongs to lights up too, so it's clear *which* cut this
-  // one would line up with (see snapTargetKeys).
+  // the tracks that already have a cut at that exact ms draw their own marker there too, so
+  // it's clear *which* cut this one would line up with (see snapTargetTracks).
   const [cutGuide, setCutGuide] = useState<{ track: TrackKind; ms: number } | null>(null);
+  // How much wider than its container the timeline draws itself — purely a view setting (how
+  // far in the ruler is scrolled/magnified), nothing to do with the Zoom *track*'s own
+  // zoom-in effects. 1 is fit-to-width, the way this has always rendered; anything above
+  // that overflows .tl-root, which scrolls. Everything inside a track positions itself as a
+  // percentage of that track's own width, so widening the rows is all it takes for pieces,
+  // ticks, the playhead and the cut guides to spread out with it.
+  const [viewZoom, setViewZoom] = useState(1);
+  // toFixed rounds off the float drift a repeated += 0.5 from 0.9 otherwise accumulates,
+  // which would keep the slider's own value from ever landing back on a clean step.
+  function stepViewZoom(direction: 1 | -1) {
+    setViewZoom((z) => clamp(Number((z + direction * VIEW_ZOOM_BUTTON_STEP).toFixed(2)), VIEW_ZOOM_MIN, VIEW_ZOOM_MAX));
+  }
   // While dragging (moving or edge-trimming) a Clips/Camera piece, which other piece on
   // that same track it's currently snapped flush against (no gap, no overlap) — both the
   // dragged piece and its neighbor get a highlight so the touch is obvious mid-drag.
@@ -1780,7 +1814,12 @@ export function Timeline({
 
   return (
     <div className="tl-root">
-    <div className="tl-inner" ref={tlInnerRef}>
+    {/* An explicit width, with growing switched off, rather than a min-width: below 1 the
+        point is for the timeline to end up *narrower* than its pane, and `flex: 1` would
+        just grow it back to full width again. Timeline.css's own `min-width: 480px` still
+        applies underneath as the absolute floor. At zoom 1 this is a plain 100%, i.e.
+        exactly what `flex: 1` was already producing. */}
+    <div className="tl-inner" ref={tlInnerRef} style={{ flex: "0 0 auto", width: `${viewZoom * 100}%` }}>
       <div className="tl-row">
         <div className="tl-row-header tl-tool-toggle" role="group" aria-label="Timeline tool">
           <button
@@ -1819,6 +1858,43 @@ export function Timeline({
               <RotateCw size={12} />
             </button>
           </div>
+          {/* Takes its own full-width line under the four buttons (the container wraps).
+              Double-click the slider snaps back to fit-to-width, since dragging a track this
+              narrow back to exactly 1 is fiddly. */}
+          <div className="tl-view-zoom">
+            <button
+              type="button"
+              className="tl-view-zoom-btn"
+              onClick={() => stepViewZoom(-1)}
+              disabled={viewZoom <= VIEW_ZOOM_MIN}
+              title="Zoom the timeline out"
+              aria-label="Zoom the timeline out"
+            >
+              <Minus size={9} />
+            </button>
+            <input
+              type="range"
+              className="tl-view-zoom-slider"
+              min={VIEW_ZOOM_MIN}
+              max={VIEW_ZOOM_MAX}
+              step={VIEW_ZOOM_STEP}
+              value={viewZoom}
+              onChange={(e) => setViewZoom(Number(e.target.value))}
+              onDoubleClick={() => setViewZoom(1)}
+              aria-label="Timeline zoom"
+              title={`Timeline zoom — ${viewZoom.toFixed(1)}× (double-click to fit)`}
+            />
+            <button
+              type="button"
+              className="tl-view-zoom-btn"
+              onClick={() => stepViewZoom(1)}
+              disabled={viewZoom >= VIEW_ZOOM_MAX}
+              title="Zoom the timeline in"
+              aria-label="Zoom the timeline in"
+            >
+              <Plus size={9} />
+            </button>
+          </div>
         </div>
         <div
           className="tl-ruler"
@@ -1832,6 +1908,10 @@ export function Timeline({
               <span className="tl-tick-label">{formatTime(t)}</span>
             </div>
           ))}
+          {/* The recording's end. Ticks land on whole tickStep multiples, so the last one is
+              almost never the actual end — this pins the real total to the ruler's right
+              edge, where it also can't be scrolled past at any view zoom. */}
+          <span className="tl-ruler-end" title="Total length">{formatHms(durationMs)}</span>
         </div>
       </div>
 
