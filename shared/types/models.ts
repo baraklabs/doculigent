@@ -180,6 +180,32 @@ export interface CameraEditSettings {
    *  whatever's already behind the bubble (screen recording, backdrop) show through.
    *  Takes over from `blur` while on, which becomes moot (nothing left to blur behind). */
   removeBackground: boolean;
+  /** Mutes the mic audio for this cut — or, whole-recording, whichever audio channel the
+   *  Camera tab is the *only* reachable control for: the camera file's own track when
+   *  there's a separate one, or a screen-only recording's separately-captured audio.wav
+   *  otherwise (see PreviewCompositor's mutedRef doc comment for that split). Independent
+   *  of BackgroundEditSettings.muted, which governs the screen recording's own system
+   *  audio — the two channels are recorded, mixed and muted separately end to end. */
+  muted: boolean;
+  /** Border ringing the bubble's own outline, as a % of the canvas's shorter side, 0-5 —
+   *  same convention as the Effects tab's callout border (see TimelineEffect.borderPct), so
+   *  a camera ring and a callout ring feel the same size at the same value. 0 hides it,
+   *  unless `marquee` is on, which always draws a thin ring regardless. */
+  borderPct: number;
+  /** Border color while `marquee` is off — a hex string, either from CALLOUT_COLORS or a
+   *  custom pick. */
+  borderColor: string;
+  /** Replaces the plain border above with an animated one — the same "glow" (pulsing halo)
+   *  / "orbit" (chasing dashed segment) choice, in a solid or gradient color, as the
+   *  Effects tab's own callout marquee (see TimelineEffect.marquee and friends). */
+  marquee: boolean;
+  marqueeStyle: "glow" | "orbit";
+  marqueeColorMode: "solid" | "gradient";
+  /** Used in "solid" mode — a hex string, either from CALLOUT_COLORS or a custom pick. */
+  marqueeColor: string;
+  /** Used in "gradient" mode — either from BACKGROUND_GRADIENTS or a custom pick. */
+  marqueeGradientFrom: string;
+  marqueeGradientTo: string;
 }
 
 export type CursorStyle = "default" | "arrow" | "circle" | "hand" | "crosshair" | "mouse-pointer" | "mouse-simple";
@@ -237,9 +263,10 @@ export interface BackgroundEditSettings {
   cropRightPct: number;
   cropBottomPct: number;
   cropLeftPct: number;
-}
-
-export interface SoundEditSettings {
+  /** Mutes the screen recording's own audio for this cut — system audio, on every
+   *  platform (see mutedRef's own doc comment in PreviewCompositor), or the entire
+   *  soundtrack for an already-muxed single-file source with no separate mic track.
+   *  Independent of CameraEditSettings.muted, which governs the mic channel. */
   muted: boolean;
 }
 
@@ -289,6 +316,32 @@ export interface LayoutEditSettings {
   reelScreenFull: boolean;
 }
 
+/** The Ext Video track's presentation settings — deliberately a BackgroundEditSettings
+ *  (backdrop fill, padding, rounded corner, backdrop blur, zoom, per-side crop, mute), so
+ *  an inserted video is composited through the exact same fit/crop/zoom path the screen
+ *  recording is (see PreviewCompositor's computeScreenContentFit/drawScreenContent), plus
+ *  a size and position of its own. The Screen tab's equivalents live in
+ *  LayoutEditSettings (freeScreenSizePct/HeightPct/freeScreenPos) because the screen box is
+ *  shared with the Layout tab; an Ext Video piece answers to nothing else, so its box lives
+ *  here — dragged and corner-resized directly in the preview exactly like the screen's, and
+ *  written back to whichever of these objects is in force for the piece being dragged (its
+ *  own override, or the master). There's no OS-chrome ("Remove taskbar")
+ *  shortcut either: that crops a *recording* of this machine's desktop, which an added
+ *  file isn't. The four Crop sliders still cover it by hand. */
+export interface ExtVideoEditSettings extends BackgroundEditSettings {
+  /** The video box's width and height, each as a % of the canvas's own — 100 fills the
+   *  canvas (the pre-settings behavior), below that insets it, above that overflows and is
+   *  cut off by the frame edge. Independent of each other, exactly like the screen box's
+   *  freeScreenSizePct/freeScreenHeightPct: the panel's one Size slider moves them
+   *  together, a corner-drag in the preview sets them apart. */
+  sizePct: number;
+  heightPct: number;
+  /** Where the box sits, as a % of its own travel range (see FreePosition) — set by
+   *  dragging it in the preview. Null while it has never been moved, which resolves to
+   *  dead center. */
+  pos: FreePosition | null;
+}
+
 export interface EditProject {
   id: string;
   title: string;
@@ -298,9 +351,12 @@ export interface EditProject {
   camera?: CameraEditSettings;
   cursor?: CursorEditSettings;
   background?: BackgroundEditSettings;
-  sound?: SoundEditSettings;
   layout?: LayoutEditSettings;
   timeline?: TimelineEditSettings;
+  /** Extra audio/video files the user added to this project from the Edit page's Media
+   *  panel — see EditProjectMediaItem. Absent on every project saved before that existed
+   *  (and on any that simply has none), which reads the same as an empty pool. */
+  media?: EditProjectMediaItem[];
 }
 
 /** Unused today — both the Clips and Camera tracks' pieces (and their order) are defined
@@ -375,6 +431,97 @@ export interface TimelineZoom {
   tilt: TimelineZoomTilt;
 }
 
+/** Which of the two Effects-tab blocks an effect box belongs to — "callout" draws
+ *  attention to the region it covers (optional dim over everything else, a colored border
+ *  and an optional label), "blur" hides whatever is inside it (a passcode, a real name, a
+ *  customer logo). Both are the same box on the frame; only what's painted differs. */
+export type TimelineEffectKind = "callout" | "blur";
+
+/** An effect's box on the composited frame, in % of canvas width/height — resolution- and
+ *  format-independent, so the same project renders the box in the same place whether it's
+ *  previewing on a 1920x1080 landscape canvas or exporting a 1080x1920 reel. `xPct`/`yPct`
+ *  are the box's top-left corner (not its center), which makes the free-draw drag a
+ *  straight conversion with no half-size bookkeeping. Values may sit slightly outside
+ *  0-100 — a box dragged partly off-frame is legal and simply clips at the edge. */
+export interface TimelineEffectBox {
+  xPct: number;
+  yPct: number;
+  wPct: number;
+  hPct: number;
+}
+
+export type TimelineEffectShape = "rect" | "ellipse";
+
+/** One callout/blur box placed on the frame from the Effects tab. Exactly the timeline
+ *  shape TimelineZoom has — a [startMs, startMs + durationMs) window on the edited
+ *  timeline, any number of them, each freely movable and edge-trimmable on its own track
+ *  (Callout and Blur get one row each, see Timeline.tsx) — plus the box on the frame that
+ *  the zoom blocks have no equivalent of. Callout-only and blur-only fields both live on
+ *  every effect regardless of `kind` so switching kinds back and forth never discards
+ *  settings the user already dialed in. */
+export interface TimelineEffect {
+  id: string;
+  kind: TimelineEffectKind;
+  box: TimelineEffectBox;
+  shape: TimelineEffectShape;
+  /** Milliseconds on the *edited* timeline, same clock as TimelineZoom.startMs. */
+  startMs: number;
+  durationMs: number;
+
+  // --- callout ---
+  /** Label chip color, and the border's own color too — unless `marquee` is on, in which
+   *  case the border instead comes from marqueeColor/marqueeGradientFrom/To below. A hex
+   *  string, either from CALLOUT_COLORS or a custom pick. */
+  color: string;
+  /** How far everything *outside* the box is darkened, 0-90. 0 draws just the border. */
+  dimPct: number;
+  /** Border thickness as a % of the canvas's shorter side, 0-5 — a fraction rather than
+   *  raw pixels so it reads the same on either canvas size. 0 hides the border. */
+  borderPct: number;
+  /** Corner rounding as a % of the box's shorter side, 0-50. Ignored for "ellipse". */
+  cornerPct: number;
+  /** Optional caption drawn in a chip just outside the box's top-left corner. Empty
+   *  string means no label at all. */
+  label: string;
+  /** "Popout" — whether the whole box (its outline — dim cutout, border/marquee — *and*
+   *  the video content inside it, together as one unit) eases up to popupZoomPct and back
+   *  down over EFFECT_POPUP_MS at each edge of the box's active window, with the
+   *  dim/border/marquee/label fading in and out alongside it. Everything *outside* the
+   *  box's own current bounds is never touched — only the callout itself grows/shrinks
+   *  and zooms, not the rest of the frame. Holds at popupZoomPct through the rest of the
+   *  window in between. */
+  popupAnim: boolean;
+  /** How far the whole callout — box and content together — zooms in at the peak of the
+   *  Popout animation, 100-300 (100 = no zoom) — same convention as
+   *  BackgroundEditSettings.zoomPct. Only meaningful while popupAnim is on. */
+  popupZoomPct: number;
+  /** 3D perspective tilt applied to the box's own outline (border, dim cutout, marquee) —
+   *  same {xDeg,yDeg} shape TimelineZoom.tilt uses, and reuses its own preset grid/custom
+   *  range in the panel. Independent of any Zoom tilt on the content underneath: this
+   *  tilts the callout shape itself, not the screen recording. All-zero renders identical
+   *  to no tilt. */
+  tilt: TimelineZoomTilt;
+  /** Replaces the plain static border (color/borderPct above) with an animated one when
+   *  true — see marqueeStyle/marqueeColorMode below. */
+  marquee: boolean;
+  /** "glow" pulses the border's own glow; "orbit" chases a bright segment around the
+   *  box's perimeter, marquee-light style. */
+  marqueeStyle: "glow" | "orbit";
+  marqueeColorMode: "solid" | "gradient";
+  /** Used in "solid" mode — a hex string, either from CALLOUT_COLORS or a custom pick. */
+  marqueeColor: string;
+  /** Used in "gradient" mode — either from BACKGROUND_GRADIENTS or a custom pick. */
+  marqueeGradientFrom: string;
+  marqueeGradientTo: string;
+
+  // --- blur ---
+  /** Blur strength, 0-100, mapped onto a pixel radius against the canvas's shorter side. */
+  blurPct: number;
+  /** Blocks instead of a gaussian blur — the mosaic look, which reads as more deliberately
+   *  redacted (and can't be un-blurred by sharpening the way a light gaussian can). */
+  pixelate: boolean;
+}
+
 /** Unused today — the Camera track's shown/hidden windows are defined by
  *  `TimelineEditSettings.cameraClips` instead (an empty stretch there — a gap between
  *  pieces — is what plays as hidden now). Kept only for save-file compatibility with
@@ -385,7 +532,7 @@ export interface TimelineCameraHide {
   durationMs: number;
 }
 
-/** One config-only stretch of a footage-less track (Cursor/Layout/Sound) — no source
+/** One config-only stretch of a footage-less track (Cursor/Layout) — no source
  *  media of its own, so unlike TimelineClip there's nothing to trim: just a [startMs,
  *  endMs) span on the edited timeline. `settings` is null while the segment inherits the
  *  tab's master settings; setting it to a real (cloned) object customizes just that span.
@@ -399,12 +546,47 @@ export interface TimelineSegment<T> {
   settings: T | null;
 }
 
+/** Whether a user-added media file plays on the Audio track (sound only) or the Video
+ *  track (drawn over the composited frame, bringing its own audio with it). Decided from
+ *  the file's own extension the moment it's added — see mediaKindForPath. */
+export type EditProjectMediaKind = "audio" | "video";
+
+/** One audio/video file the user added to a project from the Edit page's Media panel —
+ *  the pool the Timeline's Audio/Video tracks place clips from. The file itself is never
+ *  copied anywhere: `filePath` points at wherever the user picked it from, exactly like a
+ *  custom background image's own customImagePath, so moving or deleting it out from under
+ *  the project just leaves the clips referencing it playing nothing rather than corrupting
+ *  anything. `durationMs` is measured once, in the renderer, at the moment it's added —
+ *  placing a clip needs a source length up front and neither the Timeline nor the main
+ *  process has a media element of its own to read one from. */
+export interface EditProjectMediaItem {
+  id: string;
+  /** File basename — what the Media panel and the placed piece both label themselves. */
+  name: string;
+  filePath: string;
+  kind: EditProjectMediaKind;
+  durationMs: number;
+}
+
+/** One placed piece of an added media file on the Video/Audio track — a TimelineClip
+ *  (identical independent-position, free-overlap, trim-at-the-edges model; see its own doc
+ *  comment) that additionally records *which* file it plays, since unlike Clips/Camera
+ *  these two tracks aren't backed by a single source recording. A piece whose `mediaId` no
+ *  longer resolves (its item was removed from the pool) is skipped everywhere. */
+export interface TimelineMediaClip extends TimelineClip {
+  mediaId: string;
+}
+
 export interface TimelineEditSettings {
   /** Unused today — see TimelineCut. */
   cuts: TimelineCut[];
   zooms: TimelineZoom[];
   /** Unused today — see TimelineCameraHide. */
   cameraHides: TimelineCameraHide[];
+  /** The Effects tab's callout/blur boxes — one shared list holding both kinds, split back
+   *  out by `kind` into the Timeline's two Effects rows. In draw order: later entries paint
+   *  on top of earlier ones. See TimelineEffect. */
+  effects: TimelineEffect[];
   /** The Clips track's edited sequence — see TimelineClip. Empty means unedited (whole
    *  recording, original order). */
   clips: TimelineClip[];
@@ -421,11 +603,28 @@ export interface TimelineEditSettings {
    *  with no entry here just inherits the Screen/Camera tab's master settings. */
   clipOverrides: Record<string, BackgroundEditSettings>;
   cameraClipOverrides: Record<string, CameraEditSettings>;
-  /** Cursor/Layout/Sound have no footage to cut, so they're divided into config-only
+  /** Cursor/Layout have no footage to cut, so they're divided into config-only
    *  TimelineSegments instead of TimelineClips — see TimelineSegment's own doc comment. */
   cursorSegments: TimelineSegment<CursorEditSettings>[];
   layoutSegments: TimelineSegment<LayoutEditSettings>[];
-  soundSegments: TimelineSegment<SoundEditSettings>[];
+  /** The Video/Audio tracks' placed pieces of this project's added media (see
+   *  EditProject.media). Unlike clips/cameraClips, an empty array here genuinely means
+   *  "nothing placed" rather than "unedited" — there's no source recording behind these
+   *  two tracks to fabricate a default piece from. A Video piece is drawn over the whole
+   *  composited frame for its stretch and brings its own audio; an Audio piece is sound
+   *  only. Overlapping Video pieces stack exactly like Clips (the last one in the array
+   *  wins); overlapping Audio pieces all play, mixed together. */
+  videoClips: TimelineMediaClip[];
+  audioClips: TimelineMediaClip[];
+  /** The Ext Video track's master presentation settings and its per-piece overrides, keyed
+   *  by the owning TimelineMediaClip's id — the same master/override split the Screen track
+   *  has in `background`/`clipOverrides`, except both halves live here rather than on
+   *  EditProject: everything about the Ext tracks other than the media pool itself is
+   *  already timeline-owned, and keeping them together means a piece's own look undoes,
+   *  redoes and saves in the same step its position does. A piece with no entry here just
+   *  inherits `extVideo`. */
+  extVideo: ExtVideoEditSettings;
+  videoClipOverrides: Record<string, ExtVideoEditSettings>;
 }
 
 export const DEFAULT_CAMERA_EDIT_SETTINGS: CameraEditSettings = {
@@ -440,6 +639,15 @@ export const DEFAULT_CAMERA_EDIT_SETTINGS: CameraEditSettings = {
   cropBottomPct: 0,
   cropLeftPct: 0,
   removeBackground: false,
+  muted: false,
+  borderPct: 0,
+  borderColor: "#ffffff",
+  marquee: true,
+  marqueeStyle: "glow",
+  marqueeColorMode: "gradient",
+  marqueeColor: "#ffffff",
+  marqueeGradientFrom: "#db2777",
+  marqueeGradientTo: "#f59e0b",
 };
 
 export const DEFAULT_CURSOR_EDIT_SETTINGS: CursorEditSettings = {
@@ -487,6 +695,25 @@ export const DEFAULT_BACKGROUND_EDIT_SETTINGS: BackgroundEditSettings = {
   cropRightPct: 0,
   cropBottomPct: 0,
   cropLeftPct: 0,
+  muted: false,
+};
+
+/** An Ext Video piece's starting point: full-canvas, no backdrop of its own, no padding,
+ *  no rounded corner — so an existing project opens looking essentially as it did before
+ *  these settings existed. The one deliberate difference is fit: an inserted video used to
+ *  be *cropped* to fill the canvas, and is now letterboxed to fit inside it whole (the same
+ *  "contain" fit the screen recording uses), because a backdrop to letterbox against is
+ *  exactly what this tab now offers. `fill: "none"` means "don't paint a backdrop at all" —
+ *  whatever the composited frame already had behind it shows through the gap instead of
+ *  being covered over. */
+export const DEFAULT_EXT_VIDEO_EDIT_SETTINGS: ExtVideoEditSettings = {
+  ...DEFAULT_BACKGROUND_EDIT_SETTINGS,
+  fill: "none",
+  paddingPct: 0,
+  cornerRadiusPct: 0,
+  sizePct: 100,
+  heightPct: 100,
+  pos: null,
 };
 
 export const DEFAULT_LAYOUT_EDIT_SETTINGS: LayoutEditSettings = {
@@ -507,21 +734,21 @@ export const DEFAULT_LAYOUT_EDIT_SETTINGS: LayoutEditSettings = {
   reelScreenFull: false,
 };
 
-export const DEFAULT_SOUND_EDIT_SETTINGS: SoundEditSettings = {
-  muted: false,
-};
-
 export const DEFAULT_TIMELINE_EDIT_SETTINGS: TimelineEditSettings = {
   cuts: [],
   zooms: [],
   cameraHides: [],
+  effects: [],
   clips: [],
   cameraClips: [],
   clipOverrides: {},
   cameraClipOverrides: {},
   cursorSegments: [],
   layoutSegments: [],
-  soundSegments: [],
+  videoClips: [],
+  audioClips: [],
+  extVideo: DEFAULT_EXT_VIDEO_EDIT_SETTINGS,
+  videoClipOverrides: {},
 };
 
 export const ZOOM_DEFAULT_PCT: TimelineZoomPct = 150;
@@ -561,6 +788,11 @@ export const BACKGROUND_GRADIENTS: BackgroundGradientPreset[] = [
   { id: "forest", label: "Forest", angleDeg: 135, from: "#166534", to: "#65a30d" },
   { id: "candy", label: "Candy", angleDeg: 135, from: "#db2777", to: "#f59e0b" },
   { id: "midnight", label: "Midnight", angleDeg: 135, from: "#0f172a", to: "#312e81" },
+  // Light/pastel end of the palette — the six above are all fairly dark or saturated, with
+  // nothing that reads well as a soft, airy pick against light content.
+  { id: "pastel", label: "Pastel", angleDeg: 135, from: "#fbc2eb", to: "#a6c1ee" },
+  { id: "sky", label: "Sky", angleDeg: 135, from: "#a1c4fd", to: "#c2e9fb" },
+  { id: "peach", label: "Peach", angleDeg: 135, from: "#ffecd2", to: "#fcb69f" },
 ];
 
 export interface BackgroundTexturePreset {

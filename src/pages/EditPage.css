@@ -41,12 +41,21 @@
 
 .edit-media-info { position: relative; }
 .edit-media-info-panel {
+  /* Anchored to the Media button's right edge and sized to its own content, so every box
+     added grows the row to the *left* rather than pushing anything past the window edge.
+     Wraps to a second line (and scrolls) only once a project has accumulated enough files
+     to hit the max-width. */
   position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
-  width: max-content; max-width: min(360px, calc(100vw - 32px));
+  width: max-content; max-width: min(560px, calc(100vw - 32px));
+  max-height: min(460px, calc(100vh - 120px)); overflow-y: auto;
   background: #fff; border: 1px solid var(--border); border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, .12);
-  padding: 10px; display: flex; flex-wrap: wrap; gap: 8px;
+  padding: 10px; display: flex; flex-direction: column; gap: 8px;
 }
+/* One flow for all three kinds of box — the recording's own files, the added ones, and the
+   "Add media" box that always sits last. */
+.edit-media-file-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.edit-media-hint { font-size: 10px; color: var(--muted); line-height: 1.4; max-width: 320px; }
 .edit-media-info-row {
   display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px;
   flex: none; width: 96px; padding: 10px 6px 8px; border-radius: 8px;
@@ -62,7 +71,19 @@
   font-size: 8px; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
 }
-.edit-media-info-empty { font-size: 11px; color: var(--muted); padding: 2px; grid-column: 1 / -1; }
+
+/* "Add media" — deliberately the same box as Screen/Camera next to it, in its own accent
+   color and dashed to read as the empty slot rather than a file. Always the last box, so
+   adding a file simply appears before it and carries it along. */
+.edit-media-add-card {
+  font: inherit; cursor: pointer;
+  background: rgba(91, 75, 245, .09); border: 1px dashed rgba(91, 75, 245, .5);
+}
+.edit-media-add-card:hover:not(:disabled) { background: rgba(91, 75, 245, .16); border-color: var(--accent); }
+.edit-media-add-card:disabled { opacity: .45; cursor: not-allowed; }
+.edit-media-add-icon { color: var(--accent); }
+.edit-media-add-card .edit-media-info-label { color: var(--accent); }
+.edit-media-add-card .edit-media-info-path { color: var(--muted); font-family: inherit; font-size: 9px; }
 
 /* Resizable body: 60/40 top-bottom split, top split 40/60 left-right ------------ */
 
@@ -78,9 +99,12 @@
   flex: 0 0 auto; min-width: 0; display: flex; flex-direction: column;
   background: var(--panel); overflow: hidden;
 }
-.edit-tab-rail { display: flex; flex: none; border-bottom: 1px solid var(--border); }
+/* Scrolls rather than crushing labels once every tab is present (Effects plus both Ext
+   tabs put eight in the rail) on a sidebar dragged narrow. */
+.edit-tab-rail { display: flex; flex: none; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
+.edit-tab-rail::-webkit-scrollbar { display: none; }
 .edit-tab-btn {
-  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  flex: 1 0 auto; min-width: 56px; display: flex; flex-direction: column; align-items: center; gap: 4px;
   background: transparent; border: none; border-radius: 0; color: var(--muted);
   padding: 10px 4px 8px; font-size: 10px; font-weight: 600;
   border-bottom: 2px solid transparent; margin-bottom: -1px;
@@ -125,3 +149,44 @@
 
 body.edit-resizing-row, body.edit-resizing-row * { cursor: row-resize !important; user-select: none !important; }
 body.edit-resizing-col, body.edit-resizing-col * { cursor: col-resize !important; user-select: none !important; }
+
+/* Added-media cards — the pool the Timeline's Video/Audio tracks place pieces from. Same
+   card shape as the recording's own files above, plus the two things only these have: a
+   drag grip (the whole card is the HTML5 drag source) and per-card add/remove buttons. */
+.edit-media-added-row { position: relative; cursor: grab; }
+/* Tinted to match the Timeline row each one drops onto (see Timeline.css's
+   .tl-row-header-video/.tl-row-header-audio), so it's obvious from the card alone which
+   track it belongs to — unlike the recording's own files above, these two can both be
+   present at once and go to different places. */
+.edit-media-added-row.edit-media-info-row-video { background: rgba(234, 88, 12, .12); }
+.edit-media-added-row.edit-media-info-row-audio { background: rgba(219, 39, 119, .12); }
+.edit-media-added-row.edit-media-info-row-video .edit-media-info-icon { color: #ea580c; fill: rgba(234, 88, 12, .25); }
+.edit-media-added-row.edit-media-info-row-audio .edit-media-info-icon { color: #db2777; fill: rgba(219, 39, 119, .25); }
+/* A real file name, not a fixed role label like "Screen"/"Camera" above — so it keeps its
+   own casing and gets the full-width ellipsis treatment instead of being shouted. */
+.edit-media-added-row .edit-media-info-label {
+  text-transform: none; letter-spacing: 0; color: var(--text); font-size: 10px;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.edit-media-added-row:active { cursor: grabbing; }
+.edit-media-added-row:hover { border-color: var(--accent); }
+/* Its file couldn't be read, so there's nothing to place from it — still listed (and
+   removable) rather than silently dropped, but not draggable. */
+.edit-media-added-row-bad { opacity: .6; cursor: not-allowed; }
+.edit-media-added-row-bad:active { cursor: not-allowed; }
+/* Add-at-playhead and remove, one in each top corner — kept out of the box's flow so an
+   added file's box stays exactly the same shape and size as Screen/Camera beside it. Always
+   faintly visible (not hover-only) so it's clear from the panel alone that an added file can
+   be dropped on the timeline or taken back out again. */
+.edit-media-corner-btn {
+  position: absolute; top: 2px;
+  display: flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; padding: 0; border: none; border-radius: 4px;
+  background: transparent; color: var(--muted); opacity: .55; transition: opacity .1s;
+}
+.edit-media-added-row:hover .edit-media-corner-btn { opacity: 1; }
+.edit-media-corner-add { left: 2px; }
+.edit-media-corner-add:hover:not(:disabled) { background: rgba(91, 75, 245, .16); color: var(--accent); }
+.edit-media-corner-add:disabled { opacity: .25; cursor: not-allowed; }
+.edit-media-corner-remove { right: 2px; }
+.edit-media-corner-remove:hover { background: rgba(239, 68, 68, .14); color: var(--danger); }

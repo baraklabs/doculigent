@@ -10,11 +10,12 @@ import type {
   CursorEditSettings,
   EditProject,
   EditProjectMedia,
+  EditProjectMediaItem,
   EditProjectSource,
   LayoutEditSettings,
-  SoundEditSettings,
   TimelineEditSettings,
 } from "@shared/types/models";
+import { MEDIA_AUDIO_EXTENSIONS, MEDIA_VIDEO_EXTENSIONS } from "@shared/constants/media";
 import { NotFoundError } from "@shared/ipc/errors";
 import * as store from "../native/editProjectStore";
 import {
@@ -116,15 +117,6 @@ export function registerEditProjectsIpc(): void {
   );
 
   ipcMain.handle(
-    Channels.editProjects.updateSound,
-    async (_event, id: string, sound: SoundEditSettings): Promise<EditProject> => {
-      const updated = store.updateEditProjectSound(id, sound);
-      if (!updated) throw new NotFoundError(`project ${id}`);
-      return updated;
-    }
-  );
-
-  ipcMain.handle(
     Channels.editProjects.updateLayout,
     async (_event, id: string, layout: LayoutEditSettings): Promise<EditProject> => {
       const updated = store.updateEditProjectLayout(id, layout);
@@ -149,6 +141,34 @@ export function registerEditProjectsIpc(): void {
     });
     return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
   });
+
+  // The Edit page's Media panel "Add media" button — one dialog offering audio and video
+  // together (the panel decides which Timeline track each picked file lands on from its own
+  // extension, so there's nothing here for the user to pick a *kind* for first), multi-select
+  // on. Returns paths only: nothing is copied or imported, the project just records where
+  // each file lives (see EditProjectMediaItem).
+  ipcMain.handle(Channels.editProjects.pickMediaFiles, async (): Promise<string[]> => {
+    const video = MEDIA_VIDEO_EXTENSIONS.map((e) => e.slice(1));
+    const audio = MEDIA_AUDIO_EXTENSIONS.map((e) => e.slice(1));
+    const result = await dialog.showOpenDialog({
+      properties: ["openFile", "multiSelections"],
+      filters: [
+        { name: "Media files", extensions: [...video, ...audio] },
+        { name: "Video files", extensions: video },
+        { name: "Audio files", extensions: audio },
+      ],
+    });
+    return result.canceled ? [] : result.filePaths;
+  });
+
+  ipcMain.handle(
+    Channels.editProjects.updateMedia,
+    async (_event, id: string, media: EditProjectMediaItem[]): Promise<EditProject> => {
+      const updated = store.updateEditProjectMedia(id, media);
+      if (!updated) throw new NotFoundError(`project ${id}`);
+      return updated;
+    }
+  );
 
   ipcMain.handle(
     Channels.editProjects.getMedia,

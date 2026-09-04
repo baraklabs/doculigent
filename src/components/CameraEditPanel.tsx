@@ -1,11 +1,13 @@
-import { Square, Circle, RectangleHorizontal, RectangleVertical, EyeOff, Eye, type LucideIcon } from "lucide-react";
+import { Square, Circle, RectangleHorizontal, RectangleVertical, EyeOff, Eye, Mic, MicOff, type LucideIcon } from "lucide-react";
 import {
+  BACKGROUND_GRADIENTS,
   DEFAULT_CAMERA_EDIT_SETTINGS,
   type CameraBlurLevel,
   type CameraEditSettings,
   type CameraEditShape,
   type EditProjectMedia,
 } from "@shared/types/models";
+import { CALLOUT_COLORS } from "@shared/lib/timelineEffects";
 import { ResetRow } from "./ResetRow";
 import { CutChipRail, type CutChipRailCut } from "./CutChipRail";
 import "./CameraEditPanel.css";
@@ -99,6 +101,26 @@ export function CameraEditPanel({
         >
           {camera.hidden ? <EyeOff size={14} /> : <Eye size={14} />}
           {camera.hidden ? "Hidden" : "Visible"}
+        </button>
+      </div>
+
+      {/* The mic channel — the camera file's own audio track when there's a real camera,
+          else (see EditProjectMedia.audioFilePath) a screen-only recording's separately-
+          captured audio.wav, which has no Camera tab of its own to reach — this is still
+          where its master + per-cut mute lives regardless, since a project in that shape
+          never shows this tab with `media?.editable` false to begin with. Independent of
+          the Visible/Hidden toggle above (and so outside the fieldset it disables) — hiding
+          the bubble and muting its mic are two different things to want. */}
+      <div className="camera-edit-row">
+        <span className="camera-edit-label">Audio</span>
+        <button
+          type="button"
+          className={`camera-edit-hide-btn${camera.muted ? " on" : ""}`}
+          aria-pressed={camera.muted}
+          onClick={() => patch({ muted: !camera.muted })}
+        >
+          {camera.muted ? <MicOff size={14} /> : <Mic size={14} />}
+          {camera.muted ? "Muted" : "Unmuted"}
         </button>
       </div>
 
@@ -227,6 +249,193 @@ export function CameraEditPanel({
               );
             })}
           </div>
+        </div>
+
+        {/* Border ringing the bubble's own outline — a plain stroke, or (once Marquee is
+            turned on) an animated one, same Glow/Chase, solid-or-gradient choice as the
+            Effects tab's own callout marquee, just applied to the camera shape instead of
+            a callout box. */}
+        <div className="camera-edit-section camera-border-section">
+          <span className="camera-edit-label">Border</span>
+
+          <label className="camera-edit-slider-row">
+            <span className="camera-edit-label">Thickness</span>
+            <input
+              type="range"
+              min={0}
+              max={50}
+              value={Math.round(camera.borderPct * 10)}
+              onChange={(e) => patch({ borderPct: Number(e.target.value) / 10 })}
+            />
+            <span className="camera-edit-slider-value">{camera.borderPct.toFixed(1)}%</span>
+          </label>
+
+          <div className="camera-edit-row">
+            <span className="camera-edit-label">Marquee</span>
+            <div className="camera-blur-segmented">
+              <button
+                type="button"
+                className={`camera-blur-seg-btn${!camera.marquee ? " active" : ""}`}
+                aria-pressed={!camera.marquee}
+                onClick={() => patch({ marquee: false })}
+              >
+                Off
+              </button>
+              <button
+                type="button"
+                className={`camera-blur-seg-btn${camera.marquee ? " active" : ""}`}
+                aria-pressed={camera.marquee}
+                onClick={() => patch({ marquee: true })}
+              >
+                On
+              </button>
+            </div>
+          </div>
+
+          {!camera.marquee && (
+            <div className="camera-edit-row">
+              <span className="camera-edit-label">Color</span>
+              <div className="camera-swatches">
+                {CALLOUT_COLORS.map((c) => (
+                  <span key={c.id} className="camera-swatch-wrap">
+                    <button
+                      type="button"
+                      className="camera-swatch"
+                      style={{ background: c.color }}
+                      title={c.label}
+                      aria-label={c.label}
+                      aria-pressed={camera.borderColor === c.color}
+                      onClick={() => patch({ borderColor: c.color })}
+                    />
+                    {camera.borderColor === c.color && <span className="camera-swatch-dot" />}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {camera.marquee && (
+            <>
+              <div className="camera-edit-row">
+                <span className="camera-edit-label">Style</span>
+                <div className="camera-blur-segmented">
+                  <button
+                    type="button"
+                    className={`camera-blur-seg-btn${camera.marqueeStyle === "glow" ? " active" : ""}`}
+                    aria-pressed={camera.marqueeStyle === "glow"}
+                    onClick={() => patch({ marqueeStyle: "glow" })}
+                  >
+                    Glow
+                  </button>
+                  <button
+                    type="button"
+                    className={`camera-blur-seg-btn${camera.marqueeStyle === "orbit" ? " active" : ""}`}
+                    aria-pressed={camera.marqueeStyle === "orbit"}
+                    onClick={() => patch({ marqueeStyle: "orbit" })}
+                  >
+                    Chase
+                  </button>
+                </div>
+              </div>
+
+              <div className="camera-edit-row">
+                <span className="camera-edit-label">Color</span>
+                <div className="camera-blur-segmented">
+                  <button
+                    type="button"
+                    className={`camera-blur-seg-btn${camera.marqueeColorMode === "solid" ? " active" : ""}`}
+                    aria-pressed={camera.marqueeColorMode === "solid"}
+                    onClick={() => patch({ marqueeColorMode: "solid" })}
+                  >
+                    Solid
+                  </button>
+                  <button
+                    type="button"
+                    className={`camera-blur-seg-btn${camera.marqueeColorMode === "gradient" ? " active" : ""}`}
+                    aria-pressed={camera.marqueeColorMode === "gradient"}
+                    onClick={() => patch({ marqueeColorMode: "gradient" })}
+                  >
+                    Gradient
+                  </button>
+                </div>
+              </div>
+
+              {camera.marqueeColorMode === "solid" ? (
+                <div className="camera-swatches camera-swatches-with-picker">
+                  {CALLOUT_COLORS.map((c) => (
+                    <span key={c.id} className="camera-swatch-wrap">
+                      <button
+                        type="button"
+                        className="camera-swatch"
+                        style={{ background: c.color }}
+                        title={c.label}
+                        aria-label={c.label}
+                        aria-pressed={camera.marqueeColor === c.color}
+                        onClick={() => patch({ marqueeColor: c.color })}
+                      />
+                      {camera.marqueeColor === c.color && <span className="camera-swatch-dot" />}
+                    </span>
+                  ))}
+                  <span className="camera-swatch-wrap">
+                    <label className="camera-swatch camera-swatch-custom" style={{ background: camera.marqueeColor }} title="Custom color">
+                      <input
+                        type="color"
+                        aria-label="Custom marquee color"
+                        value={camera.marqueeColor}
+                        onChange={(e) => patch({ marqueeColor: e.target.value })}
+                      />
+                    </label>
+                    {!CALLOUT_COLORS.some((c) => c.color === camera.marqueeColor) && <span className="camera-swatch-dot" />}
+                  </span>
+                </div>
+              ) : (
+                <div className="camera-swatches camera-swatches-with-picker">
+                  {BACKGROUND_GRADIENTS.map((g) => {
+                    const isActive = camera.marqueeGradientFrom === g.from && camera.marqueeGradientTo === g.to;
+                    return (
+                      <span key={g.id} className="camera-swatch-wrap">
+                        <button
+                          type="button"
+                          className="camera-gradient-swatch"
+                          style={{ background: `linear-gradient(${g.angleDeg}deg, ${g.from}, ${g.to})` }}
+                          title={g.label}
+                          aria-label={g.label}
+                          aria-pressed={isActive}
+                          onClick={() => patch({ marqueeGradientFrom: g.from, marqueeGradientTo: g.to })}
+                        />
+                        {isActive && <span className="camera-swatch-dot" />}
+                      </span>
+                    );
+                  })}
+                  <span className="camera-swatch-wrap">
+                    <div
+                      className="camera-gradient-swatch camera-gradient-swatch-custom"
+                      style={{ background: `linear-gradient(135deg, ${camera.marqueeGradientFrom}, ${camera.marqueeGradientTo})` }}
+                      title="Custom gradient"
+                    >
+                      <input
+                        type="color"
+                        title="From"
+                        aria-label="Custom gradient — from color"
+                        value={camera.marqueeGradientFrom}
+                        onChange={(e) => patch({ marqueeGradientFrom: e.target.value })}
+                      />
+                      <input
+                        type="color"
+                        title="To"
+                        aria-label="Custom gradient — to color"
+                        value={camera.marqueeGradientTo}
+                        onChange={(e) => patch({ marqueeGradientTo: e.target.value })}
+                      />
+                    </div>
+                    {!BACKGROUND_GRADIENTS.some((g) => g.from === camera.marqueeGradientFrom && g.to === camera.marqueeGradientTo) && (
+                      <span className="camera-swatch-dot" />
+                    )}
+                  </span>
+                </div>
+              )}
+            </>
+          )}
         </div>
       </fieldset>
 

@@ -12,9 +12,9 @@ import type {
   CursorEditSettings,
   EditProject,
   EditProjectMedia,
+  EditProjectMediaItem,
   EditProjectSource,
   LayoutEditSettings,
-  SoundEditSettings,
   LlmModelProfile,
   LlmProviderKind,
   MicConfig,
@@ -202,10 +202,16 @@ export interface DoculigentApi {
     updateCamera(id: string, camera: CameraEditSettings): Promise<EditProject>;
     updateCursor(id: string, cursor: CursorEditSettings): Promise<EditProject>;
     updateBackground(id: string, background: BackgroundEditSettings): Promise<EditProject>;
-    updateSound(id: string, sound: SoundEditSettings): Promise<EditProject>;
     updateLayout(id: string, layout: LayoutEditSettings): Promise<EditProject>;
     updateTimeline(id: string, timeline: TimelineEditSettings): Promise<EditProject>;
     pickBackgroundImage(): Promise<string | null>;
+    /** Opens a multi-select audio/video picker for the Edit page's Media panel and
+     *  returns the chosen paths — nothing is copied or imported, the project only
+     *  records where each file lives (see EditProjectMediaItem). Empty when cancelled. */
+    pickMediaFiles(): Promise<string[]>;
+    /** Replaces the project's added-media pool wholesale (add and remove both go
+     *  through this, same as every other update* above takes a whole settings object). */
+    updateMedia(id: string, media: EditProjectMediaItem[]): Promise<EditProject>;
     getMedia(id: string): Promise<EditProjectMedia>;
     delete(id: string, deleteSourceFiles?: boolean): Promise<void>;
     deleteMany(ids: string[], deleteSourceFiles?: boolean): Promise<void>;

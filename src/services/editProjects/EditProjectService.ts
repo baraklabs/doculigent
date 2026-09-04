@@ -4,9 +4,9 @@ import type {
   CursorEditSettings,
   EditProject,
   EditProjectMedia,
+  EditProjectMediaItem,
   EditProjectSource,
   LayoutEditSettings,
-  SoundEditSettings,
   TimelineEditSettings,
 } from "@shared/types/models";
 
@@ -32,9 +32,6 @@ export const EditProjectService = {
   updateBackground(id: string, background: BackgroundEditSettings): Promise<EditProject> {
     return window.api.editProjects.updateBackground(id, background);
   },
-  updateSound(id: string, sound: SoundEditSettings): Promise<EditProject> {
-    return window.api.editProjects.updateSound(id, sound);
-  },
   updateLayout(id: string, layout: LayoutEditSettings): Promise<EditProject> {
     return window.api.editProjects.updateLayout(id, layout);
   },
@@ -43,6 +40,12 @@ export const EditProjectService = {
   },
   pickBackgroundImage(): Promise<string | null> {
     return window.api.editProjects.pickBackgroundImage();
+  },
+  pickMediaFiles(): Promise<string[]> {
+    return window.api.editProjects.pickMediaFiles();
+  },
+  updateMedia(id: string, media: EditProjectMediaItem[]): Promise<EditProject> {
+    return window.api.editProjects.updateMedia(id, media);
   },
   getMedia(id: string): Promise<EditProjectMedia> {
     return window.api.editProjects.getMedia(id);

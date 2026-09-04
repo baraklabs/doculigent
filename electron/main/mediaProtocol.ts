@@ -25,6 +25,18 @@ const MIME_TYPES: Record<string, string> = {
   ".mp3": "audio/mpeg",
   ".wav": "audio/wav",
   ".ogg": "audio/ogg",
+  // The rest of what the Edit page's Media panel lets a user attach (see
+  // MEDIA_VIDEO_EXTENSIONS/MEDIA_AUDIO_EXTENSIONS) — served with a real type rather than
+  // falling through to application/octet-stream, which a <video>/<audio> element won't
+  // reliably accept. Chromium still can't decode every one of these (avi/wmv/flv/wma
+  // depend on codecs it doesn't ship); those simply fail to load their metadata, which the
+  // panel surfaces as an unreadable, un-placeable file rather than a silent no-op.
+  ".aac": "audio/aac",
+  ".flac": "audio/flac",
+  ".wma": "audio/x-ms-wma",
+  ".avi": "video/x-msvideo",
+  ".wmv": "video/x-ms-wmv",
+  ".flv": "video/x-flv",
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",

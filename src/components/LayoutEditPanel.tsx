@@ -327,7 +327,7 @@ export function LayoutEditPanel({
 
       <p className="layout-edit-hint">
         {isMaster
-          ? "Drag the screen and camera directly in the preview to place them, or drag their bottom-right corner to resize — they snap to guide lines at the canvas edges and center, and can be dragged partially or fully out of frame. Camera, sound, and cursor each render exactly as set on their own tab."
+          ? "Drag the screen and camera directly in the preview to place them, or drag their bottom-right corner to resize — they snap to guide lines at the canvas edges and center, and can be dragged partially or fully out of frame. Camera, audio, and cursor each render exactly as set on their own tab."
           : "Quick layouts apply to this cut only. Dragging the screen/camera directly in the preview still repositions Main, not this cut — use a quick layout above to set this cut's own position."}
       </p>
 

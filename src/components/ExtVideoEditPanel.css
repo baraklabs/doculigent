@@ -1,0 +1,9 @@
+/* The panel itself is styled entirely by BackgroundEditPanel.css (it's the same control
+   set — see ExtVideoEditPanel's own doc comment); only the empty-track hint is its own. */
+.ext-video-empty-hint {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}

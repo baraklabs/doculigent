@@ -1,24 +1,29 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { Pause, Play, Redo2, Undo2, Volume2, VolumeX } from "lucide-react";
+import { Pause, Play, Redo2, Undo2 } from "lucide-react";
 import {
   BACKGROUND_COLORS,
   BACKGROUND_GRADIENTS,
+  DEFAULT_EXT_VIDEO_EDIT_SETTINGS,
   ZOOM_TRANSITION_MS,
   type BackgroundEditSettings,
   type BackgroundGradientPreset,
   type CameraEditSettings,
   type CursorEditSettings,
   type CursorMetadata,
+  type EditProjectMediaItem,
+  type ExtVideoEditSettings,
   type LayoutEditSettings,
-  type SoundEditSettings,
   type TimelineEditSettings,
+  type TimelineEffect,
+  type TimelineEffectBox,
   type TimelineZoom,
   type TimelineZoomTilt,
 } from "@shared/types/models";
 import { frameDimensions, toFrameCoords } from "@shared/lib/cursorFrame";
 import { effectiveClips, resolveClipAt, sourceToEditedMs, splitClipAtSource, totalClipsExtentMs } from "@shared/lib/timelineClips";
-import { effectiveSegments, resolveSegmentSettings } from "@shared/lib/timelineSegments";
-import type { TimelineClip } from "@shared/types/models";
+import { resolveSegmentSettings } from "@shared/lib/timelineSegments";
+import { EFFECT_POPUP_MS, boxFromCorners, isEffectActiveAt, updateEffect } from "@shared/lib/timelineEffects";
+import type { TimelineClip, TimelineMediaClip } from "@shared/types/models";
 import { mediaUrl } from "@shared/constants/media";
 import { BACKGROUND_IMAGE_URLS, BACKGROUND_TEXTURE_URLS } from "../assets/backgrounds";
 import { applyCameraBlur, startCameraSegmentation, type CameraBlurHandle, type CameraSegmentationHandle } from "../services/camera/cameraBlur";
@@ -53,16 +58,24 @@ interface PreviewCompositorProps {
    *  EditProjectMedia.cursorBakedIn) — drawing the synthetic track on top of one of these
    *  would show two cursors, so the draw loop skips it entirely. */
   cursorBakedIn?: boolean;
+  /** The project's added-media pool (EditProject.media) — every file the Timeline's
+   *  Video/Audio tracks can place a piece of. One hidden playback element is kept per item
+   *  (see mediaElsRef); a piece whose item isn't here simply plays nothing. */
+  mediaItems: EditProjectMediaItem[];
   camera: CameraEditSettings;
   onCameraChange: (next: CameraEditSettings) => void;
   background: BackgroundEditSettings;
   cursor: CursorEditSettings;
   layout: LayoutEditSettings;
   onLayoutChange: (next: LayoutEditSettings) => void;
-  sound: SoundEditSettings;
-  onSoundChange: (next: SoundEditSettings) => void;
   timeline: TimelineEditSettings;
   onTimelineChange: (next: TimelineEditSettings) => void;
+  /** Effects tab (callout/blur boxes) — which box is selected, i.e. the one drawn with grab
+   *  handles here. Clicking a box on the canvas selects it, which is what this reports back.
+   *  Every *edit* a preview drag makes goes through onTimelineChange like any other, since
+   *  the boxes themselves live in `timeline.effects`. */
+  activeEffectId?: string | null;
+  onActiveEffectChange?: (id: string | null) => void;
   /** Controlled from EditPage — the same Default/Cut toggle rendered in the Timeline
    *  component's ruler row governs what clicking this canvas does. */
   tool: TimelineTool;
@@ -71,7 +84,22 @@ interface PreviewCompositorProps {
    *  `sourceDurationMs` is the raw recording's own length — distinct from `durationMs`
    *  (the edited timeline's extent) once clips have been trimmed, moved, or overlapped —
    *  and is how far a clip's trim handles can reveal hidden footage back out to. */
-  onTimeUpdate?: (currentMs: number, durationMs: number, sourceDurationMs: number) => void;
+  /** `alignedFootageLengthMs` is how long the recording's *own* footage runs on the edited
+   *  timeline — the shorter of what's left of the screen file once its camera-less lead-in
+   *  is trimmed and how much camera footage actually exists (see the draw loop's
+   *  alignedLengthMs). Reported because only this component can know it: the camera file's
+   *  real duration has to be read off a loaded `<video>` element, and the Timeline has none.
+   *  Without it the Timeline draws both footage tracks' default pieces running to the screen
+   *  recording's full length while playback stops at the camera's — a mismatch invisible
+   *  while that was also the end of the timeline (everything simply clamped to full width),
+   *  but plainly wrong the moment an Ext Video/Ext Audio piece extends past it and the
+   *  footage pieces stop clamping. */
+  onTimeUpdate?: (
+    currentMs: number,
+    durationMs: number,
+    sourceDurationMs: number,
+    alignedFootageLengthMs: number
+  ) => void;
   /** Undo/redo for the whole edit session (every tab's settings and the Timeline) — the
    *  history itself lives in EditPage, this just renders the buttons next to Mute. */
   onUndo?: () => void;
@@ -384,6 +412,41 @@ function encodeWavPcm16(buffer: AudioBuffer): ArrayBuffer {
  *  beginPath) — used instead of the native ctx.roundRect() everywhere a clip/stroke needs
  *  one, since roundRect's clip has proven unreliable for the large screen-content rect in
  *  this environment even though the small camera-bubble rect clipped fine with it. */
+/** Paints an added-media Video piece over everything else on the frame — a cover fit
+ *  (fills the canvas, cropping whichever axis overflows), because a piece on the Video
+ *  track is an *insert*: for the stretch it covers it is what's playing, in place of the
+ *  composited recording underneath rather than floating over a corner of it. Deliberately
+ *  not positionable, unlike the camera bubble — the Layout tab's boxes describe the
+ *  recording's own screen/camera, and an inserted clip is neither. */
+/** The Ext Video presentation settings in force for one placed piece — its own override
+ *  (TimelineEditSettings.videoClipOverrides) if it has one, else the track's master
+ *  (`extVideo`). Both fall back to the shipped default for a project saved before either
+ *  field existed, so an old save renders exactly as it always did. */
+function extVideoSettingsFor(t: TimelineEditSettings, clipId: string | null): ExtVideoEditSettings {
+  const master = t.extVideo ?? DEFAULT_EXT_VIDEO_EDIT_SETTINGS;
+  if (!clipId) return master;
+  return t.videoClipOverrides?.[clipId] ?? master;
+}
+
+/** An Ext Video piece's travel range — built exactly like the screen box's own
+ *  (see the draw loop's screenDrag), so the two share resolveDragPos/offsetToPct and
+ *  therefore behave identically under a drag, degenerate full-canvas case included. */
+function extVideoDragRegion(ext: ExtVideoEditSettings, canvasW: number, canvasH: number): DragRegion {
+  const boxW = (ext.sizePct / 100) * canvasW;
+  const boxH = (ext.heightPct / 100) * canvasH;
+  return { originX: 0, originY: 0, travelW: canvasW - boxW, travelH: canvasH - boxH, boxW, boxH };
+}
+
+/** The box an Ext Video piece is drawn into: `sizePct`/`heightPct` of the canvas, placed at
+ *  `pos` — or dead center ({50,50}, the same neutral default the screen box uses) while it
+ *  has never been dragged. At 100/100 that's the whole frame; above it the box overflows and
+ *  is cut off by the frame edge, exactly like a screen box dragged past it. */
+function extVideoBox(ext: ExtVideoEditSettings, canvasW: number, canvasH: number): Rect {
+  const region = extVideoDragRegion(ext, canvasW, canvasH);
+  const origin = resolveDragPos(ext.pos, region, { x: 50, y: 50 });
+  return { x: origin.x, y: origin.y, w: region.boxW, h: region.boxH };
+}
+
 function roundedRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
   const radius = Math.max(0, Math.min(r, w / 2, h / 2));
   ctx.moveTo(x + radius, y);
@@ -1029,6 +1092,564 @@ function computeActiveZoomTilt(zoom: TimelineZoom | null, envelope: number): Tim
   };
 }
 
+// Effects tab (callout / blur boxes) -----------------------------------------------
+
+// Blur/pixelate both work by re-drawing a copy of what's already on the canvas, so they
+// need a scratch buffer. Sized to the *region* (plus a bleed margin, see drawBlurEffect)
+// rather than the whole canvas — a full 1920x1080 gaussian every frame, for what is
+// usually a small box, would be pure waste.
+let effectScratch: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null = null;
+// Pixelate needs a *second*, tiny buffer (the downscaled mosaic, blown back up into the
+// one above) — kept module-level for the same reason: allocating either one per frame,
+// per box, would churn canvases at 60fps.
+let effectPixelScratch: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null = null;
+
+function sizedScratch(
+  slot: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null,
+  w: number,
+  h: number
+): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
+  const scratch = slot ?? (() => {
+    const canvas = document.createElement("canvas");
+    return { canvas, ctx: canvas.getContext("2d") as CanvasRenderingContext2D };
+  })();
+  const { canvas, ctx } = scratch;
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  // Reset the bits the last caller may have changed — a resize already clears the canvas,
+  // but a same-size reuse does not.
+  ctx.filter = "none";
+  ctx.imageSmoothingEnabled = true;
+  ctx.clearRect(0, 0, w, h);
+  return scratch;
+}
+
+function getEffectScratch(w: number, h: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
+  effectScratch = sizedScratch(effectScratch, w, h);
+  return effectScratch;
+}
+
+function getEffectPixelScratch(w: number, h: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
+  effectPixelScratch = sizedScratch(effectPixelScratch, w, h);
+  return effectPixelScratch;
+}
+
+/** An effect's stored % box resolved against this frame's canvas. */
+function effectRect(effect: TimelineEffect, canvasW: number, canvasH: number): Rect {
+  return {
+    x: (effect.box.xPct / 100) * canvasW,
+    y: (effect.box.yPct / 100) * canvasH,
+    w: Math.max(1, (effect.box.wPct / 100) * canvasW),
+    h: Math.max(1, (effect.box.hPct / 100) * canvasH),
+  };
+}
+
+/** Traces an effect's outline onto the *current* path — a rounded rectangle or an ellipse,
+ *  per its `shape`. Deliberately doesn't beginPath: the callout's dim needs this shape as
+ *  a second subpath punched out of a full-canvas rect (see drawCalloutEffect), so resetting
+ *  here would throw that rect away. Every part of an effect shapes itself off this one
+ *  function, so the painted edge always lines up exactly with the box the user dragged. */
+function traceEffectPath(ctx: CanvasRenderingContext2D, effect: TimelineEffect, r: Rect): void {
+  if (effect.shape === "ellipse") {
+    // Explicitly opens the subpath at the ellipse's own 0-radian start point — ellipse(),
+    // like arc(), would otherwise join itself to whatever point the previous subpath left
+    // current (the callout dim traces this straight after a full-canvas rect).
+    ctx.moveTo(r.x + r.w, r.y + r.h / 2);
+    ctx.ellipse(r.x + r.w / 2, r.y + r.h / 2, r.w / 2, r.h / 2, 0, 0, Math.PI * 2);
+    return;
+  }
+  roundedRectPath(ctx, r.x, r.y, r.w, r.h, (effect.cornerPct / 100) * Math.min(r.w, r.h));
+}
+
+// Blur strength (0-100) as a fraction of the canvas's shorter side — 100% lands at ~3.5%
+// of it (roughly 38px on a 1080-tall canvas), well past the point where body text stops
+// being readable, with the low end still soft enough to blur without obliterating.
+const MAX_EFFECT_BLUR_FRACTION = 0.035;
+// Pixelate's block size at 100%, against the same reference. Smaller than the blur radius
+// because blocks destroy detail far more aggressively at equal size.
+const MAX_EFFECT_PIXEL_FRACTION = 0.022;
+
+/** Blurs (or pixelates) whatever has already been composited inside one effect's box, in
+ *  place. Reads back out through a scratch buffer rather than filtering the main canvas
+ *  directly — a canvas can't filter itself — copying the box plus a bleed margin so the
+ *  blur has real neighbouring pixels to pull in instead of fading out into transparent
+ *  black at its own edges. */
+function drawBlurEffect(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, effect: TimelineEffect, r: Rect): void {
+  const shorter = Math.min(canvas.width, canvas.height);
+  const strength = Math.max(0, Math.min(100, effect.blurPct)) / 100;
+  const radius = Math.max(1, strength * MAX_EFFECT_BLUR_FRACTION * shorter);
+
+  // Clipped to the canvas — a box dragged half off-frame would otherwise ask drawImage for
+  // source pixels that don't exist.
+  const bleed = Math.ceil(radius * 3);
+  const sx = Math.max(0, Math.floor(r.x - bleed));
+  const sy = Math.max(0, Math.floor(r.y - bleed));
+  const sw = Math.min(canvas.width, Math.ceil(r.x + r.w + bleed)) - sx;
+  const sh = Math.min(canvas.height, Math.ceil(r.y + r.h + bleed)) - sy;
+  if (sw <= 0 || sh <= 0) return;
+
+  const scratch = getEffectScratch(sw, sh);
+  if (effect.pixelate) {
+    // Downscale to one pixel per block, then blow it back up with smoothing off — the
+    // standard mosaic. Both dimensions floored at 1px so a tiny box still renders.
+    const block = Math.max(2, strength * MAX_EFFECT_PIXEL_FRACTION * shorter);
+    const smallW = Math.max(1, Math.round(sw / block));
+    const smallH = Math.max(1, Math.round(sh / block));
+    const small = getEffectPixelScratch(smallW, smallH);
+    small.ctx.drawImage(canvas, sx, sy, sw, sh, 0, 0, smallW, smallH);
+    scratch.ctx.imageSmoothingEnabled = false;
+    scratch.ctx.drawImage(small.canvas, 0, 0, smallW, smallH, 0, 0, sw, sh);
+  } else {
+    scratch.ctx.filter = "blur(" + radius + "px)";
+    scratch.ctx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+    scratch.ctx.filter = "none";
+  }
+
+  ctx.save();
+  ctx.beginPath();
+  traceEffectPath(ctx, effect, r);
+  ctx.clip();
+  ctx.drawImage(scratch.canvas, 0, 0, sw, sh, sx, sy, sw, sh);
+  ctx.restore();
+}
+
+// Callout-only animation/border extras (Blur never sees any of this — it stays the plain
+// traceEffectPath/drawBlurEffect path above). All three are independent and combine freely:
+// a tilted, popping-in, glow-marquee callout is a perfectly valid combination.
+
+/** A "Popout" callout's envelope — 0 the instant it becomes active, ramping up to 1 over
+ *  EFFECT_POPUP_MS, held at 1 through the rest of the box's window, then ramping back down
+ *  to 0 over the same span right before it goes inactive: pop *in*, then pop back *out*,
+ *  not just a one-way entrance. Same trapezoid shape computeZoomEnvelope uses for a zoom
+ *  block's own ease in/hold/ease out (including the same half-duration clamp, so a box
+ *  shorter than 2×EFFECT_POPUP_MS still gets a full, symmetric in/out instead of the two
+ *  transitions overlapping and cutting each other off). 1 outright when popupAnim is off,
+ *  so every caller can multiply by this unconditionally instead of branching. */
+function effectPopupEnvelope(effect: TimelineEffect, currentMs: number): number {
+  if (!effect.popupAnim) return 1;
+  const half = Math.max(1, effect.durationMs / 2);
+  const transition = Math.min(EFFECT_POPUP_MS, half);
+  const tIn = Math.min(1, (currentMs - effect.startMs) / transition);
+  const tOut = Math.min(1, (effect.startMs + effect.durationMs - currentMs) / transition);
+  return Math.max(0, Math.min(tIn, tOut));
+}
+
+
+/** The callout's outline warped by its own 3D tilt, as a closed polygon in canvas space —
+ *  null when the tilt is flat (xDeg = yDeg = 0), which is the caller's cue to fall back to
+ *  the cheap, exact traceEffectPath instead (every existing callout, and every Blur box,
+ *  takes that path). Reuses project3D (the Zoom track's own tilt math — see its own doc
+ *  comment) treating the box itself as the "plane": a rect projects its 4 corners, an oval
+ *  is sampled round its rim and each sample projected the same way. Corner rounding is
+ *  dropped while tilted — blending true perspective with a rounded rect needs the same
+ *  per-cell image-warp drawTiltedPlane uses for zoomed *content*, overkill for a vector
+ *  outline. */
+function tiltedEffectOutline(effect: TimelineEffect, r: Rect): { x: number; y: number }[] | null {
+  if (effect.tilt.xDeg === 0 && effect.tilt.yDeg === 0) return null;
+  const cx = r.x + r.w / 2;
+  const cy = r.y + r.h / 2;
+  const project = (nx: number, ny: number) => {
+    const p = project3D(nx, ny, r.w, r.h, effect.tilt.xDeg, effect.tilt.yDeg);
+    return { x: cx + p.x, y: cy + p.y };
+  };
+  if (effect.shape === "ellipse") {
+    const SAMPLES = 40;
+    const pts: { x: number; y: number }[] = [];
+    for (let i = 0; i < SAMPLES; i++) {
+      const a = (i / SAMPLES) * Math.PI * 2;
+      pts.push(project(Math.cos(a) * 0.5, Math.sin(a) * 0.5));
+    }
+    return pts;
+  }
+  return [
+    project(-0.5, -0.5),
+    project(0.5, -0.5),
+    project(0.5, 0.5),
+    project(-0.5, 0.5),
+  ];
+}
+
+/** traceEffectPath's callout-only counterpart — same "trace onto the current path, don't
+ *  beginPath" contract (see traceEffectPath), but through tiltedEffectOutline first so the
+ *  dim cutout, the border/marquee stroke, and the resize-handle-less selection outline all
+ *  warp identically. `r` is expected already popup-scaled (see scaledEffectRect) — tilt is
+ *  computed from whatever rect it's handed, with no scale awareness of its own. */
+function traceCalloutOutline(ctx: CanvasRenderingContext2D, effect: TimelineEffect, r: Rect): void {
+  const poly = tiltedEffectOutline(effect, r);
+  if (poly) {
+    ctx.moveTo(poly[0].x, poly[0].y);
+    for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
+    ctx.closePath();
+    return;
+  }
+  traceEffectPath(ctx, effect, r);
+}
+
+// One period of a glow callout's brightness pulse / an orbit callout's full lap around the
+// box's perimeter, in ms — different numbers so the two read as distinct motions rather
+// than the same timing in two different shapes.
+const MARQUEE_GLOW_PERIOD_MS = 1400;
+const MARQUEE_ORBIT_PERIOD_MS = 2200;
+
+// Every BACKGROUND_GRADIENTS preset (and the Screen tab's own custom gradient — see
+// drawBackdrop) renders at this same fixed angle; the marquee's gradient matches it for the
+// same reason drawBackdrop does — lining the canvas render up with the CSS
+// linear-gradient() the swatch previews are styled with (see drawBackdrop's own comment on
+// why the angle math below isn't just canvas's native 0=east convention).
+const MARQUEE_GRADIENT_ANGLE_DEG = 135;
+
+/** The marquee's stroke source — a plain color in "solid" mode, a CanvasGradient across the
+ *  box's own bounding rect in "gradient" mode, at the same angle (and by the same CSS-angle
+ *  formula) drawBackdrop uses for the Screen tab's own gradients, centered on the box
+ *  rather than corner-to-corner so it reads the same regardless of the box's aspect ratio.
+ *  Built fresh off `r` every call, so it stays correctly placed through a drag/resize/tilt
+ *  with no cache to invalidate. */
+function resolveMarqueeStroke(ctx: CanvasRenderingContext2D, effect: TimelineEffect, r: Rect): string | CanvasGradient {
+  if (effect.marqueeColorMode !== "gradient") return effect.marqueeColor;
+  const rad = (MARQUEE_GRADIENT_ANGLE_DEG * Math.PI) / 180;
+  const cx = r.x + r.w / 2;
+  const cy = r.y + r.h / 2;
+  const dx = (Math.sin(rad) * r.w) / 2;
+  const dy = (-Math.cos(rad) * r.h) / 2;
+  const grad = ctx.createLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy);
+  grad.addColorStop(0, effect.marqueeGradientFrom);
+  grad.addColorStop(1, effect.marqueeGradientTo);
+  return grad;
+}
+
+// How many extra passes drawMarqueeGlow strokes outward from the core line to build its
+// halo — more layers reads softer but costs more per-frame stroke calls.
+const MARQUEE_GLOW_LAYERS = 4;
+
+/** "Glow" — a pulsing halo around the outline, plus a crisp core pass on top so the ring
+ *  itself never reads as just a blurry haze. Built from several progressively wider,
+ *  progressively more transparent strokes of the same path rather than ctx.shadowBlur:
+ *  canvas shadows render unreliably (faint or missing entirely, inconsistently across
+ *  Chromium versions) when strokeStyle is a CanvasGradient rather than a plain color, which
+ *  a gradient marquee — the default combination (see createEffect) — hits every time. This
+ *  stroke-layers technique works identically for both. `pulse` (0..1) drives both the
+ *  halo's own spread and its opacity, so the animation is visible in the glow's size as
+ *  well as its brightness, not just a barely-perceptible alpha flicker.
+ *
+ *  A canvas stroke is centered on its path by default, so a wider line would otherwise
+ *  bleed half inward over the box's own dim/content — clipped here to strictly outside the
+ *  box's outline (the same even-odd "everything but the hole" trick drawCalloutEffect's own
+ *  dim uses) so every halo layer only ever glows outward, never washing out what's inside.
+ *  Since only the outer half of each centered stroke survives that clip, the layers' own
+ *  width is doubled to land on the same felt spread the un-clipped version had. */
+function drawMarqueeGlow(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  effect: TimelineEffect,
+  r: Rect,
+  borderPx: number,
+  alpha: number,
+  pulse: number
+): void {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, canvas.width, canvas.height);
+  traceCalloutOutline(ctx, effect, r);
+  ctx.clip("evenodd");
+  for (let i = MARQUEE_GLOW_LAYERS; i >= 1; i--) {
+    const t = i / MARQUEE_GLOW_LAYERS;
+    ctx.globalAlpha = alpha * 0.16 * t * (0.5 + pulse * 0.5);
+    ctx.lineWidth = borderPx + t * borderPx * (1.5 + pulse * 2.5) * 2;
+    ctx.beginPath();
+    traceCalloutOutline(ctx, effect, r);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = borderPx;
+  ctx.beginPath();
+  traceCalloutOutline(ctx, effect, r);
+  ctx.stroke();
+}
+
+/** The animated border a callout draws instead of drawCalloutEffect's own plain stroke once
+ *  `marquee` is on — "glow" (see drawMarqueeGlow) or "orbit", which chases a bright dashed
+ *  segment around the box's own perimeter, marquee-light style, using an animated
+ *  lineDashOffset (the standard "marching ants" technique) rather than anything hand-rolled
+ *  per frame. Traces through traceCalloutOutline, so it inherits whatever tilt/popup-scale
+ *  the caller already resolved into `r`. */
+function drawMarqueeBorder(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  effect: TimelineEffect,
+  r: Rect,
+  currentMs: number,
+  alpha: number
+): void {
+  const shorter = Math.min(canvas.width, canvas.height);
+  // Marquee needs a visible ring to animate even when the static Border slider is at 0 —
+  // that slider still scales it up from here once raised.
+  const borderPx = Math.max((effect.borderPct / 100) * shorter, shorter * 0.006);
+  const stroke = resolveMarqueeStroke(ctx, effect, r);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = borderPx;
+
+  if (effect.marqueeStyle === "glow") {
+    const pulse = 0.5 + 0.5 * Math.sin((currentMs / MARQUEE_GLOW_PERIOD_MS) * Math.PI * 2);
+    drawMarqueeGlow(ctx, canvas, effect, r, borderPx, alpha, pulse);
+  } else {
+    const perim = 2 * (r.w + r.h);
+    const dashLen = Math.max(borderPx * 3, perim * 0.12);
+    const gapLen = Math.max(perim - dashLen, borderPx);
+    ctx.setLineDash([dashLen, gapLen]);
+    ctx.lineDashOffset = -((currentMs / MARQUEE_ORBIT_PERIOD_MS) % 1) * perim;
+    ctx.beginPath();
+    traceCalloutOutline(ctx, effect, r);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// --- Camera bubble border/marquee — the same "plain stroke, or an animated glow/orbit
+// ring" idea as the callout marquee above, just ringing the camera bubble's own shape
+// (see drawCameraBubbleAt) instead of a callout box. No dim/label/popup/tilt here — the
+// bubble has none of those, so this is a much smaller slice of drawCalloutEffect's job.
+//
+// Tuned independently from the callout marquee's own constants (MARQUEE_ORBIT_PERIOD_MS,
+// MARQUEE_GLOW_LAYERS, etc. above): the camera bubble sits on screen continuously through
+// a whole recording rather than a callout's brief on-screen window, so a fast chase and a
+// wide halo read as distracting there in a way they don't for a callout.
+const CAMERA_MARQUEE_ORBIT_PERIOD_MS = 7000;
+const CAMERA_MARQUEE_GLOW_LAYERS = 4;
+
+/** Traces the camera bubble's own outline onto the current path — the exact shape
+ *  drawCameraBubbleAt already clips its content to (a circle/oval for "round", a rounded
+ *  rect sized by cornerRadiusPct otherwise), so the border ring always sits flush with the
+ *  bubble's own edge. Doesn't beginPath itself — same "trace only" contract as
+ *  traceEffectPath/traceCalloutOutline. */
+function traceCameraOutline(ctx: CanvasRenderingContext2D, cam: CameraEditSettings, r: Rect): void {
+  if (cam.shape === "round") {
+    ctx.ellipse(r.x + r.w / 2, r.y + r.h / 2, r.w / 2, r.h / 2, 0, 0, Math.PI * 2);
+    return;
+  }
+  const size = Math.min(r.w, r.h);
+  roundedRectPath(ctx, r.x, r.y, r.w, r.h, (cam.cornerRadiusPct / 100) * (size / 2));
+}
+
+/** Camera's own copy of resolveMarqueeStroke — same plain-color-or-gradient-across-the-
+ *  bubble's-bounding-rect resolution, just reading CameraEditSettings' marquee fields
+ *  instead of a TimelineEffect's. */
+function resolveCameraMarqueeStroke(ctx: CanvasRenderingContext2D, cam: CameraEditSettings, r: Rect): string | CanvasGradient {
+  if (cam.marqueeColorMode !== "gradient") return cam.marqueeColor;
+  const rad = (MARQUEE_GRADIENT_ANGLE_DEG * Math.PI) / 180;
+  const cx = r.x + r.w / 2;
+  const cy = r.y + r.h / 2;
+  const dx = (Math.sin(rad) * r.w) / 2;
+  const dy = (-Math.cos(rad) * r.h) / 2;
+  const grad = ctx.createLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy);
+  grad.addColorStop(0, cam.marqueeGradientFrom);
+  grad.addColorStop(1, cam.marqueeGradientTo);
+  return grad;
+}
+
+/** Camera's own copy of drawMarqueeGlow — see its doc comment for why this is several
+ *  progressively-wider clipped stroke layers rather than ctx.shadowBlur. Tuned much more
+ *  subtle than the callout's own halo (lower alpha, tighter spread — see
+ *  CAMERA_MARQUEE_GLOW_LAYERS) since it sits on screen continuously rather than for a
+ *  callout's brief window. */
+function drawCameraMarqueeGlow(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  cam: CameraEditSettings,
+  r: Rect,
+  borderPx: number,
+  pulse: number
+): void {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, canvas.width, canvas.height);
+  traceCameraOutline(ctx, cam, r);
+  ctx.clip("evenodd");
+  for (let i = CAMERA_MARQUEE_GLOW_LAYERS; i >= 1; i--) {
+    const t = i / CAMERA_MARQUEE_GLOW_LAYERS;
+    ctx.globalAlpha = 0.22 * t * (0.5 + pulse * 0.5);
+    ctx.lineWidth = borderPx + t * borderPx * (2.2 + pulse * 3.2);
+    ctx.beginPath();
+    traceCameraOutline(ctx, cam, r);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = borderPx;
+  ctx.beginPath();
+  traceCameraOutline(ctx, cam, r);
+  ctx.stroke();
+}
+
+/** Paints the camera bubble's own border — a plain stroke in `borderColor`, or (once
+ *  `marquee` is on) an animated glow/orbit ring, exactly like the Effects tab's own
+ *  drawMarqueeBorder/drawCalloutEffect border branch, just against the bubble's simple,
+ *  untilted rect instead of a callout box that can pop/tilt. Called after the bubble's own
+ *  content is drawn, so the ring always sits on top of it. */
+function drawCameraBorder(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, cam: CameraEditSettings, r: Rect, currentMs: number): void {
+  const shorter = Math.min(canvas.width, canvas.height);
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+
+  if (cam.marquee) {
+    // Marquee needs a visible ring to animate even when Thickness is at 0 — same floor
+    // drawMarqueeBorder uses, so a 0-thickness marquee bubble still reads clearly.
+    const borderPx = Math.max((cam.borderPct / 100) * shorter, shorter * 0.006);
+    ctx.strokeStyle = resolveCameraMarqueeStroke(ctx, cam, r);
+    ctx.lineWidth = borderPx;
+    if (cam.marqueeStyle === "glow") {
+      const pulse = 0.5 + 0.5 * Math.sin((currentMs / MARQUEE_GLOW_PERIOD_MS) * Math.PI * 2);
+      drawCameraMarqueeGlow(ctx, canvas, cam, r, borderPx, pulse);
+    } else {
+      const perim = 2 * (r.w + r.h);
+      const dashLen = Math.max(borderPx * 3, perim * 0.12);
+      const gapLen = Math.max(perim - dashLen, borderPx);
+      ctx.setLineDash([dashLen, gapLen]);
+      ctx.lineDashOffset = -((currentMs / CAMERA_MARQUEE_ORBIT_PERIOD_MS) % 1) * perim;
+      ctx.beginPath();
+      traceCameraOutline(ctx, cam, r);
+      ctx.stroke();
+    }
+  } else {
+    const borderPx = (cam.borderPct / 100) * shorter;
+    if (borderPx >= 0.5) {
+      ctx.strokeStyle = cam.borderColor;
+      ctx.lineWidth = borderPx;
+      ctx.beginPath();
+      traceCameraOutline(ctx, cam, r);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+/** How far Popout has eased into (or back out of) its zoom, 1-3ish (matches popupZoomPct's
+ *  own 100-300 range, just expressed as a multiplier) — eased with the same cosine curve a
+ *  Zoom block's own pct rides (easeZoomEnvelope), so a Popout callout moves with the same
+ *  feel as the Zoom track's. 1 outright when popupAnim is off, so the caller never needs to
+ *  branch on it separately from reading this value. */
+function effectPopupZoomScale(effect: TimelineEffect, envelope: number): number {
+  if (!effect.popupAnim) return 1;
+  return 1 + ((effect.popupZoomPct - 100) / 100) * easeZoomEnvelope(envelope);
+}
+
+/** `r` scaled by `scale` around its own center — Popout zooms the *whole* callout (dim
+ *  cutout, border/marquee, label) as one unit, not just the content inside a fixed frame,
+ *  so this is what every part of drawCalloutEffect below traces against instead of `r`
+ *  directly. Applied before tilt, so the two compose naturally (tilt always sees the
+ *  already-zoomed size as its plane). Everything *outside* the box is still never touched —
+ *  "the rest of the screen" stays completely static regardless of how big this box gets. */
+function scaledEffectRect(r: Rect, scale: number): Rect {
+  const w = r.w * scale;
+  const h = r.h * scale;
+  return { x: r.x + (r.w - w) / 2, y: r.y + (r.h - h) / 2, w, h };
+}
+
+/** Re-draws whatever's already composited in the box's own *resting* area (`r`) stretched
+ *  to fill its current, Popout-scaled one (`dr`) — a self-copy, canvas back onto itself,
+ *  which is well-defined for a plain drawImage (unlike ctx.filter, which is why
+ *  drawBlurEffect needs a separate scratch buffer). Since `r` and `dr` share the same
+ *  center (scaledEffectRect only ever scales around it), stretching the fixed-size `r` into
+ *  the bigger `dr` *is* zooming the content in lockstep with the box's own growth — the
+ *  shape and what's inside it enlarge together, exactly as if the whole callout (not just
+ *  its outline) were one zoomed-in unit. Read *before* this callout's own dim/border/label
+ *  go on top, so those never get caught in the zoom themselves; clipped to `dr`'s own
+ *  (possibly tilted) outline so nothing spills past the box's current edge. No-op when `dr`
+ *  is `r` itself (Popout off, or exactly at rest), both as a cheap early-out and because the
+ *  self-copy would otherwise be a no-op anyway. */
+function drawCalloutContentZoom(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, effect: TimelineEffect, r: Rect, dr: Rect): void {
+  if (dr === r) return;
+  ctx.save();
+  ctx.beginPath();
+  traceCalloutOutline(ctx, effect, dr);
+  ctx.clip();
+  ctx.drawImage(canvas, r.x, r.y, r.w, r.h, dr.x, dr.y, dr.w, dr.h);
+  ctx.restore();
+}
+
+/** Paints one callout: the Popout content-zoom (if any — see drawCalloutContentZoom), the
+ *  dim over everything the box *doesn't* cover (an even-odd fill of the whole canvas with
+ *  the box punched out of it), its border (plain, or an animated marquee — see
+ *  drawMarqueeBorder), and its optional label chip. `currentMs` drives the Popout envelope
+ *  (see effectPopupEnvelope) that the whole box's own zoom, the content inside it, and the
+ *  dim/border/label's fade-in/out all ride; `r` is always the box's true, undistorted rest
+ *  position — the zoom is resolved into a local `dr` here rather than mutating it, so
+ *  hit-testing/drag handles (which read the caller's own `r`) stay exactly where the user
+ *  last left the box regardless of how big it's currently drawn. */
+function drawCalloutEffect(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, effect: TimelineEffect, r: Rect, currentMs: number): void {
+  const envelope = effectPopupEnvelope(effect, currentMs);
+  const alpha = envelope; // already 1 outright when popupAnim is off — see its own doc comment
+  const zoomScale = effectPopupZoomScale(effect, envelope);
+  const dr = zoomScale === 1 ? r : scaledEffectRect(r, zoomScale);
+
+  drawCalloutContentZoom(ctx, canvas, effect, r, dr);
+
+  if (effect.dimPct > 0) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = "rgba(0, 0, 0, " + Math.min(90, effect.dimPct) / 100 + ")";
+    ctx.beginPath();
+    ctx.rect(0, 0, canvas.width, canvas.height);
+    traceCalloutOutline(ctx, effect, dr);
+    ctx.fill("evenodd");
+    ctx.restore();
+  }
+
+  if (effect.marquee) {
+    drawMarqueeBorder(ctx, canvas, effect, dr, currentMs, alpha);
+  } else {
+    const borderPx = (effect.borderPct / 100) * Math.min(canvas.width, canvas.height);
+    if (borderPx >= 0.5) {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = effect.color;
+      ctx.lineWidth = borderPx;
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      traceCalloutOutline(ctx, effect, dr);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  const label = effect.label.trim();
+  if (label) {
+    const fontPx = Math.max(14, Math.min(canvas.width, canvas.height) * 0.028);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = "600 " + fontPx + 'px system-ui, -apple-system, "Segoe UI", sans-serif';
+    ctx.textBaseline = "middle";
+    const padX = fontPx * 0.55;
+    const chipH = fontPx * 1.7;
+    const chipW = ctx.measureText(label).width + padX * 2;
+    // Sits just above the box's (untilted) bounding area, flipping to just below it when
+    // there's no room above — anchored to `dr` (the zoomed rect), so the label rides along
+    // with the box's own current size instead of floating over a resting position.
+    const above = dr.y - chipH - fontPx * 0.35;
+    const chipY = above >= 0 ? above : Math.min(canvas.height - chipH, dr.y + dr.h + fontPx * 0.35);
+    const chipX = Math.max(0, Math.min(canvas.width - chipW, dr.x));
+    ctx.fillStyle = effect.color;
+    ctx.beginPath();
+    roundedRectPath(ctx, chipX, chipY, chipW, chipH, chipH * 0.28);
+    ctx.fill();
+    // Dark text on the one light swatch, white on the rest — a white callout with white
+    // text would otherwise be an empty chip.
+    ctx.fillStyle = effect.color.toLowerCase() === "#ffffff" ? "#14161f" : "#ffffff";
+    ctx.fillText(label, chipX + padX, chipY + chipH / 2);
+    ctx.restore();
+  }
+}
+
 function formatTime(secs: number): string {
   if (!Number.isFinite(secs) || secs < 0) return "0:00";
   const m = Math.floor(secs / 60);
@@ -1045,16 +1666,17 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     cursorMetadataPath,
     cursorIconsDir,
     cursorBakedIn,
+    mediaItems,
     camera,
     onCameraChange,
     background,
     cursor,
     layout,
     onLayoutChange,
-    sound,
-    onSoundChange,
     timeline,
     onTimelineChange,
+    activeEffectId = null,
+    onActiveEffectChange,
     tool,
     onTimeUpdate,
     onUndo,
@@ -1085,6 +1707,13 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   // with screenVideo's own position/play-state by the live draw loop (see its own
   // comment), never the Camera track's, since it has no independent clip list of its own.
   const audioOnlyRef = useRef<HTMLAudioElement | null>(null);
+  // One hidden playback element per added-media pool item (EditProject.media), keyed by
+  // that item's id — a <video> for a video item (the draw loop paints the active piece
+  // straight out of it), a plain Audio() for an audio one. Keyed by *item*, not by placed
+  // piece: several pieces cut from the same file share one element, which is also why the
+  // same file placed twice over the same instant can only ever be at one position — the
+  // topmost piece covering the playhead wins (see syncMediaElements).
+  const mediaElsRef = useRef<Map<string, HTMLVideoElement | HTMLAudioElement>>(new Map());
   const blurVideoRef = useRef<HTMLVideoElement | null>(null);
   const blurHandleRef = useRef<CameraBlurHandle | null>(null);
   const segmentationRef = useRef<CameraSegmentationHandle | null>(null);
@@ -1151,6 +1780,24 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     cameraDrag: DragRegion | null;
     screenResizeHandles: Record<Corner, Rect>;
     cameraResizeHandles: Record<Corner, Rect> | null;
+    /** All four are set only for a frame that actually *draws* an Ext Video piece (see the
+     *  draw loop's overlay block, which fills them in after the fact) and null otherwise —
+     *  so a piece hidden behind the recording, or none playing at all, simply isn't
+     *  hit-testable, and the screen/camera boxes underneath stay grabbable as usual.
+     *  `extVideoClipId` is which piece is on screen, so a drag knows whose settings to
+     *  write back to (its own override, or the track master). */
+    extVideoRect: Rect | null;
+    extVideoDrag: DragRegion | null;
+    extVideoResizeHandles: Record<Corner, Rect> | null;
+    extVideoClipId: string | null;
+    /** Every Effects box actually painted this frame (one that's timed out of this instant
+     *  isn't grabbable either), in paint order — hit-tested back-to-front so the topmost
+     *  overlapping box is the one a click lands on. */
+    effectRects: { id: string; rect: Rect }[];
+    /** Corner grab zones for the *selected* box only — an unselected box is moved by
+     *  clicking it first, same as any other editor. Null when nothing is selected, or the
+     *  selection isn't on screen this instant. */
+    effectResizeHandles: Record<Corner, Rect> | null;
     canvasW: number;
     canvasH: number;
   }>({
@@ -1160,13 +1807,24 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     cameraDrag: null,
     screenResizeHandles: cornerHandles({ x: 0, y: 0, w: 0, h: 0 }, 0),
     cameraResizeHandles: null,
+    extVideoRect: null,
+    extVideoDrag: null,
+    extVideoResizeHandles: null,
+    extVideoClipId: null,
+    effectRects: [],
+    effectResizeHandles: null,
     canvasW: 0,
     canvasH: 0,
   });
+  // Which Ext Video piece a drag actually grabbed, captured at pointerdown. Not read live
+  // off interactionRef during the drag: playback keeps running under the pointer, so the
+  // piece on screen can change (or end) mid-drag, and the settings being edited must stay
+  // the ones the user grabbed rather than following the playhead onto a different piece.
+  const extDragClipIdRef = useRef<string | null>(null);
   const dragStateRef = useRef<
     | {
         mode: "move";
-        target: "screen" | "camera";
+        target: "screen" | "camera" | "extVideo";
         region: DragRegion;
         grabDX: number;
         grabDY: number;
@@ -1182,13 +1840,22 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       }
     // anchorX/Y is the *opposite* corner from the one grabbed — it's what stays fixed
     // while the grabbed corner (and the box's opposite edges) follow the pointer.
-    | { mode: "resize"; target: "screen" | "camera"; corner: Corner; anchorX: number; anchorY: number; startClientX: number; startClientY: number }
+    | { mode: "resize"; target: "screen" | "camera" | "extVideo"; corner: Corner; anchorX: number; anchorY: number; startClientX: number; startClientY: number }
     // Screen-only, while reelScreenFull: dragging pans which part of the (necessarily
     // cropped, to cover with no letterbox gap) recording is visible, instead of moving
     // the box — a full-bleed box has no on-canvas position worth dragging, and sliding it
     // like a normal box would just expose blank background on the side it moved away
     // from rather than reveal the part of the video that's actually hidden there.
     | { mode: "pan"; grabDX: number; grabDY: number; startClientX: number; startClientY: number }
+    // The two Effects-box drags. Unlike the screen/camera/Ext boxes above, an effect box
+    // is a plain free rectangle in canvas-% space with no DragRegion behind it — position
+    // and size are stored directly (see TimelineEffectBox), so both move and resize write
+    // absolute values straight from the pointer.
+    // boxW/boxH are captured at grab rather than re-read each move: an effect timed to a
+    // stretch of the timeline can scroll out from under a drag that's still in progress,
+    // and the box being moved must keep its own size rather than stall.
+    | { mode: "effectMove"; id: string; grabDX: number; grabDY: number; boxW: number; boxH: number; startClientX: number; startClientY: number }
+    | { mode: "effectResize"; id: string; anchorX: number; anchorY: number; startClientX: number; startClientY: number }
     | null
   >(null);
   const guideRef = useRef<{ v: number[]; h: number[] }>({ v: [], h: [] });
@@ -1228,6 +1895,9 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
 
   // Memoized backdrop bitmap — see drawBackdropCached.
   const backdropCacheRef = useRef<BackdropCache | null>(null);
+  // The Ext Video track's own, kept separate so a frame that draws both backdrops doesn't
+  // make the two evict each other's bitmap every single frame.
+  const extBackdropCacheRef = useRef<BackdropCache | null>(null);
   // Loaded backdrop images, keyed by URL — covers the master Screen backdrop *and* every
   // per-clip override's own (timeline.clipOverrides), any of which can be the one actually
   // resolved as `bg` at a given frame (see the draw loop's own per-clip override
@@ -1285,10 +1955,28 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     layoutRef.current = layout;
   }, [layout]);
 
+  // Mirrored for the draw loop and the export/offline-audio passes, which need to map a
+  // piece's `mediaId` back to a file path outside of React's render cycle.
+  const mediaItemsRef = useRef(mediaItems);
+  useEffect(() => {
+    mediaItemsRef.current = mediaItems;
+  }, [mediaItems]);
+
   const timelineRef = useRef(timeline);
   useEffect(() => {
     timelineRef.current = timeline;
   }, [timeline]);
+
+  // Same read-in-the-draw-loop/pointer-handlers-without-re-registering pattern as every
+  // other prop above — the draw loop is registered once, on mount.
+  const activeEffectIdRef = useRef(activeEffectId);
+  useEffect(() => {
+    activeEffectIdRef.current = activeEffectId;
+  }, [activeEffectId]);
+  const onActiveEffectChangeRef = useRef(onActiveEffectChange);
+  useEffect(() => {
+    onActiveEffectChangeRef.current = onActiveEffectChange;
+  }, [onActiveEffectChange]);
 
   const onTimeUpdateRef = useRef(onTimeUpdate);
   useEffect(() => {
@@ -1342,13 +2030,19 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   // audioOnly element, and anything recorded before this split has both sources mixed
   // together in the side clip with a silent screen track. Never cameraVideoRef — see its
   // own doc comment for why that element is muted and visual-only.
-  const mutedRef = useRef(sound.muted);
-  useEffect(() => {
-    mutedRef.current = sound.muted;
-    for (const el of [audioOnlyRef.current, screenVideoRef.current]) {
-      if (el) el.muted = sound.muted;
-    }
-  }, [sound.muted]);
+  //
+  // Neither element's own `.muted` needs a dedicated sync effect any more: the draw loop
+  // (which runs every live frame regardless of play state) sets both, every frame, from
+  // whichever cut is actually active right now — see its own per-frame mute resolution.
+  // What *does* need tracking here is which tab's mute governs audioOnly at all: the Camera
+  // tab's, when there's a real camera file to carry the mic, or the Screen tab's, for a
+  // screen-only recording whose separately-captured audio.wav has no Camera tab to reach it
+  // (see EditProjectMedia.audioFilePath's own doc comment). Set once per project load (the
+  // Load effect below, which is what actually knows cameraFilePath at that instant) rather
+  // than read straight from the `cameraFilePath` prop inside the draw loop — that loop's own
+  // effect only runs once at mount (see its `[]` deps), so anything it needs from props has
+  // to arrive via a ref like this one, not a closure over the prop itself.
+  const micFollowsCameraRef = useRef(!!cameraFilePath);
 
   // Load the source video(s) whenever the project's media changes.
   useEffect(() => {
@@ -1363,10 +2057,11 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     screenVideo.crossOrigin = "anonymous";
     screenVideo.src = mediaUrl(screenFilePath);
     // Not force-muted when there's a side clip any more: the screen track is where system
-    // audio lives now (see mutedRef's own comment), so silencing it here would drop system
-    // sound from every recording that also has a mic. Harmless for the projects that don't
-    // have any — an unmuted video with no audio track is silent either way.
-    screenVideo.muted = mutedRef.current;
+    // audio lives now (see micFollowsCameraRef's own comment), so silencing it here would
+    // drop system sound from every recording that also has a mic. Harmless for the projects
+    // that don't have any — an unmuted video with no audio track is silent either way. Just
+    // an initial value — the draw loop overwrites it every frame from here on.
+    screenVideo.muted = backgroundRef.current.muted;
     screenVideo.playsInline = true;
     screenVideoRef.current = screenVideo;
 
@@ -1422,15 +2117,28 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     if (audioSourcePath) {
       audioOnly = new Audio();
       audioOnly.src = mediaUrl(audioSourcePath);
-      audioOnly.muted = mutedRef.current;
+      // Just an initial value, same as screenVideo's above — the draw loop overwrites it
+      // every frame. cameraFilePath is read directly here (not micFollowsCameraRef, still
+      // set from *last* load) since this effect is what's actually establishing it fresh.
+      audioOnly.muted = cameraFilePath ? cameraRef.current.muted : backgroundRef.current.muted;
       audioOnlyRef.current = audioOnly;
     }
+    micFollowsCameraRef.current = !!cameraFilePath;
 
     // progress/duration (the preview's own scrub bar, in seconds/fraction) are set from
     // inside the draw loop below instead of "timeupdate" — the loop already resolves
     // edited-timeline position every frame via the clips sequence, and that's what the
     // scrub bar needs to reflect, not screenVideo's own raw source-time progress.
     function onEnded() {
+      // The screen *source* has run out of footage. That's the end of playback only if
+      // nothing on the timeline reaches past where the screen track itself ends: an Ext
+      // Video/Ext Audio piece placed beyond the recording keeps playing through the gap
+      // that follows, which the draw loop advances by wall-clock time and stops on its own
+      // once it actually reaches the end (see its `editedMsRef.current >= totalMs` check).
+      // Stopping unconditionally here is what used to strand the playhead at the
+      // recording's end and make everything past it unreachable during playback.
+      const extent = resolveTimelineExtent();
+      if (extent && extent.totalMs > totalClipsExtentMs(extent.clips)) return;
       // isPlayingRef, not just the `playing` state — otherwise the draw loop (which reads
       // the ref, not the state) still believes playback is active after screenVideo hits
       // the *raw source's* natural end, and keeps trying to advance/resolve clips as if
@@ -1467,6 +2175,106 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       setDuration(0);
     };
   }, [screenFilePath, cameraFilePath, audioFilePath]);
+
+  // Keeps the added-media element pool in step with the project's own media list: an
+  // element is created the first time an item shows up and torn down when it's removed, so
+  // adding or removing one file never disturbs the others' loaded state. Deliberately keyed
+  // off the *pool*, not off the placed pieces — moving, trimming, cutting or deleting a
+  // piece must never re-load the file behind it mid-playback.
+  useEffect(() => {
+    const pool = mediaElsRef.current;
+    const wanted = new Set(mediaItems.map((m) => m.id));
+    for (const [id, el] of pool) {
+      if (wanted.has(id)) continue;
+      // Same "clear src, then load()" release the main media elements do — pause alone
+      // leaves the media:// request (and the file handle behind it) open. See the load
+      // effect's own cleanup comment.
+      el.pause();
+      el.removeAttribute("src");
+      el.load();
+      pool.delete(id);
+    }
+    for (const item of mediaItems) {
+      if (pool.has(item.id)) continue;
+      const el = item.kind === "video" ? document.createElement("video") : new Audio();
+      if (el instanceof HTMLVideoElement) {
+        // See screenVideo's own crossOrigin comment — without it, drawing this element
+        // onto the canvas taints it and the export's pixel reads fail.
+        el.crossOrigin = "anonymous";
+        el.playsInline = true;
+      }
+      el.preload = "auto";
+      // Starts unmuted — added media is an entirely separate file from the recording, with
+      // no Screen/Camera cut whose mute it could plausibly inherit. The only thing that
+      // silences one is the Ext Video tab's own mute, reapplied per frame by
+      // syncMediaElements; an Ext Audio element is never touched after this.
+      el.muted = false;
+      el.src = mediaUrl(item.filePath);
+      pool.set(item.id, el);
+    }
+  }, [mediaItems]);
+
+  // Unmount (not every pool change — that's the effect above) — release every element's
+  // file handle, same as the main load effect's own cleanup.
+  useEffect(() => {
+    const pool = mediaElsRef.current;
+    return () => {
+      for (const el of pool.values()) {
+        el.pause();
+        el.removeAttribute("src");
+        el.load();
+      }
+      pool.clear();
+    };
+  }, []);
+
+  /** Puts every added-media element where the edited playhead says it should be, once per
+   *  live frame: whichever piece covers `currentMs` on its track decides that element's
+   *  source position and whether it's playing at all; an element no piece currently covers
+   *  is paused. An Ext Video piece is the one thing here that *can* be silenced — see
+   *  ExtVideoEditSettings.muted; an Ext Audio piece has no mute of its own (it is the
+   *  sound), so its element is left playing. The same drift tolerance as the audio-only track's
+   *  own sync (a re-seek only once it's more than a frame or two out) — seeking every frame
+   *  would stutter the audio. Live preview only: during export nothing plays in real time,
+   *  and the export loop positions the one video element it needs itself (see exportVideo). */
+  function syncMediaElements(currentMs: number, timelineState: TimelineEditSettings) {
+    const pool = mediaElsRef.current;
+    if (pool.size === 0) return;
+    // mediaId → source ms it should be sitting at right now. The Video track contributes
+    // only its topmost covering piece (that's the one actually drawn — see the draw loop);
+    // every covering Audio piece contributes, since overlapping audio simply mixes.
+    const targets = new Map<string, number>();
+    // Elements the Ext Video track wants silenced this instant (its piece's own mute, or
+    // the track master's). Kept as a set rather than folded into `targets` because a muted
+    // piece still *plays* — it's drawn, it just makes no sound.
+    const mutedIds = new Set<string>();
+    const activeVideo = resolveClipAt(timelineState.videoClips, currentMs);
+    if (activeVideo) {
+      targets.set(activeVideo.clip.mediaId, activeVideo.sourceMs);
+      if (extVideoSettingsFor(timelineState, activeVideo.clip.id).muted) mutedIds.add(activeVideo.clip.mediaId);
+    }
+    for (const c of timelineState.audioClips) {
+      const dur = Math.max(0, c.sourceEnd - c.sourceStart);
+      if (currentMs >= c.timelineStart && currentMs < c.timelineStart + dur) {
+        targets.set(c.mediaId, c.sourceStart + (currentMs - c.timelineStart));
+      }
+    }
+    const playing = isPlayingRef.current;
+    for (const [mediaId, el] of pool) {
+      const targetMs = targets.get(mediaId);
+      if (targetMs === undefined) {
+        if (!el.paused) el.pause();
+        continue;
+      }
+      // Always assigned, not just when muting: unmuting a piece (or moving the playhead
+      // off a muted one onto an unmuted piece of the same file) has to put it back.
+      el.muted = mutedIds.has(mediaId);
+      const targetSec = targetMs / 1000;
+      if (Math.abs(el.currentTime - targetSec) > 0.15) el.currentTime = targetSec;
+      if (!playing && !el.paused) el.pause();
+      else if (playing && el.paused) el.play().catch(() => {});
+    }
+  }
 
   // Background blur — rebuild the blurred camera output whenever the level changes.
   // Skipped while removeBackground is on: it takes over from blur entirely (see the
@@ -1599,8 +2407,23 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       // trimmed past the end of the Clips track should grow the overall timeline to fit it,
       // not get silently clipped off the end.
       const cameraClips = effectiveClips(timelineState.cameraClips, cameraSourceDurationMs, 0, alignedLengthMs);
+      // How far the recording itself reaches, as against `totalMs` below, which the added-
+      // media tracks can push past it. The config-only tracks (Cursor/Layout/Sound) resolve
+      // against this: they describe how the *recording* is composited, so past the end of the
+      // footage there's nothing for them to apply to and they fall back to their tab's master
+      // settings (see resolveSegmentSettings). Tiling them to the full extent instead would
+      // stretch the last cut's override out behind an Ext piece dropped after the end — which
+      // is also exactly what the Timeline draws, so the two have to agree.
+      const footageTotalMs = Math.max(totalClipsExtentMs(clips), totalClipsExtentMs(cameraClips));
       let currentMs = 0;
-      let totalMs = totalClipsExtentMs(cameraClips);
+      // The added-media tracks extend the edited timeline exactly like the Camera track
+      // does — a music bed or an outro clip placed past the end of the footage grows the
+      // output to fit rather than being silently cut off at the recording's own end.
+      let totalMs = Math.max(
+        totalClipsExtentMs(cameraClips),
+        totalClipsExtentMs(timelineState.videoClips),
+        totalClipsExtentMs(timelineState.audioClips)
+      );
       let showScreenContent = false;
       const now = performance.now();
       const dtMs = Math.max(0, now - lastFrameAtRef.current);
@@ -1671,7 +2494,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       // rAF-paced live updates) would just add rendering overhead for state nothing is
       // reading right now, since the export dialog covers this component's own UI anyway.
       if (!isExportingRef.current) {
-        onTimeUpdateRef.current?.(currentMs, totalMs, sourceDurationMs);
+        onTimeUpdateRef.current?.(currentMs, totalMs, sourceDurationMs, alignedLengthMs);
         setDuration(totalMs / 1000);
         setProgress(totalMs > 0 ? currentMs / totalMs : 0);
 
@@ -1687,16 +2510,21 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         // is imperceptible; only live preview needs this at all — export's audio always
         // comes from a wholly separate offline render (see renderExportAudio), never from
         // this element's live playback.
-        // Per-cut Sound mute (timeline.soundSegments) — re-applied every live frame on top
-        // of whatever the coarser sound.muted-keyed effect set, so it tracks the playhead's
-        // own segment instead of only the tab's master toggle. Never cameraVideo — that
-        // element is always muted regardless (see its own doc comment, mutedRef's, and the
-        // Load effect above); its audio is carried by audioOnly instead.
-        const effectiveMuted = resolveSegmentSettings(timelineState.soundSegments, { muted: mutedRef.current }, currentMs, totalMs).muted;
-        screenVideo.muted = effectiveMuted;
+        // screenVideo carries system audio (or, for an already-muxed single file with no
+        // separate mic, the entire soundtrack) — muted per the Screen tab's own per-cut
+        // override, re-applied every live frame so it tracks the playhead's own cut instead
+        // of only the tab's master toggle. `bg` is already resolved against
+        // activeClipIdRef above, same object every other Screen visual property this frame
+        // reads from — its own `muted` is just one more field on it.
+        screenVideo.muted = bg.muted;
         const audioOnly = audioOnlyRef.current;
         if (audioOnly) {
-          audioOnly.muted = effectiveMuted;
+          // audioOnly carries the mic — the camera file's own track when there's a real
+          // camera to give it a Camera tab, else a screen-only recording's separately-
+          // captured audio.wav, which has no Camera tab to reach and so follows the Screen
+          // tab's mute instead (see micFollowsCameraRef's own comment). `cam` is resolved
+          // the same way `bg` is, just against the Camera track's own active clip.
+          audioOnly.muted = micFollowsCameraRef.current ? cam.muted : bg.muted;
           // audioOnly's own t=0 falls sideClipOffsetMsRef.current ms into currentMs's
           // clock (see this ref's own doc comment) — before that point there's no audio to
           // play yet, so pause rather than clamp to 0 and play whatever's actually first.
@@ -1710,6 +2538,12 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
             else if (isPlayingRef.current && audioOnly.paused) audioOnly.play().catch(() => {});
           }
         }
+
+        // Added media (the Video/Audio tracks) follows the same edited clock but plays its
+        // own sound unconditionally — see syncMediaElements' own comment on why it never
+        // touches `.muted`. Live only: export renders all audio offline, and positions the
+        // Video track's element itself (see exportVideo/renderExportAudio).
+        syncMediaElements(currentMs, timelineState);
       }
 
       // Camera — resolved independently against the same edited-timeline `currentMs`
@@ -1739,8 +2573,16 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       // further down — canvas dimensions (layoutSettings.format, sized above) stay
       // master-only, and so do the on-canvas drag/resize interaction handlers (elsewhere in
       // this file), which intentionally keep editing `layoutRef.current` directly.
-      const cursorSettings = resolveSegmentSettings(timelineState.cursorSegments, cursorRef.current, currentMs, totalMs);
-      const layoutOverride = resolveSegmentSettings(timelineState.layoutSegments, layoutSettings, currentMs, totalMs);
+      // Cursor tiles the Clips track's own extent, not footageTotalMs — the synthetic
+      // cursor is only ever drawn over screen content (see the showScreenContent guard on
+      // its own draw below) and its cuts stay linked to Clips pieces, so the Camera track
+      // has no say in how far it reaches. Same split the Timeline draws its two strips
+      // with (see its cursorDurationMs). Only matters for the fabricated whole-track
+      // default; a real segment carries its own bounds either way.
+      const cursorSettings = resolveSegmentSettings(
+        timelineState.cursorSegments, cursorRef.current, currentMs, totalClipsExtentMs(clips)
+      );
+      const layoutOverride = resolveSegmentSettings(timelineState.layoutSegments, layoutSettings, currentMs, footageTotalMs);
 
       // Zoom — a timeline zoom block temporarily overrides the Background tab's static
       // zoomPct with an eased-in/out target for the duration of its window.
@@ -1912,6 +2754,18 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         cameraDrag,
         screenResizeHandles,
         cameraResizeHandles,
+        // Filled in by the overlay block further down, once it knows whether an Ext Video
+        // piece is actually on screen this frame — null here so a frame that draws none
+        // leaves nothing stale behind for the pointer handlers to hit-test against.
+        extVideoRect: null,
+        extVideoDrag: null,
+        extVideoResizeHandles: null,
+        extVideoClipId: null,
+        // Filled in by the Effects block further down, once it knows which boxes this
+        // instant actually paints — same "nothing stale left behind" reasoning as the four
+        // Ext Video entries above.
+        effectRects: [],
+        effectResizeHandles: null,
         canvasW: canvas.width,
         canvasH: canvas.height,
       };
@@ -2162,11 +3016,77 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         lastPlaybackMsRef.current = cursorTMs;
       }
 
+      // An added-media Video piece plays *instead of* the composited frame underneath, so
+      // it goes over the screen content (but under the camera bubble, drawn after it below,
+      // and under the editing-only chrome further down, which never reaches the export
+      // anyway). Only the topmost covering piece is drawn — same last-in-the-array-wins
+      // stacking the Clips track uses. It fills the *gaps* in the recording, though:
+      // wherever a Clips piece also covers this instant, the recording wins and the Ext
+      // piece stays hidden (its own sound still plays — see syncMediaElements/
+      // renderExportAudio, neither of which consults this), so an Ext piece parked over
+      // live footage doesn't black it out. Works identically during export: the loop there
+      // has already put editedMsRef, and this element's own position, exactly where this
+      // frame needs them.
+      const overlayResolved = showScreenContent ? null : resolveClipAt(timelineState.videoClips, currentMs);
+      const overlayEl = overlayResolved ? mediaElsRef.current.get(overlayResolved.clip.mediaId) : undefined;
+      // Declared out here (not inside the block) so the editing chrome below can outline
+      // the same box and draw its handles.
+      let extVideoRect: Rect | null = null;
+      let extVideoResizeHandles: Record<Corner, Rect> | null = null;
+      if (overlayResolved && overlayEl instanceof HTMLVideoElement && overlayEl.videoWidth > 0) {
+        // Composited through the same helpers the screen recording is (see
+        // ExtVideoEditSettings), so backdrop/padding/rounded corner/zoom/crop all behave
+        // identically on both tabs. Its own backdrop, when it has one, covers the whole
+        // canvas rather than just its box — this piece is playing *instead of* the frame
+        // underneath, so leaving that showing around the edges would read as a bug. A
+        // "none" fill deliberately paints nothing at all and lets it show through.
+        const ext = extVideoSettingsFor(timelineState, overlayResolved.clip.id);
+        if (ext.fill !== "none") {
+          const extUrl = backdropImageUrlFor(ext);
+          const extImg = extUrl ? ensureBackdropImageLoaded(extUrl) : null;
+          drawBackdropCached(ctx, ext, extImg, canvas.width, canvas.height, extBackdropCacheRef);
+        }
+        extVideoRect = extVideoBox(ext, canvas.width, canvas.height);
+        extVideoResizeHandles = cornerHandles(extVideoRect, handleSize);
+        drawScreenContent(ctx, overlayEl, ext, extVideoRect);
+        // Drag/resize this piece exactly like the screen box or camera bubble — see
+        // interactionRef's own comment on these four.
+        interactionRef.current.extVideoRect = extVideoRect;
+        interactionRef.current.extVideoDrag = extVideoDragRegion(ext, canvas.width, canvas.height);
+        interactionRef.current.extVideoResizeHandles = extVideoResizeHandles;
+        interactionRef.current.extVideoClipId = overlayResolved.clip.id;
+      }
+
+      // The camera bubble goes on top of everything composited so far — screen content and
+      // any Ext Video piece alike. It's the one layer that's *the presenter* rather than
+      // the material being presented: a b-roll insert playing full-frame should still have
+      // them talking over the top of it, not swallow them. (Hit-testing in hitTest is
+      // ordered to match, camera before Ext Video.)
       const source = cameraSource;
       if (cameraRect && source) {
         const mask = cam.removeBackground ? (segmentationRef.current?.getMask() ?? null) : null;
         drawCameraBubbleAt(ctx, source, cam, cameraRect.x, cameraRect.y, cameraRect.w, cameraRect.h, mask);
+        if (cam.marquee || cam.borderPct > 0) drawCameraBorder(ctx, canvas, cam, cameraRect, currentMs);
       }
+
+      // Effects tab — the callout/blur boxes, painted over the finished composite (screen
+      // content, any Ext Video piece, and the camera bubble alike): a callout ringing the
+      // presenter is exactly as valid as one ringing a menu, and a blur has to be able to
+      // cover whatever ends up on top of the thing being hidden. Real output rather than
+      // editing chrome, so — unlike the outlines below — this runs during export too.
+      // Painted in array order, so a later box lands on top of an earlier one.
+      const effectHits: { id: string; rect: Rect }[] = [];
+      for (const effect of timelineState.effects ?? []) {
+        if (!isEffectActiveAt(effect, currentMs)) continue;
+        const r = effectRect(effect, canvas.width, canvas.height);
+        effectHits.push({ id: effect.id, rect: r });
+        if (effect.kind === "blur") drawBlurEffect(ctx, canvas, effect, r);
+        else drawCalloutEffect(ctx, canvas, effect, r, currentMs);
+      }
+      interactionRef.current.effectRects = effectHits;
+      const activeEffectHit = effectHits.find((e) => e.id === activeEffectIdRef.current) ?? null;
+      const effectResizeHandles = activeEffectHit ? cornerHandles(activeEffectHit.rect, handleSize) : null;
+      interactionRef.current.effectResizeHandles = effectResizeHandles;
 
       // Drag/resize affordance — a faint outline plus a handle at each of a box's 4
       // corners. Editing-only chrome, so skipped entirely while exportVideo() is capturing
@@ -2178,11 +3098,20 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         ctx.lineWidth = 1.5;
         ctx.strokeRect(screenBox.x + 1, screenBox.y + 1, screenBox.w - 2, screenBox.h - 2);
         if (cameraRect) ctx.strokeRect(cameraRect.x + 1, cameraRect.y + 1, cameraRect.w - 2, cameraRect.h - 2);
+        if (extVideoRect) ctx.strokeRect(extVideoRect.x + 1, extVideoRect.y + 1, extVideoRect.w - 2, extVideoRect.h - 2);
+        // Every effect box gets an outline — a box that paints almost nothing (a gentle
+        // blur, a callout with no dim and no border) would otherwise be impossible to find
+        // and grab. The selected one is picked out in the accent color, and is the only one
+        // with corner handles (see effectResizeHandles).
+        for (const hit of effectHits) {
+          ctx.strokeStyle = hit.id === activeEffectIdRef.current ? "rgba(129, 116, 255, .95)" : "rgba(255, 255, 255, .35)";
+          ctx.strokeRect(hit.rect.x + 1, hit.rect.y + 1, hit.rect.w - 2, hit.rect.h - 2);
+        }
         ctx.setLineDash([]);
         ctx.fillStyle = "rgba(255, 255, 255, .9)";
         ctx.strokeStyle = "rgba(0, 0, 0, .55)";
         ctx.lineWidth = 1;
-        for (const handles of [screenResizeHandles, cameraResizeHandles]) {
+        for (const handles of [screenResizeHandles, cameraResizeHandles, extVideoResizeHandles, effectResizeHandles]) {
           if (!handles) continue;
           for (const corner of CORNERS) {
             const handle = handles[corner];
@@ -2255,18 +3184,46 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   // source position and moves the actual video elements there, same as the draw loop's
   // own boundary-crossing jumps. Screen and Camera are resolved independently against
   // the same edited ms, same as the draw loop.
+  /** Both footage tracks' effective clip lists plus the edited timeline's own overall
+   *  extent — the one computation the draw loop, seekToEditedMs and the screen video's
+   *  `ended` handler all have to agree on. `totalMs` counts the added-media tracks too: an
+   *  Ext Video/Ext Audio piece placed past the end of the recording genuinely extends the
+   *  output, and anything that clamps a position to "the end of the timeline" while
+   *  disagreeing about where that is makes the stretch past the footage unreachable — which
+   *  is exactly what a seek clamped to footage-only used to do. Null when there's no loaded
+   *  screen video to measure against yet. */
+  function resolveTimelineExtent(): {
+    clips: TimelineClip[];
+    cameraClips: TimelineClip[];
+    sourceDurationMs: number;
+    totalMs: number;
+  } | null {
+    const screenVideo = screenVideoRef.current;
+    if (!screenVideo || !screenVideo.duration) return null;
+    // See the draw loop's identical computation for the reasoning behind all of this.
+    const sourceDurationMs = screenVideo.duration * 1000;
+    const cameraSourceDurationMs = cameraDurationMsRef.current ?? sourceDurationMs;
+    const offsetMs = sideClipOffsetMsRef.current;
+    const alignedLengthMs = Math.min(Math.max(0, sourceDurationMs - offsetMs), cameraSourceDurationMs);
+    const t = timelineRef.current;
+    const clips = effectiveClips(t.clips, sourceDurationMs, 0, alignedLengthMs, offsetMs);
+    const cameraClips = effectiveClips(t.cameraClips, cameraSourceDurationMs, 0, alignedLengthMs);
+    const totalMs = Math.max(
+      totalClipsExtentMs(clips),
+      totalClipsExtentMs(cameraClips),
+      totalClipsExtentMs(t.videoClips),
+      totalClipsExtentMs(t.audioClips)
+    );
+    return { clips, cameraClips, sourceDurationMs, totalMs };
+  }
+
   function seekToEditedMs(editedMs: number) {
     const screenVideo = screenVideoRef.current;
     const cameraVideo = cameraVideoRef.current;
     if (!screenVideo || !screenVideo.duration) return;
-    const sourceDurationMs = screenVideo.duration * 1000;
-    // See the draw loop's identical computation for the reasoning behind all of this.
-    const cameraSourceDurationMs = cameraDurationMsRef.current ?? sourceDurationMs;
-    const offsetMs = sideClipOffsetMsRef.current;
-    const alignedLengthMs = Math.min(Math.max(0, sourceDurationMs - offsetMs), cameraSourceDurationMs);
-    const clips = effectiveClips(timelineRef.current.clips, sourceDurationMs, 0, alignedLengthMs, offsetMs);
-    const cameraClips = effectiveClips(timelineRef.current.cameraClips, cameraSourceDurationMs, 0, alignedLengthMs);
-    const totalMs = Math.max(totalClipsExtentMs(clips), totalClipsExtentMs(cameraClips));
+    const extent = resolveTimelineExtent();
+    if (!extent) return;
+    const { clips, cameraClips, totalMs } = extent;
     editedMsRef.current = Math.max(0, Math.min(totalMs, editedMs));
     const resolved = resolveClipAt(clips, editedMsRef.current);
     if (resolved) {
@@ -2345,14 +3302,15 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   // the good case and the whole overhang of a stale, over-long camera clip in the bad one.
   const EXPORT_TAIL_TOLERANCE_SEC = 2;
 
-  /** Every edited-ms position where the screen or camera clip resolution could possibly
-   *  change (each clip's own start and end) — the boundaries between export's seek
-   *  segments. Two clips only need re-seeking exactly at the points where what's
-   *  "current" for either track actually changes; everywhere in between, both tracks
-   *  just keep playing forward from wherever the previous segment left them. */
-  function exportSegmentBreaks(totalMs: number, clips: TimelineClip[], cameraClips: TimelineClip[]): number[] {
+  /** Every edited-ms position where any track's clip resolution could possibly change
+   *  (each clip's own start and end) — the boundaries between export's seek segments. A
+   *  track only needs re-seeking exactly at the points where what's "current" for it
+   *  actually changes; everywhere in between every track just keeps playing forward from
+   *  wherever the previous segment left it. Takes each participating track's clip list
+   *  (screen, camera, and the added-media Video/Audio tracks). */
+  function exportSegmentBreaks(totalMs: number, ...lists: TimelineClip[][]): number[] {
     const points = new Set<number>([0, totalMs]);
-    for (const list of [clips, cameraClips]) {
+    for (const list of lists) {
       for (const c of list) {
         const dur = Math.max(0, c.sourceEnd - c.sourceStart);
         points.add(Math.min(Math.max(c.timelineStart, 0), totalMs));
@@ -2505,64 +3463,120 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     });
   }
 
+  /** [startSec, muted] breakpoints across the edited timeline for one footage track's own
+   *  audio-mute intent -- resolved exactly like the live draw loop resolves its per-frame
+   *  bg/cam (see the draw loop's own per-clip-override comment): whichever piece covers a
+   *  given instant supplies its own override if it has one, else the tab's master `muted`;
+   *  a gap (nothing covers that instant) also falls back to master. Breakpoints sit at
+   *  every piece's own start/end, since those are the only points the resolved answer can
+   *  possibly change at. Shared by the Screen and Camera tracks below -- each just calls
+   *  this with its own clip list, override map and master flag. */
+  function buildMuteWindows(
+    clipsForTrack: TimelineClip[],
+    overrides: Record<string, { muted: boolean }>,
+    masterMuted: boolean
+  ): { startSec: number; muted: boolean }[] {
+    const points = new Set<number>([0]);
+    for (const c of clipsForTrack) {
+      points.add(Math.max(0, c.timelineStart));
+      points.add(Math.max(0, c.timelineStart + Math.max(0, c.sourceEnd - c.sourceStart)));
+    }
+    return Array.from(points)
+      .sort((a, b) => a - b)
+      .map((ms) => {
+        const resolved = resolveClipAt(clipsForTrack, ms);
+        const muted = resolved ? (overrides[resolved.clip.id]?.muted ?? masterMuted) : masterMuted;
+        return { startSec: ms / 1000, muted };
+      });
+  }
+
   // Renders export's entire audio track in one deterministic, non-realtime pass via
-  // OfflineAudioContext — completely decoupled from the frame-stepped video capture (see
+  // OfflineAudioContext -- completely decoupled from the frame-stepped video capture (see
   // exportVideo), and the only way to get synthesized click sounds into the export at
   // all: playClickSound's envelopes are pinned to a live AudioContext's real-time clock,
   // which has no meaning during non-realtime rendering. Mirrors the live draw loop's own
-  // audio rules: the source audio comes from whichever element/clips list actually
-  // carries it (the separate camera file's own cameraClips if there is one, else the
-  // screen file's clips — see mutedRef's declaration), muted by the Mute toggle; clicks
-  // are always keyed to the screen recording's own source clock (the cursor track is
-  // always tied to screenFilePath, camera or not) and skipped entirely when the screen
-  // recording has a real cursor baked into its pixels, exactly like the live click
-  // detection this mirrors (see cursorBakedInRef's own doc comment). Returns null when
-  // there's nothing to render (muted, no click sound, no clicks) rather than encoding a
-  // silent WAV nobody needs. `decodeAudio` (the caller's ffmpeg-backed decoder — see
-  // exportVideo's own opts) is what actually turns the source file into something
-  // decodeAudioData can reliably read in full; decoding the raw source directly here
-  // doesn't work; see decodeAudio's own doc comment for why.
+  // audio rules -- see screenVideo.muted/audioOnly.muted's own comments in the draw loop
+  // for the full split; clicks are always keyed to the screen recording's own source clock
+  // (the cursor track is always tied to screenFilePath, camera or not) and skipped
+  // entirely when the screen recording has a real cursor baked into its pixels, exactly
+  // like the live click detection this mirrors (see cursorBakedInRef's own doc comment).
+  // Returns null when there's nothing to render (everything muted, no added media, no
+  // click sound, no clicks) rather than encoding a silent WAV nobody needs. `decodeAudio`
+  // (the caller's ffmpeg-backed decoder -- see exportVideo's own opts) is what actually
+  // turns each source file into something decodeAudioData can reliably read in full;
+  // decoding the raw source directly here doesn't work; see decodeAudio's own doc comment
+  // for why.
   async function renderExportAudio(
     totalMs: number,
-    // Only for click timing below (see its use at sourceToEditedMs) — audio itself is no
-    // longer clip-gated at all (see its own comment further down). Taken from the caller
+    // How far the recording itself reaches -- where each footage track's own pieces stop, as
+    // against totalMs, which the added-media tracks can push past it. See the draw loop's
+    // footageTotalMs for why the two differ.
+    footageTotalMs: number,
+    // Only for click timing below (see its use at sourceToEditedMs). Taken from the caller
     // rather than recomputed here so it's guaranteed the exact same default/edited clips
     // actually driving the video export, not a second, potentially drifting computation.
     clips: TimelineClip[],
+    cameraClips: TimelineClip[],
     decodeAudio: (filePath: string) => Promise<ArrayBuffer>
   ): Promise<ArrayBuffer | null> {
     const cur = cursorRef.current;
     const track = cursorTrackRef.current;
     const clicks = !cursorBakedInRef.current && cur.clickSound ? (track?.metadata.clicks ?? []) : [];
 
-    // Per-cut Sound mute (timeline.soundSegments), as a list of [start, muted] breakpoints
-    // on the *edited* timeline — the same clock this function's own sources already play
-    // straight through on (see the "edited-ms and raw source-ms are the same clock for
-    // audio's purposes" comment below), so these breakpoints apply directly to every
-    // source's own gain node in ABSOLUTE offline-context time, regardless of that source's
-    // own start offset (a breakpoint scheduled before a source even starts just means its
-    // gain is already at that value once real audio from it arrives).
-    const muteWindows = effectiveSegments(timelineRef.current.soundSegments, totalMs).map((s) => ({
-      startSec: s.startMs / 1000,
-      muted: s.settings?.muted ?? mutedRef.current,
-    }));
-    const allMuted = muteWindows.every((w) => w.muted);
+    // Two independent mute timelines -- one per recorded audio source, exactly mirroring the
+    // live draw loop's screenVideo/audioOnly split (see its own comments): the screen
+    // track's own cuts and their per-clip override govern system audio; the mic follows
+    // either the Camera track's cuts (a real camera file) or, absent one, the same Screen
+    // track windows (a screen-only recording's separately-captured audio.wav has no Camera
+    // tab to reach it). micMuteWindows === screenMuteWindows (literally the same array) in
+    // that second case, so the closing breakpoint below only needs writing once either way.
+    const screenMuteWindows = buildMuteWindows(clips, timelineRef.current.clipOverrides, backgroundRef.current.muted);
+    const micFollowsCamera = !!cameraFilePath;
+    const micMuteWindows = micFollowsCamera
+      ? buildMuteWindows(cameraClips, timelineRef.current.cameraClipOverrides, cameraRef.current.muted)
+      : screenMuteWindows;
+    // Past the last footage piece there's no cut to speak for the stretch -- an Ext Video/Ext
+    // Audio piece placed after the recording -- so each track's own master mute governs it,
+    // same fallback resolveSegmentSettings/buildMuteWindows itself already applies to a gap.
+    // Load-bearing: each source's gain node only gets a breakpoint per window, so without
+    // one here it would simply hold whatever the last footage piece set.
+    if (footageTotalMs < totalMs) {
+      screenMuteWindows.push({ startSec: footageTotalMs / 1000, muted: backgroundRef.current.muted });
+      if (micFollowsCamera) micMuteWindows.push({ startSec: footageTotalMs / 1000, muted: cameraRef.current.muted });
+    }
+    const sideAudioPath = cameraFilePath ?? audioFilePath;
+    const recordedSourcesAllMuted =
+      screenMuteWindows.every((w) => w.muted) && (!sideAudioPath || micMuteWindows.every((w) => w.muted));
+    // Added media (EditProject.media): every placed Audio piece, plus every placed Video
+    // piece that isn't muted -- an inserted clip brings its own sound with it, which is why
+    // both tracks feed in here. It plays regardless of either *recorded* source's own mute
+    // (a separate file, with no Screen/Camera cut to inherit from); the one thing that
+    // silences a piece is the Ext Video tab's own mute -- its own override or the track
+    // master's -- which the live draw loop's syncMediaElements applies the same way. A
+    // project with only Ext pieces and both recorded channels muted still needs a real
+    // render, which is what hasPlacedMedia below is for.
+    const placedMedia: TimelineMediaClip[] = [
+      ...timelineRef.current.audioClips,
+      ...timelineRef.current.videoClips.filter((c) => !extVideoSettingsFor(timelineRef.current, c.id).muted),
+    ];
+    const hasPlacedMedia = placedMedia.length > 0;
 
-    if (allMuted && clicks.length === 0) return null;
+    if (recordedSourcesAllMuted && clicks.length === 0 && !hasPlacedMedia) return null;
 
     const SAMPLE_RATE = 44100;
     const numSamples = Math.max(1, Math.ceil((totalMs / 1000) * SAMPLE_RATE));
     const offlineCtx = new OfflineAudioContext(2, numSamples, SAMPLE_RATE);
 
-    if (!allMuted) {
-      // Two independent recorded sources, mixed here into one export track — the same two
-      // the live preview plays through two separate elements (see mutedRef's own comment):
+    if (!recordedSourcesAllMuted) {
+      // Two independent recorded sources, mixed here into one export track -- the same two
+      // the live preview plays through two separate elements (see the draw loop's own
+      // screenVideo/audioOnly comments):
       //
       //  - the screen track, which is where system audio ("system sound") lives on every
       //    platform now, and which for an already-muxed single-file source is the entire
       //    soundtrack on its own. Always at offset 0: it *is* the reference timeline.
-      //  - the side clip's mic — the camera track's own audio, or a screen-only
-      //    recording's separately-captured audio.wav — which starts sideClipOffsetMs into
+      //  - the side clip's mic -- the camera track's own audio, or a screen-only
+      //    recording's separately-captured audio.wav -- which starts sideClipOffsetMs into
       //    that timeline (see sideClipOffsetMsRef's doc comment) because its recorder
       //    starts after screen capture is already rolling.
       //
@@ -2570,34 +3584,36 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       // never costs the other: a project recorded with system sound off has a silent screen
       // track, one recorded with no mic has no side clip at all, and anything recorded
       // before system audio moved to the screen track has both mixed together in the side
-      // clip against a silent screen track — which still comes out right here, since that
+      // clip against a silent screen track -- which still comes out right here, since that
       // mixed clip is simply one of the two sources and the other contributes nothing.
-      const sideAudioPath = cameraFilePath ?? audioFilePath;
-      const sources: { path: string; startSec: number }[] = [
-        { path: screenFilePath, startSec: 0 },
-        ...(sideAudioPath ? [{ path: sideAudioPath, startSec: Math.max(0, sideClipOffsetMsRef.current / 1000) }] : []),
+      const sources: { path: string; startSec: number; muteWindows: { startSec: number; muted: boolean }[] }[] = [
+        { path: screenFilePath, startSec: 0, muteWindows: screenMuteWindows },
+        ...(sideAudioPath
+          ? [{ path: sideAudioPath, startSec: Math.max(0, sideClipOffsetMsRef.current / 1000), muteWindows: micMuteWindows }]
+          : []),
       ];
 
-      for (const { path: sourceAudioPath, startSec } of sources) {
+      for (const { path: sourceAudioPath, startSec, muteWindows } of sources) {
         try {
           const wavBytes = await decodeAudio(sourceAudioPath);
           const decoded = await offlineCtx.decodeAudioData(wavBytes);
         // One continuous, unedited buffer source spanning the whole export (from its own
-        // start offset on) — not gated by either track's own clips. Neither the Camera
+        // start offset on) -- not gated by either track's own clips. Neither the Camera
         // track's pieces (see cameraClips's own independent-editing comment) nor the screen
         // Clips track's own cuts/gaps are something the user is actually editing *audio* by
         // touching: a gap on either track just means blank visual background for that
-        // stretch (see the draw loop's own "plays as real, silent background" comment) —
+        // stretch (see the draw loop's own "plays as real, silent background" comment) --
         // real elapsed time nothing stops the underlying recording's own audio from
         // continuing straight through, on both counts. edited-ms and raw source-ms are the
         // same clock for audio's purposes specifically because of that: it's the one track
-        // never subject to remapping, past the fixed start-offset shift.
+        // never subject to remapping, past the fixed start-offset shift. Only *muting* it
+        // is genuinely per-cut -- see buildMuteWindows above.
           const durSec = Math.min(decoded.duration, Math.max(0, totalMs / 1000 - startSec));
           if (durSec > 0) {
             const src = offlineCtx.createBufferSource();
             src.buffer = decoded;
             // Routed through a gain node (rather than straight to destination) so the mute
-            // breakpoints above can silence specific cut spans — hard on/off steps, same as
+            // breakpoints above can silence specific cut spans -- hard on/off steps, same as
             // a <video>'s own .muted flag toggling live, no fades.
             const gain = offlineCtx.createGain();
             for (const w of muteWindows) gain.gain.setValueAtTime(w.muted ? 0 : 1, Math.max(0, w.startSec));
@@ -2606,9 +3622,47 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
             src.start(startSec, 0, durSec);
           }
         } catch {
-          // No audio track on this source, or it failed to decode — skip just this one.
+          // No audio track on this source, or it failed to decode -- skip just this one.
           // The other source (and the click sounds below) still render.
         }
+      }
+    }
+
+    // The added-media pieces resolved above. Rendered unconditionally (outside the
+    // recordedSourcesAllMuted guard) and connected straight to destination with no gain
+    // node: an Ext piece's mute is all-or-nothing for the whole piece, so a muted one is
+    // simply absent from `placedMedia` rather than needing breakpoints the way the two
+    // recorded sources' per-cut mutes do. Unlike those sources these *are* clip-gated,
+    // because here the pieces are the edit: each is scheduled at its own timelineStart,
+    // offset into its file by its own sourceStart, so a trimmed or cut piece contributes
+    // exactly the stretch it shows on the timeline. Decoded buffers are cached by path, so
+    // several pieces cut from one file decode it once.
+    const decodedByPath = new Map<string, AudioBuffer>();
+    for (const clip of placedMedia) {
+      const item = mediaItemsRef.current.find((m) => m.id === clip.mediaId);
+      if (!item) continue; // its file was removed from the project's media pool
+      const startSec = clip.timelineStart / 1000;
+      if (startSec >= totalMs / 1000) continue;
+      try {
+        let decoded = decodedByPath.get(item.filePath);
+        if (!decoded) {
+          decoded = await offlineCtx.decodeAudioData(await decodeAudio(item.filePath));
+          decodedByPath.set(item.filePath, decoded);
+        }
+        const offsetSec = clip.sourceStart / 1000;
+        const durSec = Math.min(
+          (clip.sourceEnd - clip.sourceStart) / 1000,
+          Math.max(0, totalMs / 1000 - startSec),
+          Math.max(0, decoded.duration - offsetSec)
+        );
+        if (durSec <= 0) continue;
+        const src = offlineCtx.createBufferSource();
+        src.buffer = decoded;
+        src.connect(offlineCtx.destination);
+        src.start(startSec, offsetSec, durSec);
+      } catch {
+        // Moved/unreadable file, or one with no audio track at all (a silent video
+        // insert) -- skip just this piece; everything else still renders.
       }
     }
 
@@ -2871,10 +3925,25 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       const alignedLengthMs = Math.min(Math.max(0, sourceDurationMs - offsetMs), cameraSourceDurationMs);
       const clips = effectiveClips(timelineRef.current.clips, sourceDurationMs, 0, alignedLengthMs, offsetMs);
       const cameraClips = effectiveClips(timelineRef.current.cameraClips, cameraSourceDurationMs, 0, alignedLengthMs);
-      const totalMs = Math.max(totalClipsExtentMs(clips), totalClipsExtentMs(cameraClips));
+      // Added media extends the output the same way the Camera track does — see the live
+      // draw loop's identical totalMs computation.
+      const videoClips = timelineRef.current.videoClips;
+      const audioClips = timelineRef.current.audioClips;
+      const totalMs = Math.max(
+        totalClipsExtentMs(clips),
+        totalClipsExtentMs(cameraClips),
+        totalClipsExtentMs(videoClips),
+        totalClipsExtentMs(audioClips)
+      );
       if (totalMs <= 0) throw new Error("There's nothing on the timeline to export.");
 
-      const audioWavBytes = await renderExportAudio(totalMs, clips, opts.decodeAudio);
+      const audioWavBytes = await renderExportAudio(
+        totalMs,
+        Math.max(totalClipsExtentMs(clips), totalClipsExtentMs(cameraClips)),
+        clips,
+        cameraClips,
+        opts.decodeAudio
+      );
       if (cancelled) throw new ExportCancelledError();
 
       // Resolved before beginExport, since which sink we got is what decides which ffmpeg
@@ -2916,15 +3985,31 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       const origCameraMuted = cameraVideo?.muted;
       screenVideo.muted = true;
       if (cameraVideo) cameraVideo.muted = true;
+      // Same for every added-media element, for the same reason — their audio is already in
+      // the offline render above. Also stops any of them that live preview left playing:
+      // only the one Video-track element this loop actually needs is driven from here.
+      const mediaEls = Array.from(mediaElsRef.current.values());
+      const origMediaMuted = mediaEls.map((el) => el.muted);
+      for (const el of mediaEls) {
+        el.pause();
+        el.muted = true;
+      }
       try {
         const frameDurationMs = 1000 / opts.fps;
         const totalFrames = Math.max(1, Math.round((totalMs / 1000) * opts.fps));
-        const breakpoints = exportSegmentBreaks(totalMs, clips, cameraClips);
+        const breakpoints = exportSegmentBreaks(totalMs, clips, cameraClips, videoClips, audioClips);
 
         let screenClipId: string | null = null;
         let cameraClipId: string | null = null;
         let screenClip: TimelineClip | null = null;
         let cameraClip: TimelineClip | null = null;
+        // The Video track's currently-covering piece, driven exactly like the two above —
+        // only one plays (and is drawn) at a time, the topmost covering piece, so one
+        // element's worth of seeking is all this needs. The Audio track has no
+        // frame-by-frame work at all here: its sound came out of renderExportAudio.
+        let overlayClipId: string | null = null;
+        let overlayClip: TimelineMediaClip | null = null;
+        let overlayEl: HTMLVideoElement | null = null;
         let segIdx = 0;
         // Per-export, per-element "this is as far as it decodes" record — see
         // waitUntilSourceTime, which both fills and consults it. Deliberately not hoisted
@@ -2964,6 +4049,23 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
               screenVideo.pause();
             }
           }
+          // Null wherever the recording itself covers this segment — the Clips track wins
+          // that overlap and draw() skips the Ext piece there, so there's nothing to seek
+          // or wait on either (segment breaks include every Clips boundary, so screen
+          // coverage can't change part-way through one).
+          const overlayResolved = screenResolved ? null : resolveClipAt(videoClips, segStart);
+          if ((overlayResolved?.clip.id ?? null) !== overlayClipId) {
+            overlayEl?.pause();
+            overlayClipId = overlayResolved?.clip.id ?? null;
+            overlayClip = overlayResolved?.clip ?? null;
+            const el = overlayResolved ? mediaElsRef.current.get(overlayResolved.clip.mediaId) : undefined;
+            overlayEl = el instanceof HTMLVideoElement ? el : null;
+            if (overlayResolved && overlayEl) {
+              await seekAndWait(overlayEl, overlayResolved.sourceMs / 1000);
+              if (cancelled) break;
+              overlayEl.playbackRate = MAX_EXPORT_PLAYBACK_RATE;
+            }
+          }
           if ((cameraResolved?.clip.id ?? null) !== cameraClipId) {
             cameraClipId = cameraResolved?.clip.id ?? null;
             cameraClip = cameraResolved?.clip ?? null;
@@ -2990,6 +4092,11 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
               waitUntilSourceTime(cameraVideo, (cameraClip.sourceStart + (targetMs - cameraClip.timelineStart)) / 1000, reachableEndSec)
             );
           }
+          if (overlayClip && overlayEl) {
+            waits.push(
+              waitUntilSourceTime(overlayEl, (overlayClip.sourceStart + (targetMs - overlayClip.timelineStart)) / 1000, reachableEndSec)
+            );
+          }
           const waitStartedAt = performance.now();
           if (waits.length > 0) await Promise.all(waits);
           phaseMs.wait += performance.now() - waitStartedAt;
@@ -3004,6 +4111,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
           // output seconds instead of landing at its actual recorded timestamp.
           screenVideo.pause();
           cameraVideo?.pause();
+          overlayEl?.pause();
           if (cancelled) break;
 
           editedMsRef.current = targetMs;
@@ -3021,6 +4129,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         }
         screenVideo.pause();
         cameraVideo?.pause();
+        overlayEl?.pause();
 
         if (cancelled) throw new ExportCancelledError();
         // Drains whatever the encoder and the IPC chain still hold — on the h264 path the
@@ -3050,6 +4159,11 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
           cameraVideo.playbackRate = 1;
           cameraVideo.muted = origCameraMuted ?? cameraVideo.muted;
         }
+        mediaEls.forEach((el, i) => {
+          el.pause();
+          el.playbackRate = 1;
+          el.muted = origMediaMuted[i];
+        });
         // The draw-loop effect's own rAF self-scheduling stood down for the duration of
         // the capture (see draw()'s isExportingRef guard) — kick it back into motion now
         // that live preview is in charge of this canvas again.
@@ -3110,22 +4224,79 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     return Math.min(rect.width / canvas.width, rect.height / canvas.height);
   }
 
-  type Hit = { kind: "camera" | "screen"; action: "resize"; corner: Corner } | { kind: "camera" | "screen"; action: "move" };
+  type DragTarget = "camera" | "screen" | "extVideo";
+  type Hit =
+    | { kind: DragTarget; action: "resize"; corner: Corner }
+    | { kind: DragTarget; action: "move" }
+    // Effects boxes carry which box was hit — unlike the three singleton targets above
+    // there can be any number of them on the frame at once.
+    | { kind: "effect"; id: string; action: "resize"; corner: Corner }
+    | { kind: "effect"; id: string; action: "move" };
 
   // Resize handles take priority over the body-drag hit test — they're small, so a
   // near-corner grab should always resize rather than move.
   function hitTest(pt: { x: number; y: number }, info: (typeof interactionRef)["current"]): Hit | null {
+    // Topmost first, matching the draw order: Effects boxes (painted over everything),
+    // then the camera bubble, then any Ext Video piece, then the screen box. The Ext
+    // entries are null on any frame that draws no Ext piece, which hands the canvas
+    // straight back to the screen box below.
+    const activeEffect = activeEffectIdRef.current;
+    if (activeEffect && info.effectResizeHandles) {
+      for (const corner of CORNERS) {
+        if (pointInRect(pt.x, pt.y, info.effectResizeHandles[corner])) return { kind: "effect", id: activeEffect, action: "resize", corner };
+      }
+    }
+    // Back-to-front, so the box painted on top is the one a click in an overlap lands on.
+    for (let i = info.effectRects.length - 1; i >= 0; i--) {
+      const box = info.effectRects[i];
+      if (pointInRect(pt.x, pt.y, box.rect)) return { kind: "effect", id: box.id, action: "move" };
+    }
     if (info.cameraResizeHandles) {
       for (const corner of CORNERS) {
         if (pointInRect(pt.x, pt.y, info.cameraResizeHandles[corner])) return { kind: "camera", action: "resize", corner };
       }
     }
     if (info.cameraRect && info.cameraDrag && pointInRect(pt.x, pt.y, info.cameraRect)) return { kind: "camera", action: "move" };
+    if (info.extVideoResizeHandles) {
+      for (const corner of CORNERS) {
+        if (pointInRect(pt.x, pt.y, info.extVideoResizeHandles[corner])) return { kind: "extVideo", action: "resize", corner };
+      }
+    }
+    if (info.extVideoRect && info.extVideoDrag && pointInRect(pt.x, pt.y, info.extVideoRect)) return { kind: "extVideo", action: "move" };
     for (const corner of CORNERS) {
       if (pointInRect(pt.x, pt.y, info.screenResizeHandles[corner])) return { kind: "screen", action: "resize", corner };
     }
     if (info.screenDrag && pointInRect(pt.x, pt.y, info.screenRect)) return { kind: "screen", action: "move" };
     return null;
+  }
+
+  /** Writes back what a preview drag just changed about the Ext Video piece on screen.
+   *  Into that piece's *own* override when it has one, else into the track master — i.e.
+   *  whichever object was actually in force for what the user grabbed (the same resolution
+   *  the draw loop itself uses, see extVideoSettingsFor), so dragging always changes exactly
+   *  the thing that moved rather than silently editing a master the piece was overriding.
+   *  Every field it writes is absolute (derived from the pointer's position, never from the
+   *  previous value), so timelineRef lagging a render behind mid-drag can't compound. */
+  function commitExtVideoDrag(patch: Partial<ExtVideoEditSettings>) {
+    const clipId = extDragClipIdRef.current;
+    const t = timelineRef.current;
+    const overrides = t.videoClipOverrides ?? {};
+    const own = clipId ? overrides[clipId] : undefined;
+    if (clipId && own) {
+      onTimelineChangeRef.current({ ...t, videoClipOverrides: { ...overrides, [clipId]: { ...own, ...patch } } });
+    } else {
+      onTimelineChangeRef.current({ ...t, extVideo: { ...(t.extVideo ?? DEFAULT_EXT_VIDEO_EDIT_SETTINGS), ...patch } });
+    }
+  }
+
+  /** Writes an Effects box's new geometry straight back into `timeline.effects` — same
+   *  path any panel edit takes, so a preview drag lands in the undo history and the save
+   *  debounce identically. Every value written is absolute (derived from the pointer's own
+   *  position, never from the previous one), so timelineRef lagging a render behind
+   *  mid-drag can't compound into drift. */
+  function commitEffectBox(id: string, box: TimelineEffectBox) {
+    const t = timelineRef.current;
+    onTimelineChangeRef.current({ ...t, effects: updateEffect(t.effects ?? [], id, { box }) });
   }
 
   // "tl"/"br" corners resize along the same diagonal as a nwse cursor; "tr"/"bl" along nesw.
@@ -3143,9 +4314,43 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     const hit = hitTest(pt, info);
     if (!hit) return; // not a draggable box/handle here — let the click-to-play handler run
 
+    if (hit.kind === "effect") {
+      // Clicking any box selects it — the Effects panel's chip rail follows, and the corner
+      // handles move onto it for whatever drag comes next.
+      if (hit.id !== activeEffectIdRef.current) onActiveEffectChangeRef.current?.(hit.id);
+      const box = info.effectRects.find((r) => r.id === hit.id)?.rect;
+      if (!box) return;
+      if (hit.action === "resize") {
+        // Same anchor convention as every other box here — the corner opposite the one
+        // grabbed is what stays put.
+        const anchorX = hit.corner === "tl" || hit.corner === "bl" ? box.x + box.w : box.x;
+        const anchorY = hit.corner === "tl" || hit.corner === "tr" ? box.y + box.h : box.y;
+        dragStateRef.current = { mode: "effectResize", id: hit.id, anchorX, anchorY, startClientX: e.clientX, startClientY: e.clientY };
+      } else {
+        dragStateRef.current = {
+          mode: "effectMove",
+          id: hit.id,
+          grabDX: pt.x - box.x,
+          grabDY: pt.y - box.y,
+          boxW: box.w,
+          boxH: box.h,
+          startClientX: e.clientX,
+          startClientY: e.clientY,
+        };
+      }
+      extDragClipIdRef.current = null;
+      didDragRef.current = false;
+      guideRef.current = { v: [], h: [] };
+      canvas.style.cursor = hit.action === "resize" ? resizeCursor(hit.corner) : "grabbing";
+      canvas.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      return;
+    }
+
     const { kind } = hit;
+    const boxFor = (k: DragTarget) => (k === "camera" ? info.cameraRect : k === "extVideo" ? info.extVideoRect : info.screenRect);
     if (hit.action === "resize") {
-      const box = kind === "camera" ? info.cameraRect : info.screenRect;
+      const box = boxFor(kind);
       if (!box) return;
       // anchorX/Y is the corner *opposite* the one grabbed — it stays fixed while that
       // corner (and the box's other two edges) follow the pointer.
@@ -3163,8 +4368,8 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       const drawY = m.contentY + pctToOffset(pos?.yPct ?? 50, m.contentH - m.fitH);
       dragStateRef.current = { mode: "pan", grabDX: pt.x - drawX, grabDY: pt.y - drawY, startClientX: e.clientX, startClientY: e.clientY };
     } else {
-      const box = kind === "camera" ? info.cameraRect : info.screenRect;
-      const region = kind === "camera" ? info.cameraDrag : info.screenDrag;
+      const box = boxFor(kind);
+      const region = kind === "camera" ? info.cameraDrag : kind === "extVideo" ? info.extVideoDrag : info.screenDrag;
       if (!box || !region) return;
       // Grabbing the screen while it's still derived (split, "nothing set" — see
       // buildSplitSlots) is the moment control hands back to the user. A move alone
@@ -3187,6 +4392,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         capturedSize,
       };
     }
+    extDragClipIdRef.current = kind === "extVideo" ? info.extVideoClipId : null;
     didDragRef.current = false;
     guideRef.current = { v: [], h: [] };
     canvas.style.cursor = hit.action === "resize" ? resizeCursor(hit.corner) : "grabbing";
@@ -3219,6 +4425,36 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       const moved = Math.hypot(e.clientX - drag.startClientX, e.clientY - drag.startClientY);
       if (moved < DRAG_MOVE_THRESHOLD_PX) return;
       didDragRef.current = true;
+    }
+
+    if (drag.mode === "effectMove") {
+      // Free rectangle in canvas-% space — position is stored outright (see
+      // TimelineEffectBox), so there's no DragRegion/travel conversion to do. clampEffectBox
+      // (inside updateEffect) is what keeps a grabbable sliver of it on frame.
+      const canvasW = interactionRef.current.canvasW || canvas.width;
+      const canvasH = interactionRef.current.canvasH || canvas.height;
+      commitEffectBox(drag.id, {
+        xPct: ((pt.x - drag.grabDX) / canvasW) * 100,
+        yPct: ((pt.y - drag.grabDY) / canvasH) * 100,
+        wPct: (drag.boxW / canvasW) * 100,
+        hPct: (drag.boxH / canvasH) * 100,
+      });
+      return;
+    }
+
+    if (drag.mode === "effectResize") {
+      const canvasW = interactionRef.current.canvasW || canvas.width;
+      const canvasH = interactionRef.current.canvasH || canvas.height;
+      // The anchor corner and the pointer are simply the box's two opposite corners —
+      // boxFromCorners normalizes them whichever way the drag went.
+      commitEffectBox(
+        drag.id,
+        boxFromCorners(
+          { xPct: (drag.anchorX / canvasW) * 100, yPct: (drag.anchorY / canvasH) * 100 },
+          { xPct: (pt.x / canvasW) * 100, yPct: (pt.y / canvasH) * 100 }
+        )
+      );
+      return;
     }
 
     if (drag.mode === "pan") {
@@ -3257,7 +4493,26 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
       const vGuides: number[] = [];
       const hGuides: number[] = [];
 
-      if (drag.target === "screen") {
+      if (drag.target === "extVideo") {
+        // The same free rectangle the screen box is (below), just writing to the Ext Video
+        // settings in force for the piece on screen instead of to the layout.
+        const sizePct = Math.max(10, (desiredW / canvasW) * 100);
+        const heightPct = Math.max(10, (desiredH / canvasH) * 100);
+        const actualW = (sizePct / 100) * canvasW;
+        const actualH = (heightPct / 100) * canvasH;
+        const boxX = rawW >= 0 ? drag.anchorX : drag.anchorX - actualW;
+        const boxY = rawH >= 0 ? drag.anchorY : drag.anchorY - actualH;
+        if (Math.abs(boxX) < snapPx) vGuides.push(0);
+        if (Math.abs(boxX + actualW - canvasW) < snapPx) vGuides.push(1);
+        if (Math.abs(boxY) < snapPx) hGuides.push(0);
+        if (Math.abs(boxY + actualH - canvasH) < snapPx) hGuides.push(1);
+        guideRef.current = { v: vGuides, h: hGuides };
+        commitExtVideoDrag({
+          sizePct,
+          heightPct,
+          pos: { xPct: offsetToPct(boxX, canvasW - actualW), yPct: offsetToPct(boxY, canvasH - actualH) },
+        });
+      } else if (drag.target === "screen") {
         // A true free rectangle — width and height set independently, straight from the
         // pointer deltas, so (unlike the camera bubble below) there's no shape transform
         // between them and what's actually rendered, and the boundary check can just use
@@ -3358,6 +4613,10 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
     const xPct = offsetToPct(desiredX - region.originX, region.travelW);
     const yPct = offsetToPct(desiredY - region.originY, region.travelH);
 
+    if (drag.target === "extVideo") {
+      commitExtVideoDrag({ pos: { xPct, yPct } });
+      return;
+    }
     const current = layoutRef.current;
     if (drag.target === "camera") {
       onLayoutChangeRef.current({ ...current, freeCameraPos: { xPct, yPct } });
@@ -3374,6 +4633,7 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
   function handlePointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
     dragStateRef.current = null;
+    extDragClipIdRef.current = null;
     guideRef.current = { v: [], h: [] };
     if (canvas) {
       canvas.style.cursor = "pointer";
@@ -3441,15 +4701,10 @@ export const PreviewCompositor = forwardRef<PreviewCompositorHandle, PreviewComp
         <span className="preview-time">
           {formatTime(progress * duration)} / {formatTime(duration)}
         </span>
-        <button
-          type="button"
-          className="preview-mute-btn"
-          aria-pressed={sound.muted}
-          title={sound.muted ? "Unmute" : "Mute"}
-          onClick={() => onSoundChange({ ...sound, muted: !sound.muted })}
-        >
-          {sound.muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-        </button>
+        {/* No single Mute button here any more — audio is muted per-channel now (Screen's
+            own system audio, Camera's own mic), each with its own master + per-cut control
+            on its own tab (see BackgroundEditPanel/CameraEditPanel's Audio section), so
+            there's no longer one flag this button could toggle. */}
         {(onUndo || onRedo) && (
           <div className="preview-history-group">
             <button

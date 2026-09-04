@@ -1,0 +1,18 @@
+.ext-sound-edit-panel {
+  flex: 1; min-width: 0; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 18px; padding: 16px;
+}
+
+.ext-sound-empty-hint {
+  margin: 0; padding: 10px 12px; font-size: 11px; line-height: 1.4; color: var(--muted);
+  border: 1px dashed var(--border); border-radius: 10px; background: var(--bg);
+}
+
+/* ComingSoon is sized for a full page; inside the edit sidebar it needs to sit in a
+   column that's often only a few hundred px wide, so it loses the page-sized padding
+   and minimum height rather than forcing the panel to scroll past empty space. */
+.ext-sound-edit-panel .coming-soon { padding: 24px 8px; min-height: 0; gap: 8px; }
+.ext-sound-edit-panel .coming-soon-orb { width: 68px; height: 68px; }
+.ext-sound-edit-panel .coming-soon-icon { font-size: 28px; }
+.ext-sound-edit-panel .coming-soon-title { font-size: 20px; margin-top: 6px; }
+.ext-sound-edit-panel .coming-soon-subtitle { font-size: 12px; }

@@ -10,10 +10,10 @@ import type {
   CursorMetadata,
   EditProject,
   EditProjectMedia,
+  EditProjectMediaItem,
   EditProjectSource,
   LayoutEditSettings,
   OverlayConfig,
-  SoundEditSettings,
   TimelineEditSettings,
 } from "@shared/types/models";
 import { DEFAULT_CAMERA_EDIT_SETTINGS } from "@shared/types/models";
@@ -34,6 +34,15 @@ function overlayToCameraSettings(overlay: OverlayConfig): CameraEditSettings {
     cropBottomPct: DEFAULT_CAMERA_EDIT_SETTINGS.cropBottomPct,
     cropLeftPct: DEFAULT_CAMERA_EDIT_SETTINGS.cropLeftPct,
     removeBackground: DEFAULT_CAMERA_EDIT_SETTINGS.removeBackground,
+    muted: DEFAULT_CAMERA_EDIT_SETTINGS.muted,
+    borderPct: DEFAULT_CAMERA_EDIT_SETTINGS.borderPct,
+    borderColor: DEFAULT_CAMERA_EDIT_SETTINGS.borderColor,
+    marquee: DEFAULT_CAMERA_EDIT_SETTINGS.marquee,
+    marqueeStyle: DEFAULT_CAMERA_EDIT_SETTINGS.marqueeStyle,
+    marqueeColorMode: DEFAULT_CAMERA_EDIT_SETTINGS.marqueeColorMode,
+    marqueeColor: DEFAULT_CAMERA_EDIT_SETTINGS.marqueeColor,
+    marqueeGradientFrom: DEFAULT_CAMERA_EDIT_SETTINGS.marqueeGradientFrom,
+    marqueeGradientTo: DEFAULT_CAMERA_EDIT_SETTINGS.marqueeGradientTo,
   };
 }
 
@@ -178,6 +187,19 @@ function migrateLegacyProjectsOnce(): void {
 }
 
 function normalize(id: string, raw: Partial<EditProject>): EditProject {
+  // A save from before the standalone Sound tab (and its whole-recording Sound track) were
+  // retired in favor of BackgroundEditSettings.muted/CameraEditSettings.muted can still have
+  // an old `sound.muted` sitting in its JSON — no longer part of the `EditProject` type at
+  // all (hence the loose read here), but still worth honoring once, as the Screen tab's own
+  // starting mute: the closest single-field equivalent to what that toggle used to mean, so
+  // a recording exported muted before this migration doesn't quietly come back unmuted. Only
+  // when `background` itself doesn't already say otherwise (a save written *after* the
+  // migration, however unlikely to also carry a stale `sound`, wins on its own terms).
+  const legacySoundMuted = (raw as { sound?: { muted?: boolean } }).sound?.muted === true;
+  let background = raw.background;
+  if (legacySoundMuted && background && !("muted" in background)) {
+    background = { ...(background as BackgroundEditSettings), muted: true };
+  }
   return {
     id,
     title: raw.title ?? "Untitled project",
@@ -186,10 +208,10 @@ function normalize(id: string, raw: Partial<EditProject>): EditProject {
     source: raw.source,
     camera: raw.camera,
     cursor: raw.cursor,
-    background: raw.background,
-    sound: raw.sound,
+    background,
     layout: raw.layout,
     timeline: raw.timeline,
+    media: raw.media,
   };
 }
 
@@ -281,14 +303,6 @@ export function updateEditProjectBackground(id: string, background: BackgroundEd
   return updated;
 }
 
-export function updateEditProjectSound(id: string, sound: SoundEditSettings): EditProject | null {
-  const existing = readProject(id);
-  if (!existing) return null;
-  const updated: EditProject = { ...existing, sound, updatedAt: new Date().toISOString() };
-  writeExisting(updated);
-  return updated;
-}
-
 export function updateEditProjectLayout(id: string, layout: LayoutEditSettings): EditProject | null {
   const existing = readProject(id);
   if (!existing) return null;
@@ -301,6 +315,14 @@ export function updateEditProjectTimeline(id: string, timeline: TimelineEditSett
   const existing = readProject(id);
   if (!existing) return null;
   const updated: EditProject = { ...existing, timeline, updatedAt: new Date().toISOString() };
+  writeExisting(updated);
+  return updated;
+}
+
+export function updateEditProjectMedia(id: string, media: EditProjectMediaItem[]): EditProject | null {
+  const existing = readProject(id);
+  if (!existing) return null;
+  const updated: EditProject = { ...existing, media, updatedAt: new Date().toISOString() };
   writeExisting(updated);
   return updated;
 }

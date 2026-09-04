@@ -8,7 +8,7 @@
 }
 
 /* The "scrollable small rectangle" — horizontally-scrolling pill row at the top of every
-   edit panel (Screen/Cursor/Camera/Layout/Sound/Zoom). No "+" button: a new cut/segment is
+   edit panel (Screen/Cursor/Camera/Layout/Zoom). No "+" button: a new cut/segment is
    always created via the Timeline's own Cut tool (clicking that track at the playhead) —
    one mental model across every track instead of a second, redundant "create a cut" path.
    This list just reflects whatever's currently on the Timeline, live. flex-shrink: 0 and an

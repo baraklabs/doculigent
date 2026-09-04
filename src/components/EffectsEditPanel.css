@@ -1,0 +1,198 @@
+/* Side nav (Callout/Blur) on the left, the selected block's own controls scrolling on the
+   right — replaces what used to be two stacked cards, so the two blocks never compete for
+   vertical space and there's always exactly one Quick pick grid / chip rail / settings
+   section in view. */
+.effects-edit-panel {
+  flex: 1; min-width: 0; min-height: 0; overflow: hidden;
+  display: flex; flex-direction: row;
+}
+
+.fx-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+
+.fx-nav {
+  flex: 0 0 62px; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 10px 6px; border-right: 1px solid var(--border); background: var(--panel);
+}
+.fx-nav-btn {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  background: transparent; border: 1px solid transparent; border-radius: 8px; color: var(--muted);
+  padding: 9px 3px 7px; font-size: 9px; font-weight: 700; line-height: 1.2; text-align: center;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.fx-nav-btn-label { white-space: nowrap; }
+.fx-nav-btn:hover { color: var(--text); background: var(--bg); }
+.fx-nav-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+/* The two blocks' own colors carry onto their nav icon while active — matches the Timeline
+   row header colors (see Timeline.css's tl-row-header-callout/blur) so the same block reads
+   as one thing across the nav, the timeline row, and its blocks. */
+.fx-nav-btn-zoom.active { color: #6b21a8; }
+.fx-nav-btn-callout.active { color: #ef4444; }
+.fx-nav-btn-blur.active { color: #06b6d4; }
+.fx-nav-count {
+  position: absolute; top: 4px; right: 6px;
+  font-size: 8px; font-weight: 700; color: #fff;
+  background: var(--accent); border-radius: 999px; min-width: 13px; height: 13px;
+  display: flex; align-items: center; justify-content: center; padding: 0 3px;
+}
+.fx-nav-btn-zoom.active .fx-nav-count { background: #6b21a8; }
+.fx-nav-btn-callout.active .fx-nav-count { background: #ef4444; }
+.fx-nav-btn-blur.active .fx-nav-count { background: #06b6d4; }
+
+.fx-content {
+  flex: 1; min-width: 0; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px; padding: 16px;
+}
+
+.fx-empty-hint {
+  margin: 0; font-size: 11px; line-height: 1.5; color: var(--muted);
+  padding: 10px 12px; border: 1px dashed var(--border); border-radius: 10px; background: var(--bg);
+}
+
+.fx-chip-rail { display: flex; flex-wrap: wrap; gap: 5px; }
+.fx-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 5px 11px;
+}
+.fx-chip:hover { border-color: var(--accent); color: var(--text); }
+.fx-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* Add — same pill as the numbered chips beside it, just its own block color (matching the
+   nav icon and the Timeline row header — see fx-nav-btn-callout/blur.active) so it reads as
+   "one more of these" rather than a separate control elsewhere on the pane. */
+.fx-chip-add { border-color: transparent; color: #fff; }
+.fx-chip-add-zoom { background: #6b21a8; }
+.fx-chip-add-zoom:hover { background: #581c87; color: #fff; }
+.fx-chip-add-callout { background: #ef4444; }
+.fx-chip-add-callout:hover { background: #dc2626; color: #fff; }
+.fx-chip-add-blur { background: #06b6d4; }
+.fx-chip-add-blur:hover { background: #0891b2; color: #fff; }
+
+/* Selected box's own controls, nested inside its block. */
+.fx-settings {
+  display: flex; flex-direction: column; gap: 10px;
+  border-top: 1px solid var(--border); padding-top: 10px; margin-top: 2px;
+}
+.fx-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.fx-segmented { display: flex; gap: 5px; }
+.fx-seg-btn {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 7px; padding: 6px 9px;
+}
+.fx-seg-btn:hover { border-color: var(--accent); color: var(--text); }
+.fx-seg-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+/* Zoom's own amount picker — same idea as fx-seg-btn's toggle row, just a closed set of
+   preset percentages (150/200/250/300) instead of a two-way toggle. */
+.fx-pct-presets { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
+.fx-pct-btn {
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 7px;
+  padding: 6px 10px;
+}
+.fx-pct-btn:hover { border-color: var(--accent); color: var(--text); }
+.fx-pct-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.fx-swatches { display: flex; flex-wrap: wrap; gap: 7px; justify-content: flex-end; }
+.fx-swatch { width: 22px; height: 22px; border-radius: 6px; border: 2px solid transparent; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .18); }
+.fx-swatch:hover { border-color: var(--border); }
+
+.fx-gradient-swatch {
+  width: 28px; height: 22px; border-radius: 6px; border: 2px solid transparent;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .18);
+}
+.fx-gradient-swatch:hover { border-color: var(--border); }
+
+/* Wraps one swatch (preset or custom alike) so the "selected" dot can sit just outside its
+   own edge rather than replacing the swatch's border the way an active ring would — every
+   swatch in a row uses the same indicator, so a custom pick reads as "one more of these"
+   exactly like a preset does, never a visually different control. */
+.fx-swatch-wrap { position: relative; display: inline-flex; }
+.fx-swatch-dot {
+  position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent); border: 1.5px solid var(--panel); pointer-events: none;
+}
+
+/* Custom color swatch — same size as its preset siblings (fx-swatch) and styled to look
+   identical; the actual <input type="color"> is stretched invisibly over the whole tile
+   so clicking anywhere on it opens the native picker, same technique BackdropPicker's own
+   custom swatch uses. */
+.fx-swatch-custom { position: relative; overflow: hidden; cursor: pointer; }
+.fx-swatch-custom:hover { border-color: var(--border); }
+.fx-swatch-custom input[type="color"] {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; border: none; padding: 0; cursor: pointer;
+}
+/* Custom gradient swatch — the same tile, split into two independently-clickable halves
+   (left = From, right = To), same technique BackdropPicker's own custom gradient swatch
+   uses so each stop is a real, separate picker rather than one color with the other
+   derived from it. */
+.fx-gradient-swatch-custom { position: relative; display: flex; overflow: hidden; }
+.fx-gradient-swatch-custom:hover { border-color: var(--border); }
+.fx-gradient-swatch-custom input[type="color"] {
+  flex: 1 1 50%; height: 100%; min-width: 0;
+  opacity: 0; border: none; padding: 0; cursor: pointer;
+}
+/* The swatch row's own trailing custom swatch needs a hair more left margin than the row's
+   own 7px gap gives it, so it doesn't read as just another same-size preset. */
+.fx-swatches-with-picker > .fx-swatch-wrap:last-child { margin-left: 3px; }
+
+/* Tilt — Callout's own copy of the Zoom track's Tilt section (see FxTiltSliderRow's own
+   comment for why it's a copy rather than a shared import). */
+.fx-tilt-section { display: flex; flex-direction: column; gap: 8px; }
+.fx-tilt-preset-grid { display: flex; flex-wrap: wrap; gap: 5px; }
+.fx-tilt-preset-btn {
+  width: 32px; height: 32px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 7px; padding: 4px;
+}
+.fx-tilt-preset-btn:hover { border-color: var(--accent); }
+.fx-tilt-preset-btn.active { background: var(--accent-soft); border-color: var(--accent); }
+.fx-tilt-preset-swatch {
+  display: block; width: 100%; height: 100%; border-radius: 2px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-soft));
+  transform-style: preserve-3d;
+}
+.fx-tilt-preset-btn:not(.active) .fx-tilt-preset-swatch { background: var(--muted); opacity: .55; }
+.fx-tilt-custom-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--muted);
+}
+.fx-tilt-custom-sliders { display: flex; flex-direction: column; gap: 8px; }
+/* Label, slider, value and a reset icon all on one line — grid rather than flex so the
+   label and value columns stay the same width between the Tilt X/Tilt Y rows and the
+   slider is the only part that stretches. */
+.fx-tilt-slider-row {
+  display: grid; grid-template-columns: 38px 1fr auto auto; align-items: center; gap: 8px;
+}
+.fx-tilt-slider-label { font-size: 11px; font-weight: 600; color: var(--text); }
+.fx-tilt-slider-input { width: 100%; min-width: 0; }
+.fx-tilt-slider-value { font-size: 11px; font-weight: 600; color: var(--muted); min-width: 20px; text-align: right; }
+.fx-tilt-slider-reset {
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0; border-radius: 6px; color: var(--accent);
+}
+.fx-tilt-slider-reset:hover:not(:disabled) { background: var(--accent-soft); }
+.fx-tilt-slider-reset:disabled { color: var(--muted); cursor: default; }
+
+.fx-marquee-section { display: flex; flex-direction: column; gap: 10px; }
+
+.fx-slider-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; }
+.fx-slider-row input[type="range"] { width: 100%; min-width: 0; }
+.fx-slider-value { font-size: 11px; font-weight: 600; color: var(--muted); min-width: 34px; text-align: right; }
+
+.fx-text-row { display: flex; flex-direction: column; gap: 5px; }
+.fx-text-input {
+  font: inherit; font-size: 12px; color: var(--text);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 7px; padding: 7px 9px;
+}
+.fx-text-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91, 75, 245, .15); }
+
+.fx-timing { display: flex; flex-direction: column; gap: 6px; }
+.fx-timing-value { font-size: 12px; font-weight: 600; color: var(--text); }
+
+.fx-remove-btn {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  font-size: 12px; font-weight: 600; color: var(--danger);
+  background: transparent; border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px;
+}
+.fx-remove-btn:hover { background: rgba(179, 38, 30, .08); border-color: var(--danger); }

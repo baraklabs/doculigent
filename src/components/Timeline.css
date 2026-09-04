@@ -1,6 +1,6 @@
 .tl-root {
   flex: 1; min-width: 0; min-height: 0; display: flex;
-  overflow: auto; padding: 12px 16px 16px;
+  overflow: auto; padding: 0 16px 16px;
 }
 
 .tl-empty {
@@ -12,6 +12,16 @@
 .tl-inner {
   position: relative; flex: 1; min-width: 480px;
   display: flex; flex-direction: column; gap: 8px;
+  /* Reserves a gutter for .tl-tool-toggle to the left of every row (ruler included). Total
+     distance wanted from .tl-root's own left edge (the pane's actual edge, .tl-root's 16px
+     padding included) to the Clips/Zoom/etc. header column is 2px + the button width (22px)
+     + 2px = 26px — so this is that 26px minus the 16px .tl-root already contributes, leaving
+     the icon stack with a tight, even 2px gap on every side of it. Applying the padding here,
+     on the shared ancestor, shifts the ruler/slider/track rows, which sit in normal flow — but
+     NOT the playhead's own `left: 0` origin (it's absolutely positioned, so `left` is measured
+     from .tl-inner's padding edge, which this padding doesn't move). TL_TRACK_START_PX in
+     Timeline.tsx has to include this 10px itself to match. */
+  padding-left: 10px;
 }
 
 /* The gap here is what actually separates the Clips/Zoom/Camera labels from their track —
@@ -42,19 +52,34 @@
 }
 .tl-row-header-clips,
 .tl-row-header-zoom,
+.tl-row-header-callout,
+.tl-row-header-blur,
 .tl-row-header-camera,
 .tl-row-header-cursor,
 .tl-row-header-layout,
-.tl-row-header-sound {
+.tl-row-header-video,
+.tl-row-header-audio {
   display: flex; align-items: center; justify-content: center; width: 100%;
   border-radius: 6px; padding: 3px 7px; border: 1px solid transparent;
 }
 .tl-row-header-clips { color: #1e40af; background: #dbeafe; border-color: #bfdbfe; }
 .tl-row-header-zoom { color: #6b21a8; background: #f3e8ff; border-color: #e9d5ff; gap: 3px; padding: 3px 5px; }
+/* The two Effects rows — same red/cyan pairing the Effects panel's own Callout and Blur
+   block icons use, so a block on the timeline and its block in the panel read as one thing. */
+.tl-row-header-callout { color: #b91c1c; background: #fee2e2; border-color: #fecaca; }
+.tl-row-header-blur { color: #155e75; background: #cffafe; border-color: #a5f3fc; }
 .tl-row-header-camera { color: #0f766e; background: #ccfbf1; border-color: #99f6e4; }
 .tl-row-header-cursor { color: #92400e; background: #fef3c7; border-color: #fde68a; }
 .tl-row-header-layout { color: #334155; background: #f1f5f9; border-color: #e2e8f0; }
-.tl-row-header-sound { color: #065f46; background: #d1fae5; border-color: #a7f3d0; }
+/* The two added-media tracks — warm tones, deliberately outside the cool/green family the
+   recording's own tracks use, so "this came from a file I added" reads at a glance (same
+   pair of hues as the Media panel's own file boxes — see EditPage.css). Tighter type and
+   padding than the one-word headers above, since "Ext Video"/"Ext Audio" has to fit the
+   same fixed 72px header column without wrapping or clipping. */
+.tl-row-header-video,
+.tl-row-header-audio { font-size: 9px; padding: 3px 3px; white-space: nowrap; letter-spacing: .02em; }
+.tl-row-header-video { color: #9a3412; background: #ffedd5; border-color: #fed7aa; }
+.tl-row-header-audio { color: #9d174d; background: #fce7f3; border-color: #fbcfe8; }
 
 /* Highlights whichever row's track matches the currently-open edit tab (see Timeline's
    `activeTrack` prop) — purely a visual cue, every row stays interactive regardless. */
@@ -70,12 +95,17 @@
 .tl-zoom-magic-btn:hover:not(:disabled) { background: rgba(126, 34, 206, .18); }
 .tl-zoom-magic-btn:disabled { color: #c4b5fd; cursor: not-allowed; }
 
-/* Wraps so the reset pair (see .tl-reset-group), full tool-button size to match the
-   pointer/scissors pair, drops to its own centered second line instead of squeezing four
-   same-size icons into the 72px header column on one row — .tl-row's min-height (44px) is
-   just shy of the two 22px rows + 3px gap between them (47px), so the row grows slightly
-   to fit rather than clipping. */
-.tl-tool-toggle { justify-content: center; align-content: center; gap: 3px; flex-wrap: wrap; }
+/* Pointer/cut/reset controls — pulled out of the row-header grid entirely and pinned to the
+   gutter .tl-inner reserves on its left (see its padding-left), so the stack sits to the
+   *left* of the Clips/Zoom/Camera/Cursor/Layout block with an even 2px gap on every side of
+   it — 2px before the Clips label, 2px below the top of the block, 2px in from the pane's
+   own edge — without changing any track row's height or width. Positioned against
+   .tl-tracks-block (not .tl-inner) so it tracks that block specifically, not the whole
+   timeline (i.e. it isn't thrown off by the Ext Video/Ext Audio rows below it). */
+.tl-tool-toggle {
+  position: absolute; left: -24px; top: 2px;
+  display: flex; flex-direction: column; gap: 2px; width: 22px;
+}
 .tl-tool-btn {
   flex: none; width: 22px; height: 22px; border-radius: 5px; padding: 0;
   display: flex; align-items: center; justify-content: center;
@@ -83,28 +113,28 @@
 }
 .tl-tool-btn:hover { background: var(--border); color: var(--text); }
 .tl-tool-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-/* Reset isn't a tool (no active/pressed state) — the two reset buttons are grouped in their
-   own flex item so they wrap as a unit onto line two together, set apart from the pointer/
-   scissors pair above, each tinted its own color to stay visually distinct from one another
-   too pending the two being wired to actually different baselines (see resetToDefault/
-   resetToOriginal in Timeline.tsx). */
-.tl-reset-group { display: flex; gap: 3px; flex: 0 0 auto; }
-.tl-reset-default-btn:hover { background: rgba(91, 75, 245, .14); color: var(--accent); }
-.tl-reset-original-btn:hover { background: rgba(239, 68, 68, .12); color: var(--danger); }
+/* Reset isn't a tool (no active/pressed state) — same icon for both (see Timeline.tsx), so
+   each is tinted its own color instead to stay visually distinct: default in red, original
+   in purple. */
+.tl-reset-default-btn { color: var(--danger); }
+.tl-reset-default-btn:hover { background: rgba(239, 68, 68, .12); color: var(--danger); }
+.tl-reset-original-btn { color: var(--accent); }
+.tl-reset-original-btn:hover { background: rgba(91, 75, 245, .14); color: var(--accent); }
 
-/* Timeline view zoom, on its own wrapped line under the tool buttons (see .tl-tool-toggle's
-   flex-wrap) — flex-basis 100% is what forces that break. Magnifies how wide the timeline
-   draws itself; .tl-root scrolls once it outgrows the pane.
-   min-width: 0 is load-bearing: a range input's *automatic minimum size* is its intrinsic
-   width (~130px in Chromium), which outranks the 72px flex basis and pushed the slider
-   right out of the header column and under the ruler until this let it shrink. */
-.tl-view-zoom { flex: 0 0 100%; min-width: 0; display: flex; align-items: center; gap: 1px; margin-top: 2px; }
+/* Timeline view zoom — lives in the ruler row's header cell (see Timeline.tsx), so it's
+   aligned with the timeline timestamp beside it, but widened 24px past that cell's left
+   edge (the same offset .tl-tool-toggle uses) so it visually sits on top of the tool-bar
+   gutter too, spanning "tool bar + Clips/Zoom label column" the way the icon stack below it
+   does.
+   min-width: 0 on the slider is load-bearing: a range input's *automatic minimum size* is
+   its intrinsic width (~130px in Chromium), which would otherwise keep it from shrinking
+   below that regardless of the flex basis. */
+.tl-view-zoom { display: flex; align-items: center; gap: 4px; width: calc(100% + 24px); margin-left: -24px; }
 .tl-view-zoom-slider {
   flex: 1; min-width: 0; width: 100%; height: 10px; margin: 0;
   accent-color: var(--accent); cursor: pointer;
 }
-/* Step buttons either side of the slider. Deliberately tiny — the whole row has 72px to
-   live in, and every pixel these take is one the slider loses. */
+/* Step buttons either side of the slider. */
 .tl-view-zoom-btn {
   flex: none; width: 12px; height: 12px; padding: 0; border: none; border-radius: 3px;
   display: flex; align-items: center; justify-content: center;
@@ -112,6 +142,15 @@
 }
 .tl-view-zoom-btn:hover:not(:disabled) { background: var(--border); color: var(--text); }
 .tl-view-zoom-btn:disabled { opacity: .35; cursor: default; }
+
+/* No longer shares .tl-row's 44px min-height — with the tool buttons moved out (see
+   .tl-tool-toggle), this row has nothing left in it but the 20px ruler, so it should only
+   take the space that needs, letting the Clips track start right underneath it. */
+.tl-row-ruler { min-height: 0; }
+/* Holds the view-zoom slider (see .tl-view-zoom) in place of a row label — same 72px
+   header-column width as every other row, purely so the ruler track lines up at the same x
+   as every other row's track (see .tl-row-header's own comment). */
+.tl-row-header-spacer { background: transparent; }
 
 .tl-ruler {
   position: relative; flex: 1; height: 20px; cursor: pointer; user-select: none;
@@ -127,16 +166,36 @@
   background: var(--panel); pointer-events: none;
 }
 
+/* Wraps the Clips/Zoom/Camera/Cursor/Layout rows as their own flex column (same 8px gap as
+   .tl-inner uses between its own top-level rows) and gives .tl-tool-toggle (position:
+   absolute) a containing block scoped to just this block, so it pins to its bottom rather
+   than the whole timeline's. */
+.tl-tracks-block { position: relative; display: flex; flex-direction: column; gap: 8px; }
+
 .tl-track {
   position: relative; flex: 1; height: 44px;
   background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
 }
 .tl-track-clips { cursor: pointer; background: transparent; }
-.tl-track-zoom { cursor: copy; }
+/* Copy cursor on all three "click empty space to drop a block" tracks. */
+.tl-track-zoom,
+.tl-track-effect { cursor: copy; }
 .tl-track-camera { cursor: pointer; background: transparent; }
 .tl-track-cursor,
-.tl-track-layout,
-.tl-track-sound { cursor: pointer; background: transparent; }
+.tl-track-layout { cursor: pointer; background: transparent; }
+.tl-track-video,
+.tl-track-audio { cursor: pointer; background: transparent; }
+/* A media file is being dragged over this track and it can take it — see Timeline.tsx's
+   mediaDropAccepts. The marker below shows exactly where the piece's left edge would land. */
+.tl-track-drop-active {
+  border-color: var(--accent); border-style: dashed;
+  background: rgba(91, 75, 245, .07);
+}
+.tl-media-drop-marker {
+  position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px;
+  background: var(--accent); box-shadow: 0 0 4px rgba(91, 75, 245, .6);
+  pointer-events: none; z-index: 5;
+}
 .tl-track-cut-mode {
   /* Lucide's "scissors-line-dashed" icon, rotated -90deg so the dashed cut line (originally
      trailing right) points up toward the hotspot and the blade handles hang below. */
@@ -176,9 +235,13 @@
 .tl-clip-base:active { cursor: grabbing; }
 /* While dragging, this piece is flush against a neighbor on the same track — no gap, no
    overlap between them right now. Applied to both the dragged piece and the neighbor it's
-   touching (see Timeline.tsx's clipSnapPair/cameraSnapPair). */
+   touching (see Timeline.tsx's clipSnapPair/cameraSnapPair/cursorSnapPair — the last one is
+   Cursor's own, the only segment track with a free position to drag). */
 .tl-clip-base.tl-piece-touching,
-.tl-camera-fill.tl-piece-touching {
+.tl-camera-fill.tl-piece-touching,
+.tl-zoom-block.tl-piece-touching,
+.tl-effect-block.tl-piece-touching,
+.tl-segment-piece.tl-piece-touching {
   outline: 2px solid var(--accent); outline-offset: 1px; z-index: 3;
 }
 /* Part of the current selection (click, Ctrl/Cmd+click, or marquee-drag — see
@@ -187,19 +250,18 @@
 .tl-camera-fill.selected {
   outline: 2px solid var(--accent); outline-offset: 1px; z-index: 3;
 }
-/* "Related to what you're doing right now" — either the cross-track echo of the current
-   selection (every other track's piece covering that same stretch of time, answering
-   "which cut over here is this the same moment as") or, while the cut tool is snapping,
-   the pieces the guide's boundary actually belongs to. See Timeline.tsx's matchingKeys /
-   snapTargetKeys, both read through isMatching. Never applied together with .selected on
-   the same piece — that one already has the solid outline above (see the `!selected &&`
-   guard on every isMatching call site). Insets the outline (negative offset) rather than
-   drawing it outside like .selected does: a piece spanning its whole track — an uncut
-   Cursor/Layout/Sound strip, most often — would otherwise draw its outline over the
-   track's own border, where it reads as nothing at all. */
-.tl-clip-base.matching,
-.tl-camera-fill.matching {
-  outline: 2px dashed var(--accent); outline-offset: -2px; z-index: 2;
+/* One of this piece's own two edges is currently snapped onto a boundary belonging to
+   another track (see Timeline.tsx's dragSnap) — matched to the alignment guide line's own
+   color, so the piece and the line it's locked to read as one thing. After .selected, and
+   at a higher z-index, so it wins over the selection outline a dragged piece always also
+   carries. */
+.tl-clip-base.tl-piece-snapped,
+.tl-camera-fill.tl-piece-snapped,
+.tl-zoom-block.tl-piece-snapped,
+.tl-effect-block.tl-piece-snapped,
+.tl-segment-piece.tl-piece-snapped {
+  outline: 2px solid #f59e0b; outline-offset: 1px; z-index: 5;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, .22), 0 2px 6px rgba(15, 23, 42, .25);
 }
 /* Pieces tile the whole track, so their own cursor would otherwise mask the track's
    scissors cursor everywhere — inherit it instead while the cut tool is active. */
@@ -240,12 +302,12 @@
 .tl-zoom-block:hover .tl-piece-delete { opacity: 1; pointer-events: auto; }
 .tl-piece-delete:hover { background: rgba(239, 68, 68, .12); filter: none; }
 
-/* Cursor/Layout/Sound tracks — config-only TimelineSegments that always tile the whole
-   track edge to edge (no gaps, nothing to trim/drag — see Timeline.tsx's
-   renderSegmentTrack). Each track's pieces are tinted to match its own row header color
-   (same gradient-fill treatment as .tl-clip-base/.tl-camera-fill/.tl-zoom-block above);
-   alternating opacity distinguishes adjacent segments at a glance, and
-   .tl-segment-boundary draws the actual cut line between them. */
+/* Cursor/Layout tracks — config-only TimelineSegments that always tile the whole track
+   edge to edge (no gaps, nothing to trim/drag — see Timeline.tsx's renderSegmentTrack).
+   Each track's pieces are tinted to match its own row header color (same gradient-fill
+   treatment as .tl-clip-base/.tl-camera-fill/.tl-zoom-block above); alternating opacity
+   distinguishes adjacent segments at a glance, and .tl-segment-boundary draws the actual
+   cut line between them. */
 .tl-segment-piece {
   position: absolute; top: 0; bottom: 0; cursor: pointer;
   border-width: 1px; border-style: solid;
@@ -253,16 +315,18 @@
 .tl-segment-piece:nth-child(even) { opacity: .72; }
 .tl-track-cursor .tl-segment-piece { background: linear-gradient(180deg, #fde68a, #d97706); border-color: #b45309; }
 .tl-track-layout .tl-segment-piece { background: linear-gradient(180deg, #cbd5e1, #475569); border-color: #334155; }
-.tl-track-sound .tl-segment-piece { background: linear-gradient(180deg, #6ee7b7, #059669); border-color: #047857; }
 .tl-segment-piece .tl-piece-time { color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .35); }
 .tl-segment-piece.selected { outline: 2px solid var(--accent); outline-offset: 1px; z-index: 3; opacity: 1; }
-.tl-segment-piece.matching { outline: 2px dashed var(--accent); outline-offset: -2px; z-index: 2; opacity: 1; }
-/* Hidden (Cursor/Camera) / muted (Sound) — dimmed and desaturated so a disabled stretch
-   reads at a glance. Not scoped to .tl-segment-piece: a Camera piece (.tl-camera-fill)
-   whose own clip override — or the Camera tab's master toggle — sets `hidden` gets the
-   same treatment (see renderCameraPieces), on top of Cursor/Sound's hover-delete-in-place.
-   Comes after every other piece-background rule (incl. the even/odd alternation and
-   .selected) so it always wins regardless of track/index/selection. */
+/* Cursor only (see renderSegmentTrack/handleCursorSegmentPointerDown) — Layout stays
+   cut-only, so it keeps the plain pointer cursor above. */
+.tl-segment-draggable { cursor: grab; }
+.tl-segment-draggable:active { cursor: grabbing; }
+/* Hidden (Cursor/Camera) — dimmed and desaturated so a disabled stretch reads at a glance.
+   Not scoped to .tl-segment-piece: a Camera piece (.tl-camera-fill) whose own clip
+   override — or the Camera tab's master toggle — sets `hidden` gets the same treatment
+   (see renderCameraPieces), on top of Cursor's own hover-delete-in-place. Comes after
+   every other piece-background rule (incl. the even/odd alternation and .selected) so it
+   always wins regardless of track/index/selection. */
 .tl-segment-disabled,
 .tl-camera-fill.tl-segment-disabled { opacity: .32; filter: grayscale(.6); }
 .tl-segment-disabled.selected { opacity: .55; }
@@ -273,6 +337,39 @@
 .tl-track-cut-mode .tl-segment-piece { cursor: inherit; }
 .tl-segment-piece:hover .tl-piece-delete { opacity: 1; pointer-events: auto; }
 
+/* Video/Audio tracks — one piece per placed stretch of an added media file. Same
+   free-position/overlap/trim model (and so the same shape and states) as .tl-clip-base,
+   just tinted to each track's own header color and labelled with the file's name rather
+   than a time range: on these tracks *which file* is the thing that isn't obvious, and the
+   piece's own position already shows the when. */
+.tl-media-piece {
+  position: absolute; top: 0; bottom: 0; border-radius: 6px; cursor: grab;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, .25);
+  border-width: 1px; border-style: solid;
+}
+.tl-media-piece:active { cursor: grabbing; }
+.tl-media-piece-video { background: linear-gradient(180deg, #fdba74, #ea580c); border-color: #c2410c; }
+.tl-media-piece-audio { background: linear-gradient(180deg, #f9a8d4, #db2777); border-color: #be185d; }
+/* Its file is no longer in the project's media pool — nothing to play, so it's drawn
+   inert (and still selectable/deletable) rather than pretending it's fine. */
+.tl-media-piece-missing { background: linear-gradient(180deg, #cbd5e1, #94a3b8); border-color: #64748b; }
+.tl-media-piece-name {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  padding: 0 12px; font-size: 9px; font-weight: 600; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .35);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; z-index: 1;
+}
+.tl-media-piece.tl-piece-touching,
+.tl-media-piece.selected { outline: 2px solid var(--accent); outline-offset: 1px; z-index: 3; }
+/* Ext Video/Ext Audio pieces share .tl-piece-snapped with Clips/Camera above — same
+   behavior, same highlight. */
+.tl-media-piece.tl-piece-snapped {
+  outline: 2px solid #f59e0b; outline-offset: 1px; z-index: 5;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, .22), 0 2px 6px rgba(15, 23, 42, .25);
+}
+.tl-track-cut-mode .tl-media-piece,
+.tl-track-cut-mode .tl-media-piece:active { cursor: inherit; }
+.tl-media-piece:hover .tl-piece-delete { opacity: 1; pointer-events: auto; }
+
 .tl-zoom-block {
   position: absolute; top: 3px; bottom: 3px; min-width: 10px; cursor: grab;
   background: linear-gradient(180deg, #d8b4fe, #7e22ce);
@@ -282,7 +379,30 @@
 }
 .tl-zoom-block:active { cursor: grabbing; }
 .tl-zoom-block.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
-.tl-zoom-block.matching { outline: 2px dashed var(--accent); outline-offset: -2px; }
+
+/* Callout/Blur blocks — the Zoom block's shape and behaviour, in each row's own color. */
+.tl-effect-block {
+  position: absolute; top: 3px; bottom: 3px; min-width: 10px; cursor: grab;
+  border-radius: 4px; border-width: 1px; border-style: solid;
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+}
+.tl-effect-block:active { cursor: grabbing; }
+.tl-effect-block-callout {
+  background: linear-gradient(180deg, #fca5a5, #dc2626);
+  border-color: #b91c1c; box-shadow: 0 1px 3px rgba(185, 28, 28, .4);
+}
+.tl-effect-block-blur {
+  background: linear-gradient(180deg, #67e8f9, #0891b2);
+  border-color: #155e75; box-shadow: 0 1px 3px rgba(21, 94, 117, .4);
+}
+.tl-effect-block.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tl-effect-block:hover .tl-piece-delete { opacity: 1; pointer-events: auto; }
+/* Clipped rather than wrapped: a block trimmed short still shows as much of its label as
+   fits, and never grows a second line inside a fixed-height row. */
+.tl-effect-badge {
+  font-size: 9px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .35);
+  pointer-events: none; padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .tl-zoom-pct-badge { font-size: 9px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .35); pointer-events: none; }
 
 /* Invisible hover/drag target straddling the seam between two available pieces — wide
@@ -293,12 +413,12 @@
   cursor: ew-resize;
 }
 
-/* Shown while the cut tool hovers near a cut boundary already sitting on any other track
-   — a preview of "cut here and it'll land on the exact same point," before the click
-   happens. Every cuttable track (Clips/Camera and Cursor/Layout/Sound alike) both shows
-   this and contributes its own boundaries as snap targets; the pieces that boundary
-   belongs to light up at the same time (see .matching / snapTargetKeys). z-index clears
-   the segment tracks' edge-to-edge pieces, which would otherwise cover it. */
+/* The cross-track alignment guide, drawn by two different things (see Timeline.tsx's
+   alignGuide): the cut tool hovering near a boundary that already sits on another track — a
+   preview of "cut here and it'll land on the exact same point," before the click happens —
+   and a dragged piece snapping an edge onto one. Every track both shows this and
+   contributes its own boundaries as targets. z-index clears the segment tracks'
+   edge-to-edge pieces, which would otherwise cover it. */
 .tl-cut-guide {
   position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; z-index: 4;
   background: repeating-linear-gradient(180deg, var(--accent) 0 4px, transparent 4px 8px);
@@ -311,6 +431,14 @@
 .tl-cut-guide-echo {
   background: var(--accent); opacity: .55; box-shadow: none;
 }
+/* The same guide, drawn for a drag snap rather than the cut tool (see Timeline.tsx's
+   alignGuide). Solid and amber, not dashed and accent-colored: nothing is about to be cut
+   here — the dragged piece is simply lined up with this boundary — and the two reading
+   differently keeps "a cut lands here" from being confused with "you're aligned here." */
+.tl-cut-guide-snap {
+  background: #f59e0b; opacity: 1; box-shadow: 0 0 5px rgba(245, 158, 11, .7);
+}
+.tl-cut-guide-snap.tl-cut-guide-echo { opacity: .6; box-shadow: none; }
 
 .tl-playhead {
   position: absolute; top: 0; bottom: 0; width: 1.5px; pointer-events: none; z-index: 6;

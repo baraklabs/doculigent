@@ -5,9 +5,9 @@ import type {
   CursorEditSettings,
   EditProject,
   EditProjectMedia,
+  EditProjectMediaItem,
   EditProjectSource,
   LayoutEditSettings,
-  SoundEditSettings,
   TimelineEditSettings,
 } from "@shared/types/models";
 import { EditProjectService } from "../services/editProjects/EditProjectService";
@@ -91,18 +91,6 @@ export function useUpdateEditProjectBackground() {
   });
 }
 
-export function useUpdateEditProjectSound() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, sound }: { id: string; sound: SoundEditSettings }) =>
-      EditProjectService.updateSound(id, sound),
-    onSuccess: (project) => {
-      queryClient.invalidateQueries({ queryKey: ["editProjects"] });
-      queryClient.setQueryData(["editProject", project.id], project);
-    },
-  });
-}
-
 export function useUpdateEditProjectLayout() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -120,6 +108,18 @@ export function useUpdateEditProjectTimeline() {
   return useMutation({
     mutationFn: ({ id, timeline }: { id: string; timeline: TimelineEditSettings }) =>
       EditProjectService.updateTimeline(id, timeline),
+    onSuccess: (project) => {
+      queryClient.invalidateQueries({ queryKey: ["editProjects"] });
+      queryClient.setQueryData(["editProject", project.id], project);
+    },
+  });
+}
+
+export function useUpdateEditProjectMedia() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, media }: { id: string; media: EditProjectMediaItem[] }) =>
+      EditProjectService.updateMedia(id, media),
     onSuccess: (project) => {
       queryClient.invalidateQueries({ queryKey: ["editProjects"] });
       queryClient.setQueryData(["editProject", project.id], project);

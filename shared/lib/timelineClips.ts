@@ -56,7 +56,7 @@ export function totalClipsExtentMs(clips: TimelineClip[]): number {
 /** Whichever clip currently claims `editedMs`, if any — the *last* match in array order
  *  wins where pieces overlap (see TimelineClip's doc comment). Returns the corresponding
  *  source position too, or null for a gap (nothing there at all). */
-export function resolveClipAt(clips: TimelineClip[], editedMs: number): { clip: TimelineClip; sourceMs: number } | null {
+export function resolveClipAt<T extends TimelineClip>(clips: T[], editedMs: number): { clip: T; sourceMs: number } | null {
   for (let i = clips.length - 1; i >= 0; i--) {
     const c = clips[i];
     const dur = Math.max(0, c.sourceEnd - c.sourceStart);
@@ -110,18 +110,42 @@ export function splitClipAtSource(clips: TimelineClip[], sourceMs: number): Time
 /** Removes a clip entirely — positions are independent, so nothing ripples to fill the
  *  space it leaves behind; that stretch just becomes a gap (or reverts to whatever other
  *  clip, if any, was already overlapping it underneath). */
-export function deleteClip(clips: TimelineClip[], id: string): TimelineClip[] {
+export function deleteClip<T extends TimelineClip>(clips: T[], id: string): T[] {
   return clips.filter((c) => c.id !== id);
 }
 
 /** Brings a clip to the front of the stacking order (the end of the array) without
  *  changing its position — called when a drag on it starts, so whatever's being moved is
  *  always what's on top of anything it ends up overlapping. */
-export function bringClipToFront(clips: TimelineClip[], id: string): TimelineClip[] {
+export function bringClipToFront<T extends TimelineClip>(clips: T[], id: string): T[] {
   const idx = clips.findIndex((c) => c.id === id);
   if (idx === -1 || idx === clips.length - 1) return clips;
   const next = clips.slice();
   const [moved] = next.splice(idx, 1);
   next.push(moved);
   return next;
+}
+
+/** Splits whichever piece covers `editedMs` — matched on the *edited* timeline, topmost
+ *  first (same last-one-wins stacking resolveClipAt uses) — into two at that point, each
+ *  half keeping every other field of the original (so a TimelineMediaClip's own `mediaId`
+ *  survives the split). The edited-ms counterpart of splitClipAtSource, which the
+ *  Clips/Camera tracks use instead because there a cut is about a position in the one
+ *  source recording behind the whole track; the Video/Audio tracks have no such single
+ *  source — each piece can be a different file — so a cut there can only mean "here, on
+ *  the timeline." No-op if nothing covers that point, or if either half would come out
+ *  degenerate. */
+export function splitClipAtEditedMs<T extends TimelineClip>(clips: T[], editedMs: number): T[] {
+  const MIN_PIECE_MS = 20;
+  for (let i = clips.length - 1; i >= 0; i--) {
+    const c = clips[i];
+    const dur = Math.max(0, c.sourceEnd - c.sourceStart);
+    if (editedMs <= c.timelineStart || editedMs >= c.timelineStart + dur) continue;
+    const offset = editedMs - c.timelineStart;
+    if (offset < MIN_PIECE_MS || dur - offset < MIN_PIECE_MS) return clips;
+    const first = { ...c, id: crypto.randomUUID(), sourceEnd: c.sourceStart + offset };
+    const second = { ...c, id: crypto.randomUUID(), sourceStart: c.sourceStart + offset, timelineStart: editedMs };
+    return [...clips.slice(0, i), first, second, ...clips.slice(i + 1)];
+  }
+  return clips;
 }
