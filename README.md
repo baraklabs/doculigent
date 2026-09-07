@@ -165,6 +165,10 @@ npm run build:unpack
 
 Issues and pull requests are welcome! If you find a bug or have a feature idea, please [open an issue](https://github.com/baraklabs/doculigent/issues).
 
+## Contact
+
+Have a question, feedback, or inquiries: [hello@doculigent.com](mailto:hello@doculigent.com)
+
 ## License
 
 Doculigent is licensed under the [AGPL-3.0](LICENSE).

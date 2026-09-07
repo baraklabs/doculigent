@@ -11,6 +11,7 @@
 }
 .account-plan p { margin: 0; font-size: 13px; }
 .account-plan p + p { margin-top: 4px; font-size: 12px; }
+.account-contact { margin-top: 10px; font-size: 12px; }
 .account-login-pending { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 12px; text-align: center; }
 .account-login-pending p { margin: 0; }
 .account-login-pending .field { align-items: center; }

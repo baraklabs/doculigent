@@ -212,6 +212,9 @@ export function Layout() {
           <a href={DOCS_URL} target="_blank" rel="noreferrer" className="footer-link">
             Read docs
           </a>
+          <a href="https://doculigent.com/contact-us" target="_blank" rel="noreferrer" className="footer-link">
+            Contact us
+          </a>
         </div>
         {session?.user.plan && (
           <div className="footer-plan">

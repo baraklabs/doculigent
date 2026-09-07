@@ -80,6 +80,12 @@ export function AccountPage() {
               </div>
             )}
 
+            {!loggingIn && (
+              <p className="muted account-contact">
+                Need help? Email us at <a href="mailto:hello@doculigent.com">hello@doculigent.com</a>
+              </p>
+            )}
+
             {loggingIn && (
               <div className="notice account-login-pending">
                 <p>
