@@ -1,0 +1,60 @@
+/* Covers the header too; it carries its own window controls and drag area so the window stays usable. */
+.signin-prompt {
+  position: fixed; inset: 0; z-index: 90;
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+  background: rgba(var(--shade-rgb), .0);
+  background-color: var(--bg);
+}
+@keyframes signin-prompt-in { from { opacity: 0; } to { opacity: 1; } }
+
+.signin-prompt-card {
+  animation: signin-prompt-in 220ms ease-out;
+  width: 100%; max-width: 780px; display: flex; flex-direction: column; align-items: center; text-align: center;
+  gap: 8px;
+}
+/* Explicit line-heights everywhere: the fallback font and Inter have different "normal" line-heights, so
+   leaving them implicit made the whole block shift by a few px when the font swapped in. */
+.signin-prompt-card h2 { margin: 0; font-size: 26px; line-height: 32px; color: var(--text); }
+.signin-prompt-signin { margin: 18px 0 0; padding: 16px 64px; font-size: 18px; line-height: 22px; font-weight: 600; border-radius: 12px; }
+.signin-prompt-unlock { margin: 0 0 14px; font-size: 15px; line-height: 20px; font-weight: 600; color: var(--accent); }
+.signin-prompt-card .account-features-grid { width: 100%; }
+.signin-prompt-remind.link-btn {
+  margin: 14px 0 30px; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  text-decoration: none; color: var(--text);
+}
+.signin-prompt-remind-main { font-size: 16px; line-height: 20px; font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
+.signin-prompt-remind-sub { font-size: 12px; line-height: 16px; font-weight: 600; color: var(--muted); }
+.signin-prompt-remind:hover, .signin-prompt-remind:hover .signin-prompt-remind-sub { color: var(--accent); }
+
+@media (prefers-reduced-motion: reduce) { .signin-prompt-card { animation: none; } }
+
+.signin-prompt-bar {
+  position: absolute; top: 0; left: 0; right: 0; height: 40px; padding: 3px 8px;
+  display: flex; align-items: center; justify-content: flex-end; -webkit-app-region: drag;
+}
+.signin-prompt-bar .window-controls { -webkit-app-region: no-drag; }
+
+/* Sign in button: a light sweep across the inside plus a bright comet travelling round the border. */
+@property --signin-angle { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+.signin-prompt-signin { position: relative; overflow: hidden; isolation: isolate; box-shadow: 0 8px 22px rgba(var(--accent-rgb), .35); }
+.signin-prompt-signin::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 2px; pointer-events: none;
+  background: conic-gradient(from var(--signin-angle), transparent 0deg 240deg, rgba(255, 255, 255, .25) 290deg, #fff 355deg, transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  animation: signin-orbit 1.8s linear infinite;
+}
+.signin-prompt-signin::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: -1;
+  background: linear-gradient(110deg, transparent 35%, rgba(255, 255, 255, .35) 50%, transparent 65%);
+  background-size: 250% 100%; background-position: 150% 0;
+  animation: signin-shimmer 2.2s ease-in-out infinite;
+}
+@keyframes signin-orbit { to { --signin-angle: 360deg; } }
+@keyframes signin-shimmer { to { background-position: -50% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .signin-prompt-signin::before, .signin-prompt-signin::after { animation: none; }
+  .signin-prompt-signin::after { display: none; }
+}
+
+.signin-prompt-help { margin-top: 26px; line-height: 16px; }

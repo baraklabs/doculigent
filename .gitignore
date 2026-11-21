@@ -7,3 +7,6 @@ env
 .DS_Store
 dist/
 target/
+
+# Claude Code skills (local only)
+.claude/skills/

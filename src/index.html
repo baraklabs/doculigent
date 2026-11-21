@@ -8,9 +8,59 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" href="/logo.png" />
     <title>Doculigent</title>
+    <script>
+      // Runs before first paint. Picks the light/dark look for the splash below (same storage key the app's
+      // theme uses) and turns the splash off for the small overlay windows (dock, camera bubble, countdown,
+      // area-select, annotate), which share this page but must stay transparent.
+      (function () {
+        var root = document.documentElement;
+        try {
+          var mode = localStorage.getItem("appearance.colorMode") || "auto";
+          var dark = mode === "dark" || (mode === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
+          root.dataset.mode = dark ? "dark" : "light";
+        } catch (e) {}
+        var overlay = /^#\/(annotate|camera-bubble|area-select|recording-dock|countdown)/.test(location.hash);
+        root.dataset.splash = overlay ? "off" : "on";
+      })();
+    </script>
+    <style>
+      /* Splash shown while the app boots: lives inside #root, so React replaces it on first render. */
+      .splash {
+        position: fixed; inset: 0; z-index: 2147483647;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+        background: linear-gradient(180deg, #fcfcfe 0%, #f4f5fa 100%);
+        color: #5b4bf5; font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        -webkit-app-region: drag;
+      }
+      :root[data-mode="dark"] .splash { background: linear-gradient(180deg, #10121a 0%, #151823 100%); color: #8b7fff; }
+      :root[data-splash="off"] .splash { display: none; }
+      .splash-brand { display: flex; align-items: center; gap: 14px; }
+      .splash-logo { width: 64px; height: 64px; object-fit: contain; animation: splash-pulse 1.6s ease-in-out infinite; }
+      .splash-name { font-size: 44px; font-weight: 700; letter-spacing: -.01em; }
+      .splash-loading { display: flex; align-items: center; gap: 4px; font-size: 14px; font-weight: 600; opacity: .8; }
+      .splash-dots { display: inline-flex; gap: 4px; margin-left: 4px; }
+      .splash-dots i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: splash-dot 1.2s ease-in-out infinite; }
+      .splash-dots i:nth-child(2) { animation-delay: .15s; }
+      .splash-dots i:nth-child(3) { animation-delay: .3s; }
+      .splash-bar { width: 180px; height: 3px; border-radius: 3px; overflow: hidden; background: rgba(91, 75, 245, .18); }
+      .splash-bar::after { content: ""; display: block; width: 40%; height: 100%; border-radius: 3px; background: currentColor; animation: splash-sweep 1.2s ease-in-out infinite; }
+      @keyframes splash-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+      @keyframes splash-dot { 0%, 80%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-4px); } }
+      @keyframes splash-sweep { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+      @media (prefers-reduced-motion: reduce) { .splash-logo, .splash-dots i, .splash-bar::after { animation: none; } }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="splash" aria-label="Loading Doculigent" role="status">
+        <div class="splash-brand">
+          <img class="splash-logo" src="./logo.png" alt="" />
+          <span class="splash-name">Doculigent</span>
+        </div>
+        <div class="splash-bar"></div>
+        <div class="splash-loading">Loading<span class="splash-dots"><i></i><i></i><i></i></span></div>
+      </div>
+    </div>
     <script type="module" src="/main.tsx"></script>
   </body>
 </html>

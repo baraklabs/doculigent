@@ -7,6 +7,8 @@ import { useRecordingStore, useSavingRecording, watchRecordingSaves } from "../.
 import { useMeetingRecordingStore } from "../../store/meetingRecordingStore";
 import { RecordingSaveToast } from "../../components/RecordingSaveToast";
 import { ToastStack } from "../../components/ToastStack";
+import { SignInPrompt } from "../../components/SignInPrompt";
+import { WindowControls } from "../../components/WindowControls";
 import { initials } from "../../lib/userDisplay";
 import { useThemeStore, type ColorMode } from "../../theme/theme";
 import { warmAppCaches } from "../../lib/warmCaches";
@@ -20,14 +22,6 @@ const DOCS_URL = "https://doculigent.com";
 const SAVING_HINT = "Saving your recording — you can switch tabs once it's done";
 const MEETING_RECORDING_HINT = "Meeting is recording — stop it before switching tabs";
 const RECORDING_HINT = "Recording — use the floating dock to pause, restart, or stop";
-
-function WindowGlyph({ d }: { d: string }) {
-  return (
-    <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
-      <path d={d} fill="none" stroke="currentColor" strokeWidth="1" />
-    </svg>
-  );
-}
 
 const MODE_META: Record<ColorMode, { label: string; icon: JSX.Element }> = {
   auto: {
@@ -75,6 +69,33 @@ function ThemeToggle() {
   );
 }
 
+const SOCIAL_LINKS: { label: string; href: string; path: string; badge?: string }[] = [
+  {
+    label: "GitHub",
+    href: "https://github.com/baraklabs/doculigent",
+    path: "M12 .5C5.73.5.5 5.73.5 12c0 5.09 3.29 9.4 7.86 10.93.58.1.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.7-3.88-1.54-3.88-1.54-.52-1.33-1.28-1.68-1.28-1.68-1.04-.72.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.75 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.23-1.27-5.23-5.67 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.45.11-3.02 0 0 .96-.31 3.15 1.18a10.9 10.9 0 0 1 5.74 0c2.19-1.49 3.15-1.18 3.15-1.18.62 1.57.23 2.73.11 3.02.73.8 1.18 1.83 1.18 3.08 0 4.41-2.69 5.38-5.25 5.66.41.36.78 1.06.78 2.14 0 1.54-.01 2.79-.01 3.17 0 .31.21.67.8.56A10.51 10.51 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5Z",
+  },
+  {
+    label: "X (Twitter)",
+    href: "https://x.com/doculigent",
+    path: "M18.24 2h3.06l-6.69 7.65L22.5 22h-6.16l-4.82-6.3L5.98 22H2.92l7.16-8.19L1.5 2h6.32l4.36 5.76L18.24 2Zm-1.08 18.17h1.7L7.03 3.74H5.2l11.96 16.43Z",
+  },
+  {
+    label: "YouTube",
+    href: "https://www.youtube.com/channel/UCspSulNS4JS-lnTUBzGd_jQ",
+    path: "M23.5 6.5s-.23-1.64-.94-2.36c-.9-.95-1.9-.95-2.36-1.01C16.9 2.8 12 2.8 12 2.8h-.01s-4.9 0-8.2.33c-.46.06-1.46.06-2.36 1.01C.72 4.86.5 6.5.5 6.5S.26 8.42.26 10.35v1.3c0 1.93.24 3.85.24 3.85s.23 1.64.94 2.36c.9.95 2.08.92 2.6 1.02 1.88.18 8 .24 8 .24s4.9-.01 8.2-.33c.46-.06 1.46-.06 2.36-1.01.71-.72.94-2.36.94-2.36s.24-1.93.24-3.85v-1.3c0-1.93-.24-3.85-.24-3.85ZM9.65 14.87V7.83l6.34 3.53-6.34 3.51Z",
+  },
+  {
+    label: "LinkedIn",
+    badge: "#0A66C2", // full logo: white "in" on a blue rounded square, as on the website
+    href: "https://www.linkedin.com/company/doculigent",
+    path: "M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.04-1.85-3.04-1.86 0-2.14 1.45-2.14 2.94v5.67H9.34V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.38-1.85 3.61 0 4.27 2.38 4.27 5.47v6.27ZM5.34 7.43a2.07 2.07 0 1 1 0-4.13 2.07 2.07 0 0 1 0 4.13ZM7.12 20.45H3.56V9h3.56v11.45Z",
+  },
+];
+
+// Module-level so it fires once per launch, not every time the layout remounts.
+let signInPulseShown = false;
+
 function isNewerVersion(latest: string, current: string) {
   const toParts = (v: string) => v.split(".").map((n) => parseInt(n, 10) || 0);
   const [la, lb, lc] = toParts(latest);
@@ -95,6 +116,16 @@ export function Layout() {
   const [latestVersion, setLatestVersion] = useState<string>();
   const session = useAuthStore((s) => s.session);
   const initAuth = useAuthStore((s) => s.init);
+  const authReady = useAuthStore((s) => s.ready);
+  // Draw the eye to "Sign in" once per app launch (when signed out) with a short pulse.
+  const [signInPulse, setSignInPulse] = useState(false);
+  useEffect(() => {
+    if (!authReady || session || signInPulseShown) return;
+    signInPulseShown = true;
+    setSignInPulse(true);
+    const t = setTimeout(() => setSignInPulse(false), 5000);
+    return () => clearTimeout(t);
+  }, [authReady, session]);
   const location = useLocation();
 
   useEffect(() => {
@@ -138,11 +169,6 @@ export function Layout() {
     };
   }, []);
 
-  const [maximized, setMaximized] = useState(false);
-  useEffect(() => {
-    window.api.window.isMaximized().then(setMaximized);
-    return window.api.window.onMaximizeChanged(setMaximized);
-  }, []);
 
   const stagesRef = useRef<HTMLElement>(null);
   const [indicator, setIndicator] = useState<{ left: number; width: number } | null>(null);
@@ -195,7 +221,7 @@ export function Layout() {
             aria-disabled={navLocked || undefined}
             title={navLocked ? navLockHint : session ? session.user.name : "Sign in to doculigent.com"}
             className={({ isActive }) =>
-              ["account-btn", isActive && "active", navLocked && !isActive && "stage-locked"]
+              ["account-btn", isActive && "active", navLocked && !isActive && "stage-locked", signInPulse && !session && "account-btn-pulse"]
                 .filter(Boolean)
                 .join(" ")
             }
@@ -214,37 +240,7 @@ export function Layout() {
 
           <ThemeToggle />
 
-          <div className="window-controls">
-            <button
-              type="button"
-              className="win-btn"
-              onClick={() => window.api.window.minimize()}
-              aria-label="Minimize"
-              title="Minimize"
-            >
-              <WindowGlyph d="M0 5h10" />
-            </button>
-            <button
-              type="button"
-              className="win-btn"
-              onClick={() => window.api.window.toggleMaximize()}
-              aria-label={maximized ? "Restore down" : "Maximize"}
-              title={maximized ? "Restore down (F11)" : "Maximize (F11)"}
-            >
-              <WindowGlyph
-                d={maximized ? "M2.5 2.5V.5h7v7h-2M.5 2.5h7v7h-7z" : "M.5.5h9v9h-9z"}
-              />
-            </button>
-            <button
-              type="button"
-              className="win-btn win-btn-close"
-              onClick={() => window.api.window.close()}
-              aria-label="Close"
-              title="Close"
-            >
-              <WindowGlyph d="M.5.5l9 9M9.5.5l-9 9" />
-            </button>
-          </div>
+          <WindowControls />
         </div>
       </header>
 
@@ -254,6 +250,7 @@ export function Layout() {
 
       <RecordingSaveToast />
       <ToastStack />
+      <SignInPrompt />
 
       <footer className="footer">
         <div className="footer-version">
@@ -269,6 +266,35 @@ export function Layout() {
           <a href="https://doculigent.com/contact-us" target="_blank" rel="noreferrer" className="footer-link">
             Contact us
           </a>
+        </div>
+        <div className="footer-social">
+          <span className="footer-social-label">Learn more</span>
+          <a
+            href={DOCS_URL}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Doculigent website"
+            title="doculigent.com"
+            className="footer-social-website"
+          >
+            <img src={logo} alt="" className="footer-social-logo" />
+          </a>
+          {SOCIAL_LINKS.map((l) => (
+            <a
+              key={l.label}
+              href={l.href}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={l.label}
+              title={l.label}
+              className={`footer-social-${l.label.split(" ")[0].toLowerCase()}`}
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                {l.badge && <rect width="24" height="24" rx="4.5" fill={l.badge} />}
+                <path d={l.path} fill={l.badge ? "#fff" : undefined} />
+              </svg>
+            </a>
+          ))}
         </div>
         {session?.user.plan && (
           <div className="footer-plan">

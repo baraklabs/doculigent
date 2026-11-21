@@ -1,5 +1,7 @@
-.account-page { flex: 1; display: flex; align-items: center; justify-content: center; width: 100%; }
+.account-page { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; width: 100%; padding: 0; }
 .account-card { max-width: 380px; width: 100%; text-align: center; display: flex; flex-direction: column; align-items: center; }
+/* .panel (base.css) is loaded after this file and sets its own padding, so out-specify it. */
+.panel.account-card-signin { padding: 50px 28px; }
 .account-card h1 { width: 100%; }
 .account-card .actions, .account-card .notice { width: 100%; justify-content: center; }
 .account-profile { display: flex; flex-direction: column; align-items: center; gap: 4px; margin: 16px 0; }
@@ -11,8 +13,53 @@
 }
 .account-plan p { margin: 0; font-size: 13px; }
 .account-plan p + p { margin-top: 4px; font-size: 12px; }
-.account-contact { margin-top: 10px; font-size: 12px; }
+.account-contact { margin: 0; font-size: 12px; text-align: center; }
 .account-login-pending { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 12px; text-align: center; }
 .account-login-pending p { margin: 0; }
 .account-login-pending .field { align-items: center; }
 .account-login-pending .save-location { justify-content: center; }
+
+.account-features { width: 100%; min-width: 0; max-width: 760px; padding: 0 16px; box-sizing: border-box; text-align: center; }
+.account-features h2 { margin: 0 0 14px; font-size: 15px; color: var(--accent); font-weight: 700; }
+/* 3 boxes on the first row, 2 centred under them. Explicit grid placement (rather than centred flex
+   wrapping) so sub-pixel width changes can never re-wrap the last boxes and shift the alignment. */
+.account-features-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+.account-feature { grid-column: span 2; min-width: 0; }
+.account-feature:nth-child(4) { grid-column: 2 / span 2; }
+.account-feature:nth-child(5) { grid-column: 4 / span 2; }
+@media (max-width: 820px) {
+  .account-features-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .account-feature:nth-child(n) { grid-column: span 2; }
+  .account-feature:nth-child(5) { grid-column: 2 / span 2; }
+}
+@media (max-width: 520px) {
+  .account-features-grid { grid-template-columns: 1fr; }
+  .account-feature:nth-child(n) { grid-column: auto; }
+}
+.account-feature {
+  padding: 16px 14px; border-radius: 12px; display: flex; align-items: center; justify-content: center; gap: 10px; text-align: center; box-sizing: border-box;
+  border: 1px solid rgba(var(--accent-rgb), .35); background: rgba(var(--accent-rgb), .07);
+  transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+.account-feature:hover { transform: translateY(-2px); border-color: var(--accent); box-shadow: 0 6px 16px rgba(var(--accent-rgb), .18); }
+.account-feature-icon {
+  width: 32px; height: 32px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent); color: var(--on-accent); flex: none;
+}
+/* Titles stay on one line on wide windows, so a late font load can't re-wrap them (1 line -> 2 lines). */
+.account-feature h3 { margin: 0; font-size: 13px; line-height: 17px; color: var(--text); white-space: nowrap; }
+@media (max-width: 820px) { .account-feature h3 { white-space: normal; } }
+
+/* Larger sign-in button on the signed-out card. */
+.account-card-signin .actions button.primary { padding: 12px 26px; font-size: 15px; border-radius: 10px; }
+
+/* Light sweep that runs across the inside of the sign-in button. */
+.account-card-signin .actions button.primary { position: relative; overflow: hidden; isolation: isolate; }
+.account-card-signin .actions button.primary::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: -1;
+  background: linear-gradient(110deg, transparent 35%, rgba(255, 255, 255, .38) 50%, transparent 65%);
+  background-size: 250% 100%; background-position: 150% 0;
+  animation: signin-btn-shimmer 2.2s ease-in-out infinite;
+}
+@keyframes signin-btn-shimmer { to { background-position: -50% 0; } }
+@media (prefers-reduced-motion: reduce) { .account-card-signin .actions button.primary::after { animation: none; display: none; } }

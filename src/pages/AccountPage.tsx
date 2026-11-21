@@ -3,7 +3,9 @@ import type { AuthPlan } from "@shared/types/auth";
 import { billingIntervalLabel, isBilledTier, planLabel } from "@shared/constants/plans";
 import { useAuthStore } from "../store/authStore";
 import { initials } from "../lib/userDisplay";
+import { SIGN_IN_FEATURES } from "../components/SignInPrompt";
 import "./AccountPage.css";
+
 
 /** "You're on Pro (billed monthly)." — the interval is dropped for free tiers and unknown intervals. */
 function planSummary(plan: AuthPlan): string {
@@ -39,8 +41,8 @@ export function AccountPage() {
 
   return (
     <div className="account-page">
-      <section className="panel account-card">
-        <h1>Account</h1>
+      <section className={`panel account-card${ready && !session ? " account-card-signin" : ""}`}>
+        {(!ready || session) && <h1>Account</h1>}
 
         {!ready && <p className="muted">Loading…</p>}
 
@@ -70,20 +72,12 @@ export function AccountPage() {
 
         {ready && !session && (
           <>
-            <p className="muted">Sign in with your doculigent.com account to unlock cloud sharing and sync.</p>
-
             {!loggingIn && (
               <div className="actions">
                 <button type="button" className="primary" onClick={() => login()}>
                   Sign in with doculigent.com
                 </button>
               </div>
-            )}
-
-            {!loggingIn && (
-              <p className="muted account-contact">
-                Need help? Email us at <a href="mailto:hello@doculigent.com">hello@doculigent.com</a>
-              </p>
             )}
 
             {loggingIn && (
@@ -123,6 +117,29 @@ export function AccountPage() {
           </>
         )}
       </section>
+
+      {ready && !session && !loggingIn && (
+        <section className="account-features" aria-label="What you get when you sign in">
+          <h2>Unlock with Doculigent Cloud</h2>
+          <div className="account-features-grid">
+            {SIGN_IN_FEATURES.map(({ icon: Icon, title }) => (
+              <div key={title} className="account-feature">
+                <span className="account-feature-icon">
+                  <Icon size={18} />
+                </span>
+                <h3>{title}</h3>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {ready && !session && !loggingIn && (
+        <p className="muted account-contact">
+          Need help? Email us at <a href="mailto:hello@doculigent.com">hello@doculigent.com</a> or{" "}
+          <a href="https://doculigent.com/contact-us" target="_blank" rel="noreferrer">contact us</a>
+        </p>
+      )}
     </div>
   );
 }

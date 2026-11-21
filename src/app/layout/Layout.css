@@ -41,6 +41,33 @@
   padding: 3px 10px 3px 3px; border-radius: 999px; border: 1px solid transparent;
   color: var(--text); text-decoration: none; font-size: 13px; font-weight: 500;
 }
+/* "Sign in" attention animation (a few seconds on every launch): a light shimmer sweeps across
+   the inside of the button while a bright comet travels around its border. */
+@property --pulse-angle { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+.account-btn-pulse {
+  position: relative; overflow: hidden; color: var(--accent);
+  border-color: rgba(var(--accent-rgb), .25); background: rgba(var(--accent-rgb), .1);
+}
+.account-btn-pulse::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 2px; pointer-events: none;
+  background: conic-gradient(from var(--pulse-angle), transparent 0deg 250deg, rgba(var(--accent-rgb), .15) 290deg, var(--accent) 350deg, #fff 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  animation: account-btn-orbit 1.3s linear infinite;
+}
+.account-btn-pulse::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(110deg, transparent 35%, rgba(var(--accent-rgb), .38) 50%, transparent 65%);
+  background-size: 250% 100%; background-position: 150% 0;
+  animation: account-btn-shimmer 1.6s ease-in-out infinite;
+}
+@keyframes account-btn-orbit { to { --pulse-angle: 360deg; } }
+@keyframes account-btn-shimmer { to { background-position: -50% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .account-btn-pulse::before, .account-btn-pulse::after { animation: none; }
+  .account-btn-pulse::before { background: var(--accent); }
+  .account-btn-pulse::after { display: none; }
+}
 .account-btn:hover { background: rgba(var(--shade-rgb), .06); }
 .account-btn.active { border-color: var(--accent); background: rgba(var(--accent-rgb), .12); }
 .account-name { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -76,3 +103,15 @@
 .update-available:hover { text-decoration: underline; }
 .footer-link { color: var(--muted); text-decoration: none; }
 .footer-link:hover { color: var(--accent); text-decoration: underline; }
+.footer-social { display: flex; align-items: center; gap: 12px; margin-left: auto; margin-right: 14px; }
+.footer-social a { display: inline-flex; transition: opacity 120ms ease, transform 120ms ease; }
+.footer-social a:hover { opacity: .75; transform: translateY(-1px); }
+/* Brand colours, same as the website footer; GitHub and X are black, so they flip to light in dark mode. */
+.footer-social-logo { width: 16px; height: 16px; object-fit: contain; }
+.footer-social-github { color: #181717; }
+.footer-social-x { color: #000; }
+.footer-social-youtube { color: #ff0000; }
+.footer-social-linkedin { color: #0a66c2; }
+:root[data-mode="dark"] .footer-social-github, :root[data-mode="dark"] .footer-social-x { color: #e8eaf2; }
+.footer-social-label { color: var(--muted); margin-right: -2px; }
+.footer-social svg { width: 15px; height: 15px; }

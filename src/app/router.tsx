@@ -1,19 +1,16 @@
 import { createHashRouter, Navigate } from "react-router-dom";
 import { Layout } from "./layout/Layout";
 import { RecordPage } from "../pages/RecordPage";
-import { MeetingPage } from "../pages/MeetingPage";
-import { LibraryPage } from "../pages/LibraryPage";
-import { EditPage } from "../pages/EditPage";
-import { AiPage } from "../pages/AiPage";
-import { AiAssistantPage } from "../pages/AiAssistantPage";
-import { SharePage } from "../pages/SharePage";
-import { SettingsPage } from "../pages/SettingsPage";
-import { AccountPage } from "../pages/AccountPage";
 import { AnnotationDrawPage } from "../pages/AnnotationDrawPage";
 import { CameraBubblePage } from "../pages/CameraBubblePage";
 import { AreaSelectPage } from "../pages/AreaSelectPage";
 import { RecordingDockPage } from "../pages/RecordingDockPage";
 import { CountdownPage } from "../pages/CountdownPage";
+
+/** Loads a page's code on first visit instead of in the startup bundle (keeps launch fast). */
+const page = (load: () => Promise<Record<string, unknown>>, name: string) => ({
+  lazy: async () => ({ Component: (await load())[name] as React.ComponentType }),
+});
 
 export const router = createHashRouter([
   {
@@ -21,15 +18,15 @@ export const router = createHashRouter([
     children: [
       { index: true, element: <Navigate to="/record" replace /> },
       { path: "record", element: <RecordPage /> },
-      { path: "meeting", element: <MeetingPage /> },
-      { path: "library", element: <LibraryPage /> },
-      { path: "edit", element: <EditPage /> },
-      { path: "edit/:id", element: <EditPage /> },
-      { path: "library/:id/ai", element: <AiPage /> },
-      { path: "ai", element: <AiAssistantPage /> },
-      { path: "library/:id/share", element: <SharePage /> },
-      { path: "settings", element: <SettingsPage /> },
-      { path: "account", element: <AccountPage /> },
+      { path: "meeting", ...page(() => import("../pages/MeetingPage"), "MeetingPage") },
+      { path: "library", ...page(() => import("../pages/LibraryPage"), "LibraryPage") },
+      { path: "edit", ...page(() => import("../pages/EditPage"), "EditPage") },
+      { path: "edit/:id", ...page(() => import("../pages/EditPage"), "EditPage") },
+      { path: "library/:id/ai", ...page(() => import("../pages/AiPage"), "AiPage") },
+      { path: "ai", ...page(() => import("../pages/AiAssistantPage"), "AiAssistantPage") },
+      { path: "library/:id/share", ...page(() => import("../pages/SharePage"), "SharePage") },
+      { path: "settings", ...page(() => import("../pages/SettingsPage"), "SettingsPage") },
+      { path: "account", ...page(() => import("../pages/AccountPage"), "AccountPage") },
     ],
   },
   { path: "annotate/draw", element: <AnnotationDrawPage /> },

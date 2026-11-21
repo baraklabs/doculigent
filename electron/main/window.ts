@@ -1,4 +1,4 @@
-import { BrowserWindow, shell } from "electron";
+import { app, BrowserWindow, nativeTheme, shell } from "electron";
 import path from "node:path";
 import { Channels } from "@shared/constants/channels";
 
@@ -26,6 +26,7 @@ export function createMainWindow(): BrowserWindow {
     title: "Doculigent",
     icon: path.join(__dirname, "../../resources", ICON_FILENAME),
     show: false,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#10121a" : "#f4f5fa",
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       sandbox: false,
@@ -40,7 +41,14 @@ export function createMainWindow(): BrowserWindow {
   win.on("unmaximize", () => win.webContents.send(Channels.window.maximizeChanged, false));
 
   win.webContents.on("before-input-event", (event, input) => {
-    if (input.type !== "keyDown" || input.key !== "F11") return;
+    if (input.type !== "keyDown") return;
+    // DevTools toggle (F12 / Ctrl+Shift+I) — development builds only, not shipped installs.
+    if (!app.isPackaged && (input.key === "F12" || (input.control && input.shift && input.key.toLowerCase() === "i"))) {
+      event.preventDefault();
+      win.webContents.toggleDevTools();
+      return;
+    }
+    if (input.key !== "F11") return;
     event.preventDefault();
     toggleMaximize(win);
   });
