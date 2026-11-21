@@ -19,7 +19,7 @@
   border: 1px solid var(--border); background: var(--bg); color: var(--text); text-align: left;
   transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
 }
-.team-card:hover { border-color: var(--accent); box-shadow: 0 4px 12px rgba(91, 75, 245, .12); transform: translateY(-1px); }
+.team-card:hover { border-color: var(--accent); box-shadow: 0 4px 12px rgba(var(--accent-rgb), .12); transform: translateY(-1px); }
 .team-card h3 { margin: 0; font-size: 14px; }
 .team-card-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; font-size: 11px; }
 .team-card-meta .muted { display: flex; align-items: center; gap: 4px; }
@@ -41,7 +41,7 @@
   color: var(--muted); text-align: center; cursor: pointer;
   transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
 }
-.teams-dropzone:hover, .teams-dropzone.drag-active { border-color: var(--accent); background: rgba(91, 75, 245, .06); color: var(--text); }
+.teams-dropzone:hover, .teams-dropzone.drag-active { border-color: var(--accent); background: rgba(var(--accent-rgb), .06); color: var(--text); }
 .teams-dropzone p { margin: 0; font-size: 12px; }
 .teams-dropzone-input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 

@@ -65,11 +65,11 @@ function showThumbnailFrame(e: SyntheticEvent<HTMLVideoElement>): void {
 }
 
 const SECTIONS = [
-  { id: "videos", label: "Videos", icon: <Clapperboard size={16} />, accent: "#5b4bf5", tint: "rgba(91, 75, 245, .09)" },
-  { id: "meeting", label: "Meeting", icon: <Mic size={16} />, accent: "#0284c7", tint: "rgba(14, 165, 233, .11)" },
-  { id: "team", label: "Team", icon: <Users size={16} />, accent: "#0f766e", tint: "rgba(15, 118, 110, .1)" },
-  { id: "projects", label: "Projects", icon: <FolderKanban size={16} />, accent: "#7c3aed", tint: "rgba(124, 58, 237, .1)" },
-  { id: "shared", label: "Shared", icon: <Link2 size={16} />, accent: "#db2777", tint: "rgba(236, 72, 153, .1)" },
+  { id: "videos", label: "Videos", icon: <Clapperboard size={16} />, accent: "var(--accent-strong)", tint: "rgba(var(--accent-rgb), .10)" },
+  { id: "meeting", label: "Meeting", icon: <Mic size={16} />, accent: "var(--accent)", tint: "rgba(var(--accent-rgb), .085)" },
+  { id: "team", label: "Team", icon: <Users size={16} />, accent: "color-mix(in srgb, var(--accent) 82%, var(--text))", tint: "rgba(var(--accent-rgb), .07)" },
+  { id: "projects", label: "Projects", icon: <FolderKanban size={16} />, accent: "color-mix(in srgb, var(--accent) 65%, var(--bg))", tint: "rgba(var(--accent-rgb), .055)" },
+  { id: "shared", label: "Shared", icon: <Link2 size={16} />, accent: "color-mix(in srgb, var(--accent) 50%, var(--muted))", tint: "rgba(var(--accent-rgb), .04)" },
 ] as const;
 type SectionId = (typeof SECTIONS)[number]["id"];
 

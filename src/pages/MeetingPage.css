@@ -42,6 +42,17 @@
 
 .meeting-error { align-self: center; }
 
+.meeting-model-setup {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  text-align: center; padding: 18px 24px; max-width: 420px; margin: 0 auto;
+}
+.meeting-model-setup h3 { margin: 0; font-size: 16px; color: var(--text); }
+.meeting-model-setup p { margin: 0 0 6px; font-size: 13px; line-height: 1.5; }
+.meeting-model-setup-icon {
+  width: 52px; height: 52px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: rgba(var(--accent-rgb), .12); color: var(--accent);
+}
+
 /* Three individual small white pills — sit directly above .meeting-dock-row (not a corner
    toast) so they're impossible to miss right where your eyes already are (you just hit
    Stop). Stay up until one is clicked or a new recording starts, rather than auto-expiring
@@ -53,7 +64,7 @@
 }
 .meeting-saved-popup button {
   font-size: 12px; font-weight: 600; padding: 5px 14px; border-radius: 999px;
-  background: #fff; border: 1px solid var(--border); color: #000; cursor: pointer;
+  background: var(--panel); border: 1px solid var(--border); color: var(--text); cursor: pointer;
   transition: border-color 150ms ease;
   /* Brief one-shot pulse (not looping) on each pill as the popup appears, staggered
      slightly left-to-right, to draw the eye — same idea as the Library tab's
@@ -147,9 +158,9 @@
 }
 .meeting-record-btn {
   width: 96px; height: 96px; border-radius: 50%; border: none; cursor: pointer;
-  background: linear-gradient(135deg, #5b4bf5, #7c6cf7); color: #fff; font-size: 32px;
+  background: linear-gradient(135deg, var(--accent-strong), var(--accent)); color: var(--on-accent); font-size: 32px;
   display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 10px 24px rgba(91, 75, 245, .35);
+  box-shadow: 0 10px 24px rgba(var(--accent-rgb), .35);
   transition: transform 150ms ease, box-shadow 150ms ease, filter 150ms ease;
 }
 .meeting-record-btn:hover:not(:disabled) { transform: scale(1.06); filter: brightness(1.05); }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -28,6 +28,7 @@ import { useAuthStore } from "../store/authStore";
 import { recordingService } from "../services/recording/RecordingService";
 import { applyCameraBlur, preloadCameraBlurModel, type CameraBlurHandle } from "../services/camera/cameraBlur";
 import { getSystemAudioStream } from "../services/recording/AudioRecordingService";
+import { CACHE_KEYS, peekCache } from "../lib/settingsCache";
 import { SettingsService } from "../services/settings/SettingsService";
 import { AnnotationToolbar } from "../components/AnnotationToolbar";
 import { useToast } from "../hooks/useToast";
@@ -213,29 +214,40 @@ export function RecordPage() {
   const [countdownSecs, setCountdownSecs] = useState(3);
   const [recordingMode, setRecordingMode] = useState<"quick" | "advanced">("quick");
 
+  type SavedRecordSettings = Awaited<ReturnType<typeof SettingsService.getRecordSettings>>;
+  function applyRecordSettings({
+    overlay: savedOverlay,
+    targetId: savedTargetId,
+    mic: savedMic,
+    systemAudio: savedSystemAudio,
+    captureMode: savedCaptureMode,
+    areaRect: savedAreaRect,
+    countdownSecs: savedCountdownSecs,
+    recordingMode: savedRecordingMode,
+  }: SavedRecordSettings) {
+    if (savedOverlay) setOverlay({ ...DEFAULT_OVERLAY, ...savedOverlay });
+    setPreferredTargetId(savedTargetId);
+    if (savedMic) setMic(savedMic);
+    if (savedSystemAudio) setSystemAudio(savedSystemAudio);
+    if (savedCaptureMode) setCaptureMode(savedCaptureMode);
+    if (savedAreaRect) setAreaRect(savedAreaRect);
+    if (savedCountdownSecs !== null) setCountdownSecs(savedCountdownSecs);
+    if (savedRecordingMode) setRecordingMode(savedRecordingMode);
+  }
+
+  // Paint the last-known settings immediately (in-memory cache, applied before the first
+  // paint) so switching back to this tab doesn't flash defaults; the fetch below then
+  // confirms/refreshes them.
+  useLayoutEffect(() => {
+    const cached = peekCache<SavedRecordSettings>(CACHE_KEYS.record);
+    if (!cached) return;
+    applyRecordSettings(cached);
+    setSettingsLoaded(true);
+  }, []);
+
   useEffect(() => {
     SettingsService.getRecordSettings()
-      .then(
-        ({
-          overlay: savedOverlay,
-          targetId: savedTargetId,
-          mic: savedMic,
-          systemAudio: savedSystemAudio,
-          captureMode: savedCaptureMode,
-          areaRect: savedAreaRect,
-          countdownSecs: savedCountdownSecs,
-          recordingMode: savedRecordingMode,
-        }) => {
-          if (savedOverlay) setOverlay({ ...DEFAULT_OVERLAY, ...savedOverlay });
-          setPreferredTargetId(savedTargetId);
-          if (savedMic) setMic(savedMic);
-          if (savedSystemAudio) setSystemAudio(savedSystemAudio);
-          if (savedCaptureMode) setCaptureMode(savedCaptureMode);
-          if (savedAreaRect) setAreaRect(savedAreaRect);
-          if (savedCountdownSecs !== null) setCountdownSecs(savedCountdownSecs);
-          if (savedRecordingMode) setRecordingMode(savedRecordingMode);
-        }
-      )
+      .then(applyRecordSettings)
       .finally(() => setSettingsLoaded(true));
   }, []);
 
@@ -408,7 +420,9 @@ export function RecordPage() {
   const [saveDir, setSaveDir] = useState("");
   const [pickingDir, setPickingDir] = useState(false);
   useEffect(() => {
-    window.api.settings.getRecordingsDir().then(setSaveDir).catch(() => {});
+    const cached = peekCache<string>(CACHE_KEYS.recordingsDir);
+    if (cached) setSaveDir(cached);
+    SettingsService.getRecordingsDir().then(setSaveDir).catch(() => {});
   }, []);
 
   const [micLevel, setMicLevel] = useState(0);

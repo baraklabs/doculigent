@@ -14,8 +14,8 @@
 }
 .edit-title-input:hover { background: var(--bg); }
 .edit-title-input:focus {
-  outline: none; background: #fff; border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(91, 75, 245, .15);
+  outline: none; background: var(--panel); border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), .15);
 }
 .edit-title-status {
   flex: none; display: flex; align-items: center; gap: 5px;
@@ -36,7 +36,7 @@
   padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 500;
 }
 .edit-topbar-btn:hover { border-color: var(--accent); }
-.edit-topbar-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.edit-topbar-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .edit-topbar-btn.primary:hover { background: var(--accent-strong); }
 
 .edit-media-info { position: relative; }
@@ -48,7 +48,7 @@
   position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
   width: max-content; max-width: min(560px, calc(100vw - 32px));
   max-height: min(460px, calc(100vh - 120px)); overflow-y: auto;
-  background: #fff; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, .12);
   padding: 10px; display: flex; flex-direction: column; gap: 8px;
 }
@@ -77,9 +77,9 @@
    adding a file simply appears before it and carries it along. */
 .edit-media-add-card {
   font: inherit; cursor: pointer;
-  background: rgba(91, 75, 245, .09); border: 1px dashed rgba(91, 75, 245, .5);
+  background: rgba(var(--accent-rgb), .09); border: 1px dashed rgba(var(--accent-rgb), .5);
 }
-.edit-media-add-card:hover:not(:disabled) { background: rgba(91, 75, 245, .16); border-color: var(--accent); }
+.edit-media-add-card:hover:not(:disabled) { background: rgba(var(--accent-rgb), .16); border-color: var(--accent); }
 .edit-media-add-card:disabled { opacity: .45; cursor: not-allowed; }
 .edit-media-add-icon { color: var(--accent); }
 .edit-media-add-card .edit-media-info-label { color: var(--accent); }
@@ -186,7 +186,7 @@ body.edit-resizing-col, body.edit-resizing-col * { cursor: col-resize !important
 }
 .edit-media-added-row:hover .edit-media-corner-btn { opacity: 1; }
 .edit-media-corner-add { left: 2px; }
-.edit-media-corner-add:hover:not(:disabled) { background: rgba(91, 75, 245, .16); color: var(--accent); }
+.edit-media-corner-add:hover:not(:disabled) { background: rgba(var(--accent-rgb), .16); color: var(--accent); }
 .edit-media-corner-add:disabled { opacity: .25; cursor: not-allowed; }
 .edit-media-corner-remove { right: 2px; }
 .edit-media-corner-remove:hover { background: rgba(239, 68, 68, .14); color: var(--danger); }

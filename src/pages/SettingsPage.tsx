@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Cloud, Cpu, Download, PanelLeftClose, PanelLeftOpen, SlidersHorizontal } from "lucide-react";
+import { Cloud, Cpu, Palette, Download, PanelLeftClose, PanelLeftOpen, SlidersHorizontal } from "lucide-react";
 import type {
   AutoTranscribeSettings,
   LlmCapability,
@@ -11,11 +11,13 @@ import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whi
 import { WHISPER_MODELS } from "@shared/constants/whisperModels";
 import { isBilledTier } from "@shared/constants/plans";
 import { AI_PROVIDERS, LOCAL_LLM_PROVIDERS } from "../providers/ai";
+import { CACHE_KEYS, peekCache } from "../lib/settingsCache";
 import { SettingsService } from "../services/settings/SettingsService";
 import { useAuthStore } from "../store/authStore";
 import { useDeleteLlmProfile, useLlmProfiles, useSaveLlmProfile, useTestLlmConnection } from "../hooks/useLlmProfiles";
 import { useAutoTranscribeSettings, useSetAutoTranscribeSettings } from "../hooks/useAutoTranscribeSettings";
 import { StorageSection } from "./settings/StorageSection";
+import { COLOR_MODES, THEMES, useThemeStore, type ColorMode } from "../theme/theme";
 import "./SettingsPage.css";
 
 function providerLabel(kind: LlmProviderKind): string {
@@ -162,6 +164,29 @@ function formatMb(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
 }
 
+type ModelSort = "latest" | "oldest" | "name-asc" | "name-desc";
+
+const MODEL_SORTS: { id: ModelSort; label: string }[] = [
+  { id: "latest", label: "Latest added" },
+  { id: "oldest", label: "Oldest added" },
+  { id: "name-asc", label: "Name (A–Z)" },
+  { id: "name-desc", label: "Name (Z–A)" },
+];
+
+/** Profiles are stored in the order they were added, so "latest" is just the reverse. */
+function sortProfiles(profiles: LlmModelProfile[], sort: ModelSort): LlmModelProfile[] {
+  switch (sort) {
+    case "latest":
+      return [...profiles].reverse();
+    case "oldest":
+      return profiles;
+    case "name-asc":
+      return [...profiles].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    case "name-desc":
+      return [...profiles].sort((a, b) => b.name.localeCompare(a.name, undefined, { sensitivity: "base" }));
+  }
+}
+
 type CapabilityFilter = "all" | "chat" | "transcribe" | "both";
 
 const CAPABILITY_FILTERS: { id: CapabilityFilter; label: string }[] = [
@@ -201,9 +226,12 @@ function isLocalModel(kind: LlmProviderKind, baseUrl: string): boolean {
 }
 
 function useWhisperModels() {
-  const [statuses, setStatuses] = useState<WhisperModelStatus[] | null>(null);
-  const [cacheDir, setCacheDir] = useState("");
-  const [loading, setLoading] = useState(true);
+  // Seeded from the in-memory cache so returning to this tab shows the last-known state at once.
+  const [statuses, setStatuses] = useState<WhisperModelStatus[] | null>(
+    () => peekCache<WhisperModelStatus[]>(CACHE_KEYS.whisperStatuses) ?? null
+  );
+  const [cacheDir, setCacheDir] = useState(() => peekCache<string>(CACHE_KEYS.whisperDir) ?? "");
+  const [loading, setLoading] = useState(() => peekCache(CACHE_KEYS.whisperStatuses) === undefined);
   const [downloadingLocally, setDownloadingLocally] = useState<ReadonlySet<WhisperModelSize>>(new Set());
   const [removingLocally, setRemovingLocally] = useState<ReadonlySet<WhisperModelSize>>(new Set());
 
@@ -275,6 +303,7 @@ function useWhisperModels() {
 const SECTIONS = [
   { id: "models", label: "Models", icon: <Cpu size={16} /> },
   { id: "storage", label: "Storage", icon: <Cloud size={16} /> },
+  { id: "appearance", label: "Appearance", icon: <Palette size={16} /> },
   { id: "preferences", label: "Preferences", icon: <SlidersHorizontal size={16} /> },
 ] as const;
 type SettingsSectionId = (typeof SECTIONS)[number]["id"];
@@ -285,6 +314,72 @@ interface PrefToggleProps {
   hint?: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
+}
+
+const MODE_LABELS: Record<ColorMode, { label: string; hint: string }> = {
+  auto: { label: "Auto", hint: "Match your system" },
+  light: { label: "Light", hint: "Always light" },
+  dark: { label: "Dark", hint: "Always dark" },
+};
+
+function AppearanceSection() {
+  const mode = useThemeStore((s) => s.mode);
+  const theme = useThemeStore((s) => s.theme);
+  const customColor = useThemeStore((s) => s.customColor);
+  const setCustomColor = useThemeStore((s) => s.setCustomColor);
+  const setMode = useThemeStore((s) => s.setMode);
+  const setTheme = useThemeStore((s) => s.setTheme);
+  return (
+    <section className="panel settings-content">
+      <div className="field">
+        <span>Color mode</span>
+        <div className="appearance-options" role="radiogroup" aria-label="Color mode">
+          {COLOR_MODES.map((m) => (
+            <button
+              key={m}
+              type="button"
+              role="radio"
+              aria-checked={mode === m}
+              className={mode === m ? "appearance-option active" : "appearance-option"}
+              onClick={() => setMode(m)}
+            >
+              <span>{MODE_LABELS[m].label}</span>
+              <span className="muted sub">{MODE_LABELS[m].hint}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="field">
+        <span>Theme</span>
+        <div className="appearance-options" role="radiogroup" aria-label="Theme">
+          {THEMES.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="radio"
+              aria-checked={theme === t.id}
+              className={theme === t.id ? "appearance-option active" : "appearance-option"}
+              onClick={() => setTheme(t.id)}
+            >
+              <span className="appearance-swatch" style={{ background: t.swatch }} />
+              <span>{t.label}</span>
+            </button>
+          ))}
+          <label className={theme === "custom" ? "appearance-option active" : "appearance-option"}>
+            <span className="appearance-swatch" style={{ background: customColor }} />
+            <span>Custom</span>
+            <input
+              type="color"
+              className="appearance-color-input"
+              value={customColor}
+              onChange={(e) => setCustomColor(e.target.value)}
+              aria-label="Custom theme color"
+            />
+          </label>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function PrefToggle({ label, hint, checked, onChange }: PrefToggleProps) {
@@ -332,6 +427,7 @@ export function SettingsPage() {
   const { data: profiles = [], isLoading } = useLlmProfiles();
   const [editing, setEditing] = useState<{ profile: LlmModelProfile; isNew: boolean } | null>(null);
   const [filter, setFilter] = useState<CapabilityFilter>("all");
+  const [sort, setSort] = useState<ModelSort>("latest");
   const deleteProfile = useDeleteLlmProfile();
   const whisper = useWhisperModels();
   const [previewedSize, setPreviewedSize] = useState<WhisperModelSize | null>(null);
@@ -347,7 +443,10 @@ export function SettingsPage() {
   const downloadedWhisper = whisper.entries.filter((e) => e.reallyDownloaded && matchesFilter(transcribeOnly, filter));
   const downloadableWhisper = whisper.entries.filter((e) => !e.reallyDownloaded && matchesFilter(transcribeOnly, filter));
   const doculigentVisible = matchesFilter(doculigentCapabilities, filter);
-  const filteredProfiles = profiles.filter((p) => matchesFilter(p.capabilities, filter));
+  const filteredProfiles = sortProfiles(
+    profiles.filter((p) => matchesFilter(p.capabilities, filter)),
+    sort
+  );
 
   const isLoadingAny = isLoading || whisper.loading;
   const readyCount = filteredProfiles.length + downloadedWhisper.length + (doculigentVisible ? 1 : 0);
@@ -400,6 +499,8 @@ export function SettingsPage() {
 
       {section === "storage" ? (
         <StorageSection />
+      ) : section === "appearance" ? (
+        <AppearanceSection />
       ) : section === "preferences" ? (
         <section className="panel settings-content">
           <p className="muted">Choose what gets transcribed automatically, without tapping Transcribe by hand.</p>
@@ -464,9 +565,18 @@ export function SettingsPage() {
                 </button>
               ))}
             </div>
-            <button type="button" className="primary" onClick={startAdd}>
-              + Add model
-            </button>
+            <div className="model-sort">
+              <select value={sort} onChange={(e) => setSort(e.target.value as ModelSort)} aria-label="Sort models">
+                {MODEL_SORTS.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    Sort: {o.label}
+                  </option>
+                ))}
+              </select>
+              <button type="button" className="primary" onClick={startAdd}>
+                + Add model
+              </button>
+            </div>
           </div>
 
           {isLoadingAny && <p className="muted">Loading…</p>}

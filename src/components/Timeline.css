@@ -112,14 +112,14 @@
   background: var(--bg); color: var(--muted); border: 1px solid var(--border);
 }
 .tl-tool-btn:hover { background: var(--border); color: var(--text); }
-.tl-tool-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tl-tool-btn.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 /* Reset isn't a tool (no active/pressed state) — same icon for both (see Timeline.tsx), so
    each is tinted its own color instead to stay visually distinct: default in red, original
    in purple. */
 .tl-reset-default-btn { color: var(--danger); }
 .tl-reset-default-btn:hover { background: rgba(239, 68, 68, .12); color: var(--danger); }
 .tl-reset-original-btn { color: var(--accent); }
-.tl-reset-original-btn:hover { background: rgba(91, 75, 245, .14); color: var(--accent); }
+.tl-reset-original-btn:hover { background: rgba(var(--accent-rgb), .14); color: var(--accent); }
 
 /* Timeline view zoom — lives in the ruler row's header cell (see Timeline.tsx), so it's
    aligned with the timeline timestamp beside it, but widened 24px past that cell's left
@@ -189,11 +189,11 @@
    mediaDropAccepts. The marker below shows exactly where the piece's left edge would land. */
 .tl-track-drop-active {
   border-color: var(--accent); border-style: dashed;
-  background: rgba(91, 75, 245, .07);
+  background: rgba(var(--accent-rgb), .07);
 }
 .tl-media-drop-marker {
   position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px;
-  background: var(--accent); box-shadow: 0 0 4px rgba(91, 75, 245, .6);
+  background: var(--accent); box-shadow: 0 0 4px rgba(var(--accent-rgb), .6);
   pointer-events: none; z-index: 5;
 }
 .tl-track-cut-mode {
@@ -422,7 +422,7 @@
 .tl-cut-guide {
   position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; z-index: 4;
   background: repeating-linear-gradient(180deg, var(--accent) 0 4px, transparent 4px 8px);
-  box-shadow: 0 0 5px rgba(91, 75, 245, .7); pointer-events: none;
+  box-shadow: 0 0 5px rgba(var(--accent-rgb), .7); pointer-events: none;
 }
 /* The same line drawn on the tracks that *already* have a cut at that ms — the ones the
    hovered track's guide has snapped onto. Solid rather than dashed, and dimmer: it marks a
@@ -442,13 +442,13 @@
 
 .tl-playhead {
   position: absolute; top: 0; bottom: 0; width: 1.5px; pointer-events: none; z-index: 6;
-  background: var(--accent); box-shadow: 0 0 4px rgba(91, 75, 245, .5);
+  background: var(--accent); box-shadow: 0 0 4px rgba(var(--accent-rgb), .5);
 }
 
 /* Marquee (rubber-band) selection box — drawn while dragging over empty track space, see
    Timeline.tsx's startMarquee/handleMarqueeMove. Positioned in pixels relative to .tl-inner. */
 .tl-marquee {
   position: absolute; border: 1px solid var(--accent);
-  background: rgba(91, 75, 245, .12);
+  background: rgba(var(--accent-rgb), .12);
   pointer-events: none; z-index: 8;
 }

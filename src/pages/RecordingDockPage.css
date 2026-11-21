@@ -55,7 +55,7 @@ html, body, #root { background: transparent; }
   transition: color 120ms ease, background 120ms ease;
 }
 .recording-dock-btn:hover { color: #fff; background: rgba(255, 255, 255, .12); }
-.recording-dock-btn.active, .recording-dock-btn.open { color: #fff; background: rgba(91, 75, 245, .55); }
+.recording-dock-btn.active, .recording-dock-btn.open { color: #fff; background: rgba(var(--accent-rgb), .55); }
 .recording-dock-btn-stop { color: #f2a19b; }
 .recording-dock-btn-stop:hover { color: #fff; background: #b3261e; }
 .recording-dock-btn-danger { color: rgba(255, 255, 255, .5); }

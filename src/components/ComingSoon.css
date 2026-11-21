@@ -5,9 +5,9 @@
 
 .coming-soon-orb {
   width: 92px; height: 92px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  background: conic-gradient(from 0deg, #5b4bf5, #0284c7, #15803d, #b45309, #db2777, #5b4bf5);
+  background: conic-gradient(from 0deg, var(--accent-strong), var(--accent), var(--accent-strong));
   animation: coming-soon-tilt 3.2s ease-in-out infinite;
-  box-shadow: 0 14px 34px rgba(91, 75, 245, .3);
+  box-shadow: 0 14px 34px rgba(var(--accent-rgb), .3);
   position: relative;
 }
 .coming-soon-orb::before {
@@ -27,7 +27,7 @@
 
 .coming-soon-title {
   margin: 10px 0 0; font-size: 26px; font-weight: 800; letter-spacing: -.02em;
-  background: linear-gradient(90deg, #5b4bf5, #0284c7, #db2777, #5b4bf5);
+  background: linear-gradient(90deg, var(--accent-strong), var(--accent), var(--accent-strong));
   background-size: 300% auto; -webkit-background-clip: text; background-clip: text; color: transparent;
   animation: coming-soon-shimmer 4s linear infinite;
 }
@@ -38,12 +38,12 @@
 .coming-soon-badge {
   margin-top: 8px; padding: 5px 14px; border-radius: 999px; font-size: 11px; font-weight: 700;
   letter-spacing: .04em; text-transform: uppercase; color: #fff;
-  background: linear-gradient(135deg, #5b4bf5, #db2777);
+  background: linear-gradient(135deg, var(--accent-strong), var(--accent));
   animation: coming-soon-pulse 2s ease-in-out infinite;
 }
 @keyframes coming-soon-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(91, 75, 245, .5); }
-  50% { box-shadow: 0 0 0 8px rgba(91, 75, 245, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), .5); }
+  50% { box-shadow: 0 0 0 8px rgba(var(--accent-rgb), 0); }
 }
 
 @media (prefers-reduced-motion: reduce) {

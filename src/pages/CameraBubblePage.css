@@ -82,7 +82,7 @@ html, body, #root { background: transparent; }
   transition: color 120ms ease, background 120ms ease;
 }
 .camera-bubble-toolbar-btn:hover:not(:disabled) { color: #fff; background: rgba(255, 255, 255, .18); }
-.camera-bubble-toolbar-btn.active { color: #fff; background: #5b4bf5; }
+.camera-bubble-toolbar-btn.active { color: var(--on-accent); background: var(--accent); }
 .camera-bubble-toolbar-btn:disabled { opacity: .35; cursor: not-allowed; }
 
 .camera-bubble-toolbar-btn[data-tooltip]:hover::after {
@@ -110,7 +110,7 @@ html, body, #root { background: transparent; }
   width: 14px;
   height: 14px;
   border-radius: 4px;
-  background: #5b4bf5;
+  background: var(--accent);
   border: 2px solid #fff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, .4);
   opacity: 0;

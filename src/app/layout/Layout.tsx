@@ -8,6 +8,8 @@ import { useMeetingRecordingStore } from "../../store/meetingRecordingStore";
 import { RecordingSaveToast } from "../../components/RecordingSaveToast";
 import { ToastStack } from "../../components/ToastStack";
 import { initials } from "../../lib/userDisplay";
+import { useThemeStore, type ColorMode } from "../../theme/theme";
+import { warmAppCaches } from "../../lib/warmCaches";
 import "./Layout.css";
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL).replace(/\/+$/, "");
@@ -24,6 +26,52 @@ function WindowGlyph({ d }: { d: string }) {
     <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
       <path d={d} fill="none" stroke="currentColor" strokeWidth="1" />
     </svg>
+  );
+}
+
+const MODE_META: Record<ColorMode, { label: string; icon: JSX.Element }> = {
+  auto: {
+    label: "Auto",
+    icon: (
+      <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+        <circle cx="8" cy="8" r="6" />
+        <path d="M8 2a6 6 0 0 0 0 12z" fill="currentColor" />
+      </svg>
+    ),
+  },
+  light: {
+    label: "Light",
+    icon: (
+      <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
+        <circle cx="8" cy="8" r="3" />
+        <path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1" />
+      </svg>
+    ),
+  },
+  dark: {
+    label: "Dark",
+    icon: (
+      <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
+        <path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7z" />
+      </svg>
+    ),
+  },
+};
+
+function ThemeToggle() {
+  const mode = useThemeStore((s) => s.mode);
+  const cycleMode = useThemeStore((s) => s.cycleMode);
+  const next = ({ auto: "light", light: "dark", dark: "auto" } as const)[mode];
+  return (
+    <button
+      type="button"
+      className="win-btn theme-toggle"
+      onClick={cycleMode}
+      aria-label={`Theme: ${MODE_META[mode].label}. Switch to ${MODE_META[next].label}`}
+      title={`Theme: ${MODE_META[mode].label} (click for ${MODE_META[next].label})`}
+    >
+      {MODE_META[mode].icon}
+    </button>
   );
 }
 
@@ -52,6 +100,10 @@ export function Layout() {
   useEffect(() => {
     initAuth();
   }, [initAuth]);
+  // Pre-load tab data in the background so switching tabs paints from memory.
+  useEffect(() => {
+    warmAppCaches();
+  }, []);
   const savingRecording = useSavingRecording();
   const meetingRecording = useMeetingRecordingStore((s) => s.recording);
   const recording = useRecordingStore((s) => s.recording);
@@ -159,6 +211,8 @@ export function Layout() {
             </span>
             <span className="account-name">{session ? session.user.name : "Sign in"}</span>
           </NavLink>
+
+          <ThemeToggle />
 
           <div className="window-controls">
             <button

@@ -32,7 +32,7 @@
   padding: 7px 8px; border-radius: 8px; cursor: pointer; font-size: 12px; color: var(--muted);
 }
 .chat-sidebar-item:hover { background: var(--bg); color: var(--text); }
-.chat-sidebar-item.active { background: rgba(91, 75, 245, .12); color: var(--text); font-weight: 600; }
+.chat-sidebar-item.active { background: rgba(var(--accent-rgb), .12); color: var(--text); font-weight: 600; }
 .chat-sidebar-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-sidebar-item-rename, .chat-sidebar-item-delete {
   flex-shrink: 0; background: none; border: none; color: var(--muted); cursor: pointer; padding: 2px;
@@ -162,5 +162,5 @@
   font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 999px; cursor: pointer;
 }
 .chip:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
-.chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chip.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .chip:disabled { opacity: .4; cursor: not-allowed; }

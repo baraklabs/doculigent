@@ -7,7 +7,7 @@
 .account-profile h3 { margin: 0; font-size: 15px; }
 .account-plan {
   width: 100%; margin-bottom: 16px; padding: 12px 14px;
-  border: 1px solid var(--border); border-radius: 10px; background: rgba(0, 0, 0, .02);
+  border: 1px solid var(--border); border-radius: 10px; background: rgba(var(--shade-rgb), .02);
 }
 .account-plan p { margin: 0; font-size: 13px; }
 .account-plan p + p { margin-top: 4px; font-size: 12px; }

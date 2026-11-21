@@ -36,7 +36,7 @@
 .camera-blur-segmented { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; width: fit-content; }
 .camera-blur-seg-btn { background: var(--bg); border: none; border-radius: 0; padding: 6px 12px; font-size: 12px; color: var(--muted); }
 .camera-blur-seg-btn + .camera-blur-seg-btn { border-left: 1px solid var(--border); }
-.camera-blur-seg-btn.active { background: var(--accent); color: #fff; }
+.camera-blur-seg-btn.active { background: var(--accent); color: var(--on-accent); }
 
 .camera-border-section { gap: 10px; }
 

@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bot, Headphones, Globe, FileText, Mic, Square, Pause, Play } from "lucide-react";
+import { Bot, Captions, Headphones, Globe, FileText, Mic, Square, Pause, Play } from "lucide-react";
 import type { CaptureTarget, TranscriptSegment } from "@shared/types/models";
 import { DEFAULT_TRANSCRIPTION_LANGUAGE, TRANSCRIPTION_LANGUAGES } from "@shared/constants/languages";
 import type { WhisperModelSize } from "@shared/constants/whisperModels";
@@ -8,6 +8,8 @@ import { WHISPER_MODELS } from "@shared/constants/whisperModels";
 import { isBilledTier } from "@shared/constants/plans";
 import { audioRecordingService, getSystemAudioStream } from "../services/recording/AudioRecordingService";
 import { TranscriptionService } from "../services/transcription/TranscriptionService";
+import { CACHE_KEYS, peekCache, putCache } from "../lib/settingsCache";
+import type { WhisperModelStatus } from "@shared/constants/whisperModels";
 import { SettingsService } from "../services/settings/SettingsService";
 import { useAuthStore } from "../store/authStore";
 import { useMeetingRecordingStore } from "../store/meetingRecordingStore";
@@ -120,7 +122,7 @@ export function MeetingPage() {
   // the "transcribe" capability. Selected by id (see settingsStore.ts's
   // getTranscriptionByokProfileId) rather than trusted blindly, since the profile could
   // have been deleted or had "transcribe" unchecked since it was picked here.
-  const { data: llmProfiles = [] } = useLlmProfiles();
+  const { data: llmProfiles = [], isLoading: profilesLoading } = useLlmProfiles();
   const byokProfiles = llmProfiles.filter((p) => p.capabilities.includes("transcribe"));
   const [byokProfileId, setByokProfileIdState] = useState<string | null>(null);
   const usingByok = byokProfileId !== null && byokProfiles.some((p) => p.id === byokProfileId);
@@ -131,6 +133,36 @@ export function MeetingPage() {
   const modelReady =
     !usingCloud && (usingByok || (whisperModel !== null && downloadedModels.some((m) => m.size === whisperModel)));
 
+  type TranscriptionBundle = [WhisperModelSize | null, WhisperModelStatus[], boolean, string | null];
+  const [modelChecked, setModelChecked] = useState(false);
+  function applyTranscription([lastUsed, statuses, useCloud, byokId]: TranscriptionBundle, persist: boolean) {
+    setModelChecked(true);
+    setUseDoculigent(useCloud);
+    setByokProfileIdState(byokId);
+    // A download in progress writes its files incrementally, so `downloaded` (any bytes on
+    // disk) can go true before it's actually finished — exclude that case the same way
+    // whisper.ts's requireDownloadedModel does on the main-process side.
+    const downloaded = WHISPER_MODELS.filter((m) => {
+      const status = statuses.find((s) => s.size === m.size);
+      return status?.downloaded && !status.downloading;
+    });
+    setDownloadedModels(downloaded);
+    if (lastUsed !== null && downloaded.some((m) => m.size === lastUsed)) {
+      setWhisperModelState(lastUsed);
+    } else if (downloaded.length > 0) {
+      // No usable last-used choice (never picked one, or it's since been removed in
+      // Settings) — default to whichever size is downloaded and persist that choice.
+      setWhisperModelState(downloaded[0].size);
+      if (persist) SettingsService.setWhisperModel(downloaded[0].size).catch(() => { });
+    } else {
+      setWhisperModelState(null);
+    }
+  }
+  // Last-known model choice from memory, applied before first paint (see settingsCache.ts).
+  useLayoutEffect(() => {
+    const cached = peekCache<TranscriptionBundle>(CACHE_KEYS.transcription);
+    if (cached) applyTranscription(cached, false);
+  }, []);
   useEffect(() => {
     Promise.all([
       SettingsService.getWhisperModel(),
@@ -138,28 +170,12 @@ export function MeetingPage() {
       SettingsService.getUseDoculigentModel(),
       SettingsService.getTranscriptionByokProfileId(),
     ])
-      .then(([lastUsed, statuses, useCloud, byokId]) => {
-        setUseDoculigent(useCloud);
-        setByokProfileIdState(byokId);
-        // A download in progress writes its files incrementally, so `downloaded` (any
-        // bytes on disk) can go true before it's actually finished — exclude that case
-        // the same way whisper.ts's requireDownloadedModel does on the main-process side.
-        const downloaded = WHISPER_MODELS.filter((m) => {
-          const status = statuses.find((s) => s.size === m.size);
-          return status?.downloaded && !status.downloading;
-        });
-        setDownloadedModels(downloaded);
-        if (lastUsed !== null && downloaded.some((m) => m.size === lastUsed)) {
-          setWhisperModelState(lastUsed);
-        } else if (downloaded.length > 0) {
-          // No usable last-used choice (never picked one, or it's since been removed in
-          // Settings) — default to whichever size is downloaded rather than leaving the
-          // picker on nothing, and persist that as the new last-used choice.
-          setWhisperModelState(downloaded[0].size);
-          SettingsService.setWhisperModel(downloaded[0].size).catch(() => { });
-        } else {
-          setWhisperModelState(null);
-        }
+      .then((bundle) => {
+        // The auto-pick below already chose and saved a model this visit; this read may have
+        // been issued before that save landed, so applying it would undo the pick and repeat it.
+        if (autoPickedRef.current) return;
+        putCache(CACHE_KEYS.transcription, bundle);
+        applyTranscription(bundle, true);
       })
       .catch(() => { });
   }, []);
@@ -168,6 +184,27 @@ export function MeetingPage() {
     setWhisperModelState(size);
     await SettingsService.setWhisperModel(size);
   }
+
+  // A transcription-capable model added in Settings (e.g. a custom OpenAI-compatible endpoint)
+  // should be usable here without also needing a local model: when nothing is selected yet,
+  // pick the first one available.
+  const autoPickedRef = useRef(false);
+  useEffect(() => {
+    if (!modelChecked || profilesLoading || recording) return;
+    if (usingCloud || usingByok || whisperModel !== null) return;
+    if (byokProfiles.length === 0) return;
+    if (autoPickedRef.current) return; // at most once per visit to the tab
+    autoPickedRef.current = true;
+    const id = byokProfiles[0].id;
+    handleModelSelectChange(`byok:${id}`)
+      .then(() => {
+        // Keep the in-memory copy in step so a later mount doesn't see (and redo) the old state.
+        const cached = peekCache<TranscriptionBundle>(CACHE_KEYS.transcription);
+        if (cached) putCache(CACHE_KEYS.transcription, [cached[0], cached[1], false, id] as TranscriptionBundle);
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelChecked, profilesLoading, usingCloud, usingByok, whisperModel, byokProfiles.length, recording]);
 
   async function handleModelSelectChange(value: string) {
     if (value === "doculigent") {
@@ -332,15 +369,24 @@ export function MeetingPage() {
   // overlay/mic restore. `settingsLoaded` gates the persist effect below so it can't fire
   // (and clobber the saved settings with the initial defaults) before this resolves.
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  type SavedMeetingSettings = Awaited<ReturnType<typeof SettingsService.getMeetingSettings>>;
+  function applyMeetingSettings(saved: SavedMeetingSettings) {
+    if (saved.language) setLanguage(saved.language);
+    if (saved.micEnabled !== null) setMicEnabled(saved.micEnabled);
+    if (saved.micDeviceId !== null) setMicDeviceId(saved.micDeviceId);
+    if (saved.systemAudioEnabled !== null) setSystemAudioEnabled(saved.systemAudioEnabled);
+    if (saved.systemAudioSourceId !== null) setSystemAudioSourceId(saved.systemAudioSourceId);
+  }
+  // Last-known values from memory, applied before first paint (see settingsCache.ts).
+  useLayoutEffect(() => {
+    const cached = peekCache<SavedMeetingSettings>(CACHE_KEYS.meeting);
+    if (!cached) return;
+    applyMeetingSettings(cached);
+    setSettingsLoaded(true);
+  }, []);
   useEffect(() => {
     SettingsService.getMeetingSettings()
-      .then((saved) => {
-        if (saved.language) setLanguage(saved.language);
-        if (saved.micEnabled !== null) setMicEnabled(saved.micEnabled);
-        if (saved.micDeviceId !== null) setMicDeviceId(saved.micDeviceId);
-        if (saved.systemAudioEnabled !== null) setSystemAudioEnabled(saved.systemAudioEnabled);
-        if (saved.systemAudioSourceId !== null) setSystemAudioSourceId(saved.systemAudioSourceId);
-      })
+      .then(applyMeetingSettings)
       .finally(() => setSettingsLoaded(true));
   }, []);
 
@@ -529,6 +575,10 @@ export function MeetingPage() {
       : whisperModel
         ? (WHISPER_MODELS.find((m) => m.size === whisperModel)?.label ?? whisperModel)
         : "Not set — tap to set";
+  // Nothing at all to pick from (no downloaded local model, no cloud plan, no BYOK profile with
+  // the "transcribe" capability) → models have to be set up in Settings first.
+  const hasModelOptions = downloadedModels.length > 0 || cloudEnabled || byokProfiles.length > 0;
+  const noModelAvailable = modelChecked && !profilesLoading && !hasModelOptions;
   const audioSummary =
     micEnabled && systemAudioEnabled
       ? "Mic + System"
@@ -548,6 +598,28 @@ export function MeetingPage() {
               justify-content: flex-end + overflow-y: auto combination that was flickering
               the scrollbar and making the content unreliably scrollable. */}
           <div className="meeting-transcript-content">
+            {!modelReady && modelChecked && !profilesLoading && messages.length === 0 && (
+              <div className="meeting-model-setup">
+                <span className="meeting-model-setup-icon" aria-hidden="true">
+                  <Captions size={26} />
+                </span>
+                <h3>Set up a model to see live transcript</h3>
+                <p className="muted">
+                  {usingCloud
+                    ? "The Doculigent Model isn't available yet. Pick a local or your own model to get a live transcript while you record."
+                    : "Choose a transcription model and your words will appear here in real time as you speak."}
+                </p>
+                {!recording && (
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={() => (hasModelOptions ? setActiveModal("model") : navigate("/settings?section=models"))}
+                  >
+                    {hasModelOptions ? "Choose model" : "Set up model"}
+                  </button>
+                )}
+              </div>
+            )}
             {!modelReady && recording && (
               <p className="muted">
                 {usingCloud
@@ -613,7 +685,15 @@ export function MeetingPage() {
             languageSummary/title) rather than just a label, so what's set is visible
             without opening its modal. */}
         <div className="meeting-dock-row">
-          <button type="button" className="meeting-side-btn" onClick={() => setActiveModal("model")}>
+          <button
+            type="button"
+            className="meeting-side-btn"
+            onClick={() => {
+              // No model chosen at all → models are set up in Settings, so go straight there.
+              if (noModelAvailable && !recording) navigate("/settings?section=models");
+              else setActiveModal("model");
+            }}
+          >
             <span className="meeting-side-btn-head">
               <Bot size={16} /> Model
             </span>

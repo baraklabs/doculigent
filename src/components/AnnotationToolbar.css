@@ -16,8 +16,8 @@
   color: var(--muted);
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
-.annotation-toolbar-btn:hover:not(:disabled) { background: rgba(91, 75, 245, .1); color: var(--text); }
-.annotation-toolbar-btn.active { background: rgba(91, 75, 245, .18); border-color: var(--accent); color: var(--accent); }
+.annotation-toolbar-btn:hover:not(:disabled) { background: rgba(var(--accent-rgb), .1); color: var(--text); }
+.annotation-toolbar-btn.active { background: rgba(var(--accent-rgb), .18); border-color: var(--accent); color: var(--accent); }
 .annotation-toolbar-btn:disabled { opacity: .35; cursor: not-allowed; }
 .annotation-swatch {
   width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0;

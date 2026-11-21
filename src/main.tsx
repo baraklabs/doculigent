@@ -12,7 +12,9 @@ import "@fontsource/geist-sans/700.css";
 // Tokens, reset and shared primitives only — page/component styles are imported by the
 // modules that own them (src/pages/*.css, src/components/*.css).
 import "./styles/base.css";
+import { initTheme } from "./theme/theme";
 
+initTheme();
 document.documentElement.dataset.platform = window.api.system.platform;
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

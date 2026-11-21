@@ -25,7 +25,7 @@ export function LiveWaveform({ analyser }: LiveWaveformProps) {
       const { width, height } = canvas!;
       ctx!.clearRect(0, 0, width, height);
       ctx!.lineWidth = 2;
-      ctx!.strokeStyle = "#5b4bf5";
+      ctx!.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#5b4bf5";
       ctx!.beginPath();
 
       const step = width / data.length;

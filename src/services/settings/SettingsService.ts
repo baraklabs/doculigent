@@ -9,12 +9,14 @@ import type {
   SystemAudioConfig,
 } from "@shared/types/models";
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
+import { CACHE_KEYS, loadCached, putCache } from "../../lib/settingsCache";
 
 export const SettingsService = {
   getRecordingsDir(): Promise<string> {
-    return window.api.settings.getRecordingsDir();
+    return loadCached(CACHE_KEYS.recordingsDir, () => window.api.settings.getRecordingsDir());
   },
   setRecordingsDir(dir: string): Promise<void> {
+    putCache(CACHE_KEYS.recordingsDir, dir);
     return window.api.settings.setRecordingsDir(dir);
   },
   pickRecordingsDir(): Promise<string | null> {
@@ -72,7 +74,7 @@ export const SettingsService = {
     countdownSecs: number | null;
     recordingMode: "quick" | "advanced" | null;
   }> {
-    return window.api.settings.getRecordSettings();
+    return loadCached(CACHE_KEYS.record, () => window.api.settings.getRecordSettings());
   },
   setRecordSettings(
     overlay: OverlayConfig,
@@ -84,6 +86,7 @@ export const SettingsService = {
     countdownSecs: number | null,
     recordingMode: "quick" | "advanced" | null
   ): Promise<void> {
+    putCache(CACHE_KEYS.record, { overlay, targetId, mic, systemAudio, captureMode, areaRect, countdownSecs, recordingMode });
     return window.api.settings.setRecordSettings(
       overlay,
       targetId,
@@ -102,7 +105,7 @@ export const SettingsService = {
     systemAudioEnabled: boolean | null;
     systemAudioSourceId: string | null;
   }> {
-    return window.api.settings.getMeetingSettings();
+    return loadCached(CACHE_KEYS.meeting, () => window.api.settings.getMeetingSettings());
   },
   setMeetingSettings(
     language: string,
@@ -111,6 +114,13 @@ export const SettingsService = {
     systemAudioEnabled: boolean,
     systemAudioSourceId: string | null
   ): Promise<void> {
+    putCache(CACHE_KEYS.meeting, {
+      language,
+      micEnabled,
+      micDeviceId,
+      systemAudioEnabled,
+      systemAudioSourceId,
+    });
     return window.api.settings.setMeetingSettings(language, micEnabled, micDeviceId, systemAudioEnabled, systemAudioSourceId);
   },
   getWhisperModel(): Promise<WhisperModelSize | null> {
@@ -120,7 +130,7 @@ export const SettingsService = {
     return window.api.settings.setWhisperModel(size);
   },
   getWhisperModelStatuses(): Promise<WhisperModelStatus[]> {
-    return window.api.settings.getWhisperModelStatuses();
+    return loadCached(CACHE_KEYS.whisperStatuses, () => window.api.settings.getWhisperModelStatuses());
   },
   downloadWhisperModel(size: WhisperModelSize): Promise<void> {
     return window.api.settings.downloadWhisperModel(size);
@@ -129,7 +139,7 @@ export const SettingsService = {
     return window.api.settings.deleteWhisperModel(size);
   },
   getWhisperModelsDir(): Promise<string> {
-    return window.api.settings.getWhisperModelsDir();
+    return loadCached(CACHE_KEYS.whisperDir, () => window.api.settings.getWhisperModelsDir());
   },
   openWhisperModelsDir(): Promise<void> {
     return window.api.settings.openWhisperModelsDir();
