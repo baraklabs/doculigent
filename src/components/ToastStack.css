@@ -46,3 +46,10 @@
 @media (prefers-reduced-motion: reduce) {
   .toast-item, .toast-item.leaving { animation: none; }
 }
+
+.toast-dismiss-all {
+  align-self: flex-end; padding: 4px 12px; font-size: 11px; font-weight: 600; cursor: pointer;
+  background: var(--panel); color: var(--muted); border: 1px solid var(--border); border-radius: 999px;
+  box-shadow: 0 4px 12px rgba(20, 20, 40, .12);
+}
+.toast-dismiss-all:hover { color: var(--text); border-color: var(--accent); }

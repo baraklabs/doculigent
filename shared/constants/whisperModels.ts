@@ -6,7 +6,7 @@
  * most for non-English languages (see whisper.ts's comment on why "tiny" was dropped in
  * favor of "base" as the default).
  */
-export type WhisperModelSize = "tiny" | "base" | "small" | "medium" | "large-v3" | "turbo";
+export type WhisperModelSize = "tiny" | "base" | "small" | "medium" | "large-v3" | "turbo" | "parakeet";
 
 export interface WhisperModelOption {
   size: WhisperModelSize;
@@ -90,7 +90,22 @@ export const WHISPER_MODELS: WhisperModelOption[] = [
     approxDownloadMb: 710,
     recommendedFor: "A supported GPU for the best experience; a modern multi-core CPU can still keep up with live captions.",
   },
+  {
+    size: "parakeet",
+    label: "NVIDIA Parakeet",
+    description: "NVIDIA Parakeet CTC 0.6B — very accurate and fast, but English only (language picker is ignored).",
+    hfModelId: "onnx-community/parakeet-ctc-0.6b-ONNX",
+    hasEnglishVariant: false,
+    approxDownloadMb: 612,
+    recommendedFor: "A supported GPU for real-time captions; a modern multi-core CPU is fine for non-live transcription.",
+  },
 ];
+
+/** Models that only transcribe English and take no language/task options (Parakeet).
+ *  Callers must not send `language`/`task` to these. */
+export function isEnglishOnlyModel(size: WhisperModelSize): boolean {
+  return size === "parakeet";
+}
 
 export const DEFAULT_WHISPER_MODEL: WhisperModelSize = "base";
 

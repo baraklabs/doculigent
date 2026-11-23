@@ -544,9 +544,11 @@ export function SettingsPage() {
       ) : (
       <section className="panel settings-content">
         <p className="muted">
-          Models available across the app — run locally (Ollama, LM Studio, on-device Whisper) or bring your own key
-          (OpenAI, OpenRouter, Anthropic, custom). Each one can power AI summary (chat/summaries/AI Assistant),
-          transcription (Meeting tab, Library), or both (Multimodel).
+          Run models locally (Ollama, LM Studio, Whisper, Parakeet) or bring your own key (OpenAI, OpenRouter,
+          Anthropic, custom) for chat, transcription, or both.{" "}
+          <a href="https://doculigent.com/features" target="_blank" rel="noreferrer">
+            How to set up
+          </a>
         </p>
 
         <div className="field">
@@ -645,7 +647,7 @@ export function SettingsPage() {
                   <div key="doculigent" className="model-row doculigent-row">
                     <div className="model-row-info">
                       <h3>
-                        Doculigent Model
+                        Doculigent Cloud
                         <span className="badge locality-badge cloud">Cloud</span>
                         <span className="badge cap-badge cap-both">Multimodel</span>
                       </h3>

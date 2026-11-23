@@ -28,6 +28,8 @@ interface ToastState {
   toasts: ToastItem[];
   push: (toast: Omit<ToastItem, "id" | "leaving"> & { id?: string }) => string;
   dismiss: (id: string) => void;
+  /** Dismisses every toast at once (each plays its exit animation). */
+  dismissAll: () => void;
   /** Stops the auto-dismiss countdown (e.g. while the pointer is hovering it). */
   pauseTimer: (id: string) => void;
   /** Restarts the auto-dismiss countdown from wherever it left off when paused. */
@@ -70,6 +72,9 @@ export const useToastStore = create<ToastState>((set, get) => ({
     window.setTimeout(() => {
       set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
     }, EXIT_ANIMATION_MS);
+  },
+  dismissAll: () => {
+    for (const t of get().toasts) get().dismiss(t.id);
   },
   pauseTimer: (id) => {
     const t = timers.get(id);

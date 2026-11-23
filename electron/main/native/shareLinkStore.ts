@@ -24,6 +24,7 @@ function write(map: ShareLinkMap): void {
 export function getShareLink(fileId: string): ShareLink | null {
   const link = read()[fileId];
   if (!link) return null;
+  if (link.expiresAt === null) return link; // never expires
   return new Date(link.expiresAt).getTime() > Date.now() ? link : null;
 }
 

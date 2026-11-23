@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -212,7 +213,15 @@ export function RecordPage() {
   const [mic, setMic] = useState<MicConfig>({ deviceId: null, muted: false });
   const [systemAudio, setSystemAudio] = useState<SystemAudioConfig>({ enabled: false, sourceId: null });
   const [countdownSecs, setCountdownSecs] = useState(3);
-  const [recordingMode, setRecordingMode] = useState<"quick" | "advanced">("quick");
+  // Deep link: /record?mode=advanced (Library > Projects' empty state) opens in that mode. It has to
+  // beat the saved last-used mode, which arrives asynchronously (cached first, then from disk) —
+  // so it's captured once here and the settings loaders below skip the saved mode when it's set.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedMode = searchParams.get("mode");
+  const forcedModeRef = useRef<"quick" | "advanced" | null>(
+    requestedMode === "advanced" || requestedMode === "quick" ? requestedMode : null
+  );
+  const [recordingMode, setRecordingMode] = useState<"quick" | "advanced">(forcedModeRef.current ?? "quick");
 
   type SavedRecordSettings = Awaited<ReturnType<typeof SettingsService.getRecordSettings>>;
   function applyRecordSettings({
@@ -232,7 +241,7 @@ export function RecordPage() {
     if (savedCaptureMode) setCaptureMode(savedCaptureMode);
     if (savedAreaRect) setAreaRect(savedAreaRect);
     if (savedCountdownSecs !== null) setCountdownSecs(savedCountdownSecs);
-    if (savedRecordingMode) setRecordingMode(savedRecordingMode);
+    if (savedRecordingMode && !forcedModeRef.current) setRecordingMode(savedRecordingMode);
   }
 
   // Paint the last-known settings immediately (in-memory cache, applied before the first
@@ -394,6 +403,19 @@ export function RecordPage() {
       recordingMode
     ).catch(() => {});
   }, [overlay, targetId, mic, systemAudio, captureMode, areaRect, countdownSecs, recordingMode, settingsLoaded]);
+
+  useEffect(() => {
+    // Strip the link param once handled (the mode itself is already applied above).
+    if (!requestedMode) return;
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("mode");
+        return next;
+      },
+      { replace: true }
+    );
+  }, [requestedMode, setSearchParams]);
 
   const recordingRef = useRef(recording);
   useEffect(() => {
@@ -1049,7 +1071,7 @@ export function RecordPage() {
                   title={saving ? "Finishing the previous recording…" : undefined}
                 >
                   <span className="record-cta-dot" />
-                  {countdownRemaining !== null ? "Starting…" : busy ? "Starting…" : "Start recording"}
+                  {countdownRemaining !== null ? "Starting…" : busy ? "Starting…" : `Start ${recordingMode === "advanced" ? "Advanced" : "Quick"} Recording`}
                 </button>
                 <div className="record-countdown-stepper" title="Countdown before recording starts">
                   <button

@@ -889,6 +889,8 @@ export interface Video {
   transcript: Transcript | null;
   summary: Summary | null;
   source: "record" | "meeting";
+  /** Media file size on disk — filled in when the library is listed (not persisted). */
+  sizeBytes?: number;
   syncedFromTeamFileId?: string;
   /** Camera bubble shape/blur actually in effect while this was recorded — absent for
    *  audio-only recordings and anything saved before this field existed. */

@@ -58,13 +58,12 @@ function GoogleDriveTeamsUnsupported() {
   }
 
   return (
-    <div className="shared-empty">
+    <div className="shared-empty shared-empty-centered">
       <Users size={26} className="shared-empty-icon" />
       <h2>Team isn't supported with Google Drive</h2>
       <p className="muted">
-        Google Drive's per-file access model can't reliably support team folders. Switch to Doculigent Cloud for
-        full team support (invites, shared roster), or manage individual files in{" "}
-        <Link to="/settings?section=storage">Settings &gt; Storage</Link>.
+        Switch to <Link to="/settings?section=storage">Doculigent Cloud</Link> for
+        full team support (invites, shared files), or use S3 storage.
       </p>
       <div className="actions shared-empty-actions">
         <button
@@ -106,24 +105,30 @@ export function TeamsSection() {
 
   if (!session) {
     return (
-      <div className="shared-empty">
-        <Users size={26} className="shared-empty-icon" />
-        <h2>Sign in to collaborate</h2>
-        <p className="muted">Sign in with doculigent.com to create teams and share files with colleagues.</p>
-        <div className="actions shared-empty-actions">
-          <button type="button" className="primary" onClick={() => navigate("/account")}>
-            <LogIn size={14} /> Go to Account
+      <div className="shared-empty shared-signin-stack">
+        <div className="shared-signin">
+          <span className="shared-signin-icon">
+            <Users size={20} />
+          </span>
+          <div className="shared-signin-text">
+            <h2>Sign in to collaborate</h2>
+            <p className="muted">Sign in with doculigent.com to create teams and share files with colleagues.</p>
+          </div>
+          <button type="button" className="shared-signin-btn" onClick={() => navigate("/account")}>
+            <LogIn size={14} /> Sign in
           </button>
         </div>
 
-        <div className="shared-empty-divider">
-          <span>or</span>
-        </div>
-
-        <p className="muted sub">Prefer your own storage?</p>
-        <div className="actions shared-empty-actions">
-          <button type="button" onClick={() => navigate("/settings?section=storage")}>
-            <Cloud size={14} /> Set up bring-your-own S3
+        <div className="shared-signin">
+          <span className="shared-signin-icon">
+            <Cloud size={20} />
+          </span>
+          <div className="shared-signin-text">
+            <h2>Prefer your own storage?</h2>
+            <p className="muted">Use your own S3 bucket or Google Drive.</p>
+          </div>
+          <button type="button" className="shared-signin-btn" onClick={() => navigate("/settings?section=storage")}>
+            Set up bring-your-own S3
           </button>
         </div>
       </div>

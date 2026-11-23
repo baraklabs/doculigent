@@ -21,7 +21,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import ffmpegStaticPath from "ffmpeg-static";
 import type { Transcript, TranscriptSegment } from "@shared/types/models";
-import { whisperModelHfId, whisperModelHfIdEn, whisperModelHasEnglishVariant } from "@shared/constants/whisperModels";
+import { whisperModelHfId, whisperModelHfIdEn, whisperModelHasEnglishVariant, isEnglishOnlyModel } from "@shared/constants/whisperModels";
 import type { WhisperModelSize } from "@shared/constants/whisperModels";
 import type { WorkerRequest, WorkerResponse } from "./workerMessages";
 
@@ -211,7 +211,8 @@ async function runWhisperOnSamples(
     useEnglishOnly ? whisperModelHfIdEn(modelSize) : whisperModelHfId(modelSize),
     cacheDir
   );
-  const forcedLanguage = !useEnglishOnly && language && language !== "auto" ? language : undefined;
+  const englishOnlyModel = isEnglishOnlyModel(modelSize);
+  const forcedLanguage = !useEnglishOnly && !englishOnlyModel && language && language !== "auto" ? language : undefined;
 
   // return_timestamps adds real per-token decoding overhead for sub-segment timing we
   // don't need on the live-chunk path (transcribePcm) — the chunk's own known start/end
@@ -227,11 +228,24 @@ async function runWhisperOnSamples(
     callOptions.language = forcedLanguage;
     callOptions.task = "transcribe";
   }
-  const result = await runTranscriberQueued(transcriber, samples, callOptions);
-
-  const chunks: WhisperChunk[] = result.chunks?.length
-    ? result.chunks
-    : [{ text: result.text, timestamp: [0, samples.length / 16000] }];
+  let chunks: WhisperChunk[];
+  if (englishOnlyModel) {
+    // transformers.js's CTC (Parakeet) path has no chunking or timestamps — it feeds the
+    // whole clip through the model at once — so split into fixed 30s windows here, which
+    // bounds memory on long recordings and gives each window real start/end times.
+    const WINDOW = 16000 * 30;
+    chunks = [];
+    for (let off = 0; off < samples.length; off += WINDOW) {
+      const slice = samples.subarray(off, Math.min(off + WINDOW, samples.length));
+      const r = await runTranscriberQueued(transcriber, slice, {});
+      chunks.push({ text: r.text, timestamp: [off / 16000, (off + slice.length) / 16000] });
+    }
+  } else {
+    const result = await runTranscriberQueued(transcriber, samples, callOptions);
+    chunks = result.chunks?.length
+      ? result.chunks
+      : [{ text: result.text, timestamp: [0, samples.length / 16000] }];
+  }
 
   const segments: TranscriptSegment[] = chunks
     .map((c) => ({
@@ -242,7 +256,7 @@ async function runWhisperOnSamples(
     }))
     .filter((s) => s.text.length > 0);
 
-  return { language: useEnglishOnly ? "en" : (forcedLanguage ?? "auto"), engine: "whisper-local", segments };
+  return { language: useEnglishOnly || englishOnlyModel ? "en" : (forcedLanguage ?? "auto"), engine: "whisper-local", segments };
 }
 
 async function transcribeFile(

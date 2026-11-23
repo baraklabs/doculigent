@@ -122,10 +122,26 @@ export async function importVideoFiles(
   return imported;
 }
 
-export function registerLibraryIpc(): void {
-  ipcMain.handle(Channels.library.list, async (): Promise<Video[]> => store.listVideos());
+/** Adds each video's on-disk size (a missing/unreadable file just has no size). */
+async function withSizes(videos: Video[]): Promise<Video[]> {
+  return Promise.all(
+    videos.map(async (v) => {
+      try {
+        return { ...v, sizeBytes: (await fs.stat(v.filePath)).size };
+      } catch {
+        return v;
+      }
+    })
+  );
+}
 
-  ipcMain.handle(Channels.library.get, async (_event, id: string): Promise<Video | null> => store.getVideo(id));
+export function registerLibraryIpc(): void {
+  ipcMain.handle(Channels.library.list, async (): Promise<Video[]> => withSizes(store.listVideos()));
+
+  ipcMain.handle(Channels.library.get, async (_event, id: string): Promise<Video | null> =>
+    // Also accepts a storage file id: the synced Library copy of a Shared/Team file (hidden from the list).
+    store.getVideo(id) ?? store.getVideoBySyncedTeamFileId(id)
+  );
 
   ipcMain.handle(Channels.library.delete, async (_event, id: string, keepFile?: boolean): Promise<void> => {
     const video = store.getVideo(id);
@@ -147,7 +163,7 @@ export function registerLibraryIpc(): void {
     }
   });
 
-  ipcMain.handle(Channels.library.search, async (_event, query: string): Promise<Video[]> => store.searchVideos(query));
+  ipcMain.handle(Channels.library.search, async (_event, query: string): Promise<Video[]> => withSizes(store.searchVideos(query)));
 
   ipcMain.handle(Channels.library.rename, async (_event, id: string, title: string): Promise<Video> => {
     const updated = store.renameVideo(id, title);

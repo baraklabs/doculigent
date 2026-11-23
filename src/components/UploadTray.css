@@ -1,0 +1,77 @@
+/* Centred upload popup. Fixed to the window (unlike .modal-backdrop, which is scoped to the workspace). */
+.upload-modal-backdrop {
+  position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center;
+  background: transparent; animation: upload-fade-in 160ms ease;
+  pointer-events: none; /* clicks fall through to the app (see UploadModal) */
+}
+.upload-modal-backdrop.shrinking { animation: upload-backdrop-out 320ms ease forwards; pointer-events: none; }
+.upload-modal {
+  pointer-events: auto; position: relative; width: min(380px, 92vw); padding: 22px 24px 18px; text-align: center;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(20, 20, 40, .28); animation: upload-pop-in 200ms cubic-bezier(.2, .8, .2, 1);
+}
+/* Shrinks and flies toward the bottom-right corner, where the tray card lands. */
+.upload-modal.shrinking { animation: upload-shrink 320ms cubic-bezier(.5, 0, .75, .4) forwards; }
+.upload-modal h2 { margin: 0 0 4px; font-size: 16px; }
+.upload-name { margin: 0 0 14px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upload-percent { margin: 6px 0 12px; font-size: 12px; }
+.upload-modal-min { position: absolute; top: 10px; right: 10px; }
+
+.upload-track { height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, var(--border)); overflow: hidden; }
+.upload-track-sm { height: 5px; margin: 6px 0 2px; }
+.upload-fill {
+  height: 100%; border-radius: 999px; transition: width 200ms ease;
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+}
+
+.upload-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0;
+  background: transparent; border: none; border-radius: 8px; color: var(--muted); cursor: pointer; flex-shrink: 0;
+}
+.upload-icon-btn:hover { background: rgba(var(--accent-rgb), .12); color: var(--accent-strong); }
+.upload-bg-btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 13px; font-weight: 600;
+  background: #fff; color: var(--accent-strong); border: 1px solid var(--accent); border-radius: 10px; cursor: pointer;
+}
+.upload-bg-btn:hover { background: color-mix(in srgb, var(--accent) 8%, #fff); }
+
+/* Tray cards — live inside .toast-stack (bottom-right), so they stack with the toasts. */
+.upload-card {
+  display: flex; align-items: flex-start; gap: 10px; width: 300px;
+  background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--accent);
+  border-radius: 10px; padding: 10px 12px; box-shadow: 0 10px 28px rgba(20, 20, 40, .16);
+  animation: upload-card-in 260ms cubic-bezier(.2, .8, .2, 1);
+}
+.upload-card-icon { display: flex; align-items: center; margin-top: 1px; color: var(--accent); flex-shrink: 0; }
+.upload-card-body { flex: 1; min-width: 0; }
+.upload-card-body strong { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upload-card-sub { margin: 0; font-size: 11px; }
+.upload-card-error { margin: 2px 0 0; font-size: 11px; color: var(--danger); word-break: break-word; }
+.upload-card-done { border-left-color: #16a34a; }
+.upload-card-done .upload-card-icon { color: #16a34a; }
+.upload-card-done .upload-fill { background: #16a34a; }
+.upload-card-error { }
+.upload-card.upload-card-error { border-left-color: var(--danger); }
+.upload-card.upload-card-error .upload-card-icon { color: var(--danger); }
+
+@keyframes upload-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes upload-pop-in { from { opacity: 0; transform: scale(.94) translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes upload-backdrop-out { to { opacity: 1; } }
+@keyframes upload-shrink {
+  to { opacity: .2; transform: translate(calc(50vw - 190px), calc(50vh - 70px)) scale(.22); }
+}
+@keyframes upload-card-in { from { opacity: 0; transform: translateX(24px) scale(.98); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .upload-modal, .upload-modal.shrinking, .upload-modal-backdrop, .upload-card { animation: none; }
+}
+
+.upload-detail { margin: -8px 0 10px; font-size: 11px; }
+
+.upload-modal-actions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+.upload-cancel-btn {
+  padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+  background: transparent; color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 55%, var(--border)); border-radius: 10px;
+}
+.upload-cancel-btn:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.upload-cancel-icon:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }

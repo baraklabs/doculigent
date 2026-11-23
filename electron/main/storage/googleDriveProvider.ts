@@ -13,7 +13,6 @@ const DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3/files";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 const CHUNK_SIZE = 8 * 1024 * 1024;
 
-const SHARE_LINK_LABEL_SECONDS = 7 * 24 * 60 * 60;
 
 async function driveFetch(url: string, init: RequestInit = {}): Promise<Response> {
   let token = await getValidGoogleDriveAccessToken();
@@ -105,7 +104,8 @@ export async function createGoogleDriveProvider(config: GoogleDriveConfig): Prom
     async uploadFile(
       filePath: string,
       displayName: string,
-      onProgress?: (percent: number) => void
+      onProgress?: (percent: number) => void,
+      signal?: AbortSignal
     ): Promise<StorageFile> {
       const parentId = await sharedFolderId();
       const mimeType = guessMimeType(displayName);
@@ -120,8 +120,15 @@ export async function createGoogleDriveProvider(config: GoogleDriveConfig): Prom
       const sessionUrl = startRes.headers.get("Location");
       if (!sessionUrl) throw new Error("Google Drive didn't return an upload session URL.");
 
+      async function cancelSession(): Promise<never> {
+        // Best effort: tell Drive to drop the half-finished resumable session.
+        await driveFetch(sessionUrl!, { method: "DELETE" }).catch(() => {});
+        throw new Error("Upload cancelled");
+      }
+
       async function putChunk(buffer: Buffer, start: number, end: number): Promise<{ id: string } | null> {
         const res = await driveFetch(sessionUrl!, {
+          signal,
           method: "PUT",
           headers: {
             "Content-Length": String(buffer.length),
@@ -146,10 +153,17 @@ export async function createGoogleDriveProvider(config: GoogleDriveConfig): Prom
         let uploaded = 0;
         let fileId = "";
         while (uploaded < size) {
+          if (signal?.aborted) await cancelSession();
           const chunkSize = Math.min(CHUNK_SIZE, size - uploaded);
           const buffer = Buffer.alloc(chunkSize);
           await handle.read(buffer, 0, chunkSize, uploaded);
-          const done = await putChunk(buffer, uploaded, uploaded + chunkSize - 1);
+          let done: { id: string } | null;
+          try {
+            done = await putChunk(buffer, uploaded, uploaded + chunkSize - 1);
+          } catch (err) {
+            if (signal?.aborted) await cancelSession();
+            throw err;
+          }
           uploaded += chunkSize;
           if (done) {
             fileId = done.id;
@@ -194,7 +208,8 @@ export async function createGoogleDriveProvider(config: GoogleDriveConfig): Prom
 
       const meta = await driveJson<{ webViewLink?: string }>(`${DRIVE_API}/files/${fileId}?fields=webViewLink`);
       const url = meta.webViewLink ?? `https://drive.google.com/file/d/${fileId}/view?usp=sharing`;
-      return { url, expiresAt: new Date(Date.now() + SHARE_LINK_LABEL_SECONDS * 1000).toISOString() };
+      // Drive "anyone with the link" permissions have no expiry.
+      return { url, expiresAt: null };
     },
   };
 }

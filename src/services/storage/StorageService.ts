@@ -23,6 +23,9 @@ export const StorageService = {
   uploadFile(uploadId: string, teamId: string, filePath: string, displayName?: string): Promise<StorageFile> {
     return window.api.storage.uploadFile(uploadId, teamId, filePath, displayName);
   },
+  cancelUpload(uploadId: string): Promise<void> {
+    return window.api.storage.cancelUpload(uploadId);
+  },
   onUploadProgress(callback: (progress: { uploadId: string; percent: number }) => void): () => void {
     return window.api.storage.onUploadProgress(callback);
   },

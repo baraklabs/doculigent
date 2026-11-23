@@ -260,7 +260,7 @@ export function Layout() {
               New version v{latestVersion} available
             </a>
           )}
-          <a href={DOCS_URL} target="_blank" rel="noreferrer" className="footer-link">
+          <a href={`${DOCS_URL}/features`} target="_blank" rel="noreferrer" className="footer-link">
             Read docs
           </a>
           <a href="https://doculigent.com/contact-us" target="_blank" rel="noreferrer" className="footer-link">

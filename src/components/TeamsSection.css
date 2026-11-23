@@ -51,3 +51,54 @@
 .sync-status.syncing { color: var(--muted); }
 .spin { animation: teams-spin 900ms linear infinite; }
 @keyframes teams-spin { to { transform: rotate(360deg); } }
+
+/* "Copy link" → green "Copied" with a tick for a couple of seconds. */
+.copy-link-btn.copied { color: #16a34a; border-color: #16a34a; background: rgba(22, 163, 74, .08); }
+.copy-link-btn.copied svg { color: #16a34a; }
+
+/* File rows (StorageFileBrowser) reuse the model-row look. These rules also live in
+   SettingsPage.css, but that stylesheet is code-split and only loads after visiting Settings,
+   which left Library > Shared's list unstyled — so they're repeated here. */
+.model-list { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
+.model-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; background: var(--bg);
+}
+.model-row-info h3 { margin: 0; font-size: 13px; line-height: 1.3; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.model-row-info .sub { font-size: 11px; margin: 1px 0 0; line-height: 1.3; }
+
+/* AI button in a file row: sits right after Delete (not pushed to the far edge like on video cards). */
+.model-row .icon-btn-ai { margin-left: 6px; color: var(--accent-strong); }
+
+.model-row.selected { border-color: var(--accent); background: rgba(var(--accent-rgb), .05); }
+.storage-row-select { display: flex; align-items: center; flex-shrink: 0; cursor: pointer; }
+.model-row .model-row-info { flex: 1; min-width: 0; }
+.model-row .model-row-info h3 { overflow-wrap: anywhere; }
+.library-sort { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.library-sort select { padding: 6px 8px; }
+
+/* Dropzone: slim single line at the top once files exist; big and centred in the panel when empty. */
+.teams-dropzone.compact { flex-direction: row; justify-content: center; gap: 10px; padding: 8px 14px; margin: 0 0 6px; border-width: 1.5px; }
+.storage-browser-empty { min-height: 60vh; justify-content: center; }
+.teams-dropzone.centered { padding: 56px 24px; max-width: 560px; width: 100%; align-self: center; font-size: 14px; }
+.teams-dropzone.centered p { font-size: 14px; }
+
+/* In the page header row, top-right (Library > Shared). The header leaves room for it. */
+.teams-dropzone.compact.in-header { position: absolute; top: 18px; right: 20px; width: 320px; margin: 0; z-index: 1; background: var(--bg); }
+.library-list-panel:has(.teams-dropzone.in-header) .library-section-head { padding-right: 350px; }
+
+/* Match the Videos/Meeting toolbar spacing exactly (16px above and below, no extra wrapper margin). */
+.field.storage-browser { margin: 0; }
+.storage-browser > .library-toolbar { margin: 26px 0 8px; }
+
+/* A little colour for the dropzone: accent-tinted fill, accent dashed border and icon. */
+.teams-dropzone {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), .10), rgba(var(--accent-rgb), .03));
+  color: var(--accent-strong);
+}
+.teams-dropzone svg { color: var(--accent); }
+.teams-dropzone p { font-weight: 500; }
+.teams-dropzone:hover, .teams-dropzone.drag-active { border-color: var(--accent); background: linear-gradient(135deg, rgba(var(--accent-rgb), .18), rgba(var(--accent-rgb), .07)); color: var(--accent-strong); box-shadow: 0 4px 14px rgba(var(--accent-rgb), .18); }
+
+.storage-empty-msg { text-align: center; align-self: center; margin: 12px 0 0; }

@@ -56,6 +56,7 @@ export function getWhisperModelStatuses(): WhisperModelStatus[] {
   });
 }
 
-export function deleteWhisperModelCache(size: WhisperModelSize): void {
-  for (const dir of modelDirs(size)) fs.rmSync(dir, { recursive: true, force: true });
+export async function deleteWhisperModelCache(size: WhisperModelSize): Promise<void> {
+  // maxRetries covers the brief lag before Windows releases handles of a just-killed worker.
+  for (const dir of modelDirs(size)) await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }

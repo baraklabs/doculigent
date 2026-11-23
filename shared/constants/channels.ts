@@ -233,6 +233,7 @@ export const Channels = {
     listFiles: "storage:listFiles",
     uploadFile: "storage:uploadFile",
     uploadProgress: "storage:uploadProgress",
+    cancelUpload: "storage:cancelUpload",
     downloadToLibrary: "storage:downloadToLibrary",
     deleteFile: "storage:deleteFile",
     getShareableLink: "storage:getShareableLink",

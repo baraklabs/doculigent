@@ -1,0 +1,6 @@
+.library-pager { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 20px 0 4px; flex-wrap: wrap; }
+.library-pager button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 32px; padding: 0 12px; font-size: 13px; line-height: 1; }
+.library-pager-count { font-size: 12px; white-space: nowrap; }
+.library-pager-pages { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: center; }
+.library-pager .library-page-btn { width: 32px; min-width: 32px; height: 32px; padding: 0; font-size: 13px; border-radius: 8px; }
+.library-pager .library-page-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 700; cursor: default; }

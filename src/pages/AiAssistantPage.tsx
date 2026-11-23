@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Settings,
   X,
@@ -107,12 +107,13 @@ function deriveTitle(messages: ChatMessage[]): string {
 
 export function AiAssistantPage() {
   const { data: videos = [] } = useVideos("");
-  const { data: profiles = [] } = useLlmProfiles();
+  const { data: profiles = [], isLoading: profilesLoading } = useLlmProfiles();
   const chatProfiles = profiles.filter((p) => p.capabilities.includes("chat"));
   const session = useAuthStore((s) => s.session);
   const cloudEnabled = !!session?.user.plan && isBilledTier(session.user.plan.tier);
 
   const location = useLocation();
+  const navigate = useNavigate();
   const initialNavState = location.state as { videoId?: string; action?: "summarize" | "notes" } | null;
   const [videoId, setVideoId] = useState(() => initialNavState?.videoId ?? "");
   const [pendingAction, setPendingAction] = useState(() => initialNavState?.action ?? null);
@@ -134,14 +135,22 @@ export function AiAssistantPage() {
       }
       return;
     }
-    if (profiles.length === 0) return; // still loading — don't judge it yet
+    if (profilesLoading) return; // still loading — don't judge it yet
     if (chatProfiles.some((p) => p.id === profileOverride)) {
       localStorage.setItem(LAST_PROFILE_KEY, profileOverride);
     } else {
       setProfileOverride("");
       localStorage.removeItem(LAST_PROFILE_KEY);
     }
-  }, [profileOverride, profiles, chatProfiles, cloudEnabled]);
+  }, [profileOverride, profiles, profilesLoading, chatProfiles, cloudEnabled]);
+
+  // Exactly one model available (a single chat profile, or only the cloud model) → select it
+  // so there's nothing to pick.
+  useEffect(() => {
+    if (profileOverride || profilesLoading) return;
+    const options = [...(cloudEnabled ? ["doculigent"] : []), ...chatProfiles.map((p) => p.id)];
+    if (options.length === 1) setProfileOverride(options[0]);
+  }, [profileOverride, profilesLoading, chatProfiles, cloudEnabled]);
 
   const [transcript, setTranscript] = useState<Transcript | null>(null);
 
@@ -175,6 +184,13 @@ export function AiAssistantPage() {
   const usingDrawerByok = drawerByokId !== null && byokProfiles.some((p) => p.id === drawerByokId);
   const usingDrawerCloud = drawerUseCloud && cloudEnabled;
   const hasAnyTranscribeModel = downloadedModels.length > 0 || byokProfiles.length > 0 || cloudEnabled;
+
+  // No transcription model added at all, but signed in on a paid plan → default to Doculigent
+  // Cloud (same rule as the Meeting tab).
+  useEffect(() => {
+    if (modelStatuses === null || profilesLoading) return;
+    if (cloudEnabled && downloadedModels.length === 0 && byokProfiles.length === 0) setDrawerUseCloud(true);
+  }, [modelStatuses, profilesLoading, cloudEnabled, downloadedModels.length, byokProfiles.length]);
 
   function handleDrawerModelSelectChange(value: string) {
     if (value === "doculigent") {
@@ -603,9 +619,35 @@ export function AiAssistantPage() {
             the middle of the page next to the narrower message column. */}
         <div className="chat-page-log">
           <div className="chat-page-log-inner">
-            {!video && history.length === 0 && (
+            {!profilesLoading && chatProfiles.length === 0 && !cloudEnabled && history.length === 0 && (
+              <div className="chat-model-setup">
+                <span className="chat-model-setup-icon" aria-hidden="true">
+                  <Bot size={26} />
+                </span>
+                <h3>Set up a model to start chatting</h3>
+                <p className="muted">Choose a chat model and your answers will appear here as you ask.</p>
+                <button type="button" className="primary" onClick={() => navigate("/settings?section=models")}>
+                  Set up model
+                </button>
+              </div>
+            )}
+
+            {!video && history.length === 0 && (chatProfiles.length > 0 || cloudEnabled) && (
               <div className="chat-page-empty">
-                <p className="muted">Ask anything, or attach a recording below to ask about it specifically.</p>
+                <p className="muted">
+                  Ask anything, or{" "}
+                  <a
+                    href="#"
+                    className="chat-attach-link"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setSettingsOpen(true);
+                    }}
+                  >
+                    attach
+                  </a>{" "}
+                  a recording to chat with your video or meeting.
+                </p>
                 {videos.length === 0 && (
                   <p className="muted">No recordings yet — head to the Record tab.</p>
                 )}
@@ -678,7 +720,12 @@ export function AiAssistantPage() {
               type="button"
               className="icon-btn"
               title="Model & attachment settings"
-              onClick={() => setSettingsOpen(true)}
+              onClick={() => {
+                // No chat model at all → models are set up in Settings, so go straight there
+                // (same as the Meeting tab's Model button).
+                if (chatProfiles.length === 0 && !cloudEnabled) navigate("/settings?section=models");
+                else setSettingsOpen(true);
+              }}
             >
               <Settings size={18} />
             </button>
@@ -695,7 +742,37 @@ export function AiAssistantPage() {
           </div>
 
           <p className="chat-page-meta muted">
-            Model: {usingCloudChat ? "Doculigent (cloud)" : (selectedProfile?.name ?? "none")} · Attachment: {video?.title ?? "none"}
+            Model:{" "}
+            {usingCloudChat || selectedProfile ? (
+              usingCloudChat ? "Doculigent Cloud" : selectedProfile?.name
+            ) : (
+              <a
+                href="#"
+                className="chat-attach-link"
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (chatProfiles.length === 0 && !cloudEnabled) navigate("/settings?section=models");
+                  else setSettingsOpen(true);
+                }}
+              >
+                {chatProfiles.length === 0 && !cloudEnabled ? "Set up a model" : "Select a model"}
+              </a>
+            )}{" "}
+            · Attachment:{" "}
+            {video ? (
+              video.title
+            ) : (
+              <a
+                href="#"
+                className="chat-attach-link"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setSettingsOpen(true);
+                }}
+              >
+                Attach
+              </a>
+            )}
           </p>
         </div>
 
@@ -718,7 +795,7 @@ export function AiAssistantPage() {
                 >
                   {chatProfiles.length === 0 && !cloudEnabled && <option value="">No models configured</option>}
                   {(chatProfiles.length > 0 || cloudEnabled) && <option value="">Select a model…</option>}
-                  {cloudEnabled && <option value="doculigent">Doculigent (cloud)</option>}
+                  {cloudEnabled && <option value="doculigent">Doculigent Cloud</option>}
                   {chatProfiles.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
@@ -912,7 +989,7 @@ export function AiAssistantPage() {
                             value={usingDrawerCloud ? "doculigent" : usingDrawerByok ? `byok:${drawerByokId}` : (effectiveDrawerModel ?? "")}
                             onChange={(e) => handleDrawerModelSelectChange(e.target.value)}
                           >
-                            {cloudEnabled && <option value="doculigent">Doculigent (cloud)</option>}
+                            {cloudEnabled && <option value="doculigent">Doculigent Cloud</option>}
                             {downloadedModels.map((m) => (
                               <option key={m.size} value={m.size}>
                                 {m.label}

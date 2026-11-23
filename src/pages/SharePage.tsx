@@ -41,7 +41,33 @@ export function SharePage() {
   );
 }
 
-function DoculigentTeamShare({ video, autoShare }: { video?: { filePath: string; title: string }; autoShare?: boolean }) {
+/** Standalone page → its own panel with an "h1"; embedded (inside Library > Shared) → just a block. */
+function ShareShell({ embedded, children }: { embedded?: boolean; children: React.ReactNode }) {
+  if (embedded) {
+    return (
+      <div className="share-embedded">
+        <h2>Share recording</h2>
+        {children}
+      </div>
+    );
+  }
+  return (
+    <section className="panel share">
+      <h1>Share</h1>
+      {children}
+    </section>
+  );
+}
+
+export function DoculigentTeamShare({
+  video,
+  autoShare,
+  embedded,
+}: {
+  video?: { filePath: string; title: string };
+  autoShare?: boolean;
+  embedded?: boolean;
+}) {
   const session = useAuthStore((s) => s.session);
   const { data: teams = [], isLoading: teamsLoading } = useTeams(!!session);
   const [teamId, setTeamId] = useState<string>("");
@@ -91,18 +117,19 @@ function DoculigentTeamShare({ video, autoShare }: { video?: { filePath: string;
 
   if (!session) {
     return (
-      <section className="panel share">
-        <h1>Share</h1>
-        <p className="notice">
-          Sign in with doculigent.com to share recordings with a team — <Link to="/account">go to Account</Link>.
-        </p>
-      </section>
+      <ShareShell embedded={embedded}>
+        <div className="shared-signin">
+          <p className="muted">Sign in with doculigent.com to share recordings with a team.</p>
+          <Link to="/account" className="shared-signin-btn">
+            Sign in
+          </Link>
+        </div>
+      </ShareShell>
     );
   }
 
   return (
-    <section className="panel share">
-      <h1>Share</h1>
+    <ShareShell embedded={embedded}>
       {!teamsLoading && teams.length === 0 && (
         <p className="notice">
           You're not on any team yet — create one in Library &gt; Team, then come back here to share this recording.
@@ -143,6 +170,6 @@ function DoculigentTeamShare({ video, autoShare }: { video?: { filePath: string;
           {result && <p className={result.ok ? "share-result" : "error"}>{result.message}</p>}
         </>
       )}
-    </section>
+    </ShareShell>
   );
 }

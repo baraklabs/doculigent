@@ -382,6 +382,7 @@ const api: DoculigentApi = {
     listFiles: (teamId) => ipcRenderer.invoke(Channels.storage.listFiles, teamId),
     uploadFile: (uploadId, teamId, filePath, displayName) =>
       ipcRenderer.invoke(Channels.storage.uploadFile, uploadId, teamId, filePath, displayName),
+    cancelUpload: (uploadId) => ipcRenderer.invoke(Channels.storage.cancelUpload, uploadId),
     onUploadProgress: (callback) => {
       const listener = (_event: unknown, progress: { uploadId: string; percent: number }) => callback(progress);
       ipcRenderer.on(Channels.storage.uploadProgress, listener);

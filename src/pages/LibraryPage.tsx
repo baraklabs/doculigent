@@ -7,11 +7,14 @@ import {
   Users,
   Link2,
   FileText,
+  MessageSquare,
+  Sparkles,
   Check,
   X,
   FolderOpen,
   FolderKanban,
   SquarePlay,
+  Play,
   FileUp,
   Plus,
   Pencil,
@@ -42,7 +45,10 @@ import { LibraryService } from "../services/library/LibraryService";
 import { SettingsService } from "../services/settings/SettingsService";
 import { TeamsSection } from "../components/TeamsSection";
 import { StorageFileBrowser } from "../components/StorageFileBrowser";
+import { Pager } from "../components/Pager";
+import { useUploadStore } from "../store/uploadStore";
 import { ShareToStoragePanel } from "../components/ShareToStoragePanel";
+import { DoculigentTeamShare } from "./SharePage";
 import { useStoragePreference } from "../hooks/useStorage";
 import { useAuthStore } from "../store/authStore";
 import { useToast } from "../hooks/useToast";
@@ -82,6 +88,33 @@ type SharedTabId = (typeof SHARED_TABS)[number]["id"];
 
 const SECTION_IDS = SECTIONS.map((s) => s.id) as readonly string[];
 
+const PAGE_SIZE = 25;
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+const SORT_KEY = "library.sortBy";
+type SortId = "newest" | "oldest" | "title-az" | "title-za" | "longest" | "shortest";
+const SORT_OPTIONS: { id: SortId; label: string }[] = [
+  { id: "newest", label: "Newest first" },
+  { id: "oldest", label: "Oldest first" },
+  { id: "title-az", label: "Title A–Z" },
+  { id: "title-za", label: "Title Z–A" },
+  { id: "longest", label: "Longest first" },
+  { id: "shortest", label: "Shortest first" },
+];
+const SORT_FNS: Record<SortId, (a: Video, b: Video) => number> = {
+  newest: (a, b) => b.createdAt.localeCompare(a.createdAt),
+  oldest: (a, b) => a.createdAt.localeCompare(b.createdAt),
+  "title-az": (a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base", numeric: true }),
+  "title-za": (a, b) => b.title.localeCompare(a.title, undefined, { sensitivity: "base", numeric: true }),
+  longest: (a, b) => b.durationSecs - a.durationSecs,
+  shortest: (a, b) => a.durationSecs - b.durationSecs,
+};
+
 const NAV_COLLAPSED_KEY = "library.navCollapsed";
 const LAST_SECTION_KEY = "library.lastSection";
 
@@ -110,8 +143,31 @@ export function LibraryPage() {
   const toast = useToast();
   const stoppedRef = useRef(false);
   const [viewingId, setViewingId] = useState<string | null>(null);
+  // Autoplay only when opened via the card's play button, not via the Transcribe icon.
+  const [autoPlayPreview, setAutoPlayPreview] = useState(false);
+  const playerRef = useRef<HTMLVideoElement & HTMLAudioElement>(null);
   const [sharedTab, setSharedTab] = useState<SharedTabId>("mine");
   const [shareVideoId, setShareVideoId] = useState<string | null>(null);
+  // Quick Recording's "instant share" lands here with ?share=<id>&autoShare=1 — open Shared with
+  // that recording's share popup and (autoShare) start the upload without another click.
+  const [autoShareNow, setAutoShareNow] = useState(false);
+  const shareParam = searchParams.get("share");
+  useEffect(() => {
+    if (!shareParam) return;
+    setSection("shared");
+    setShareVideoId(shareParam);
+    setAutoShareNow(searchParams.get("autoShare") === "1");
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("share");
+        next.delete("autoShare");
+        return next;
+      },
+      { replace: true }
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shareParam]);
   const { data: shareVideo } = useVideo(shareVideoId ?? undefined);
   const [folderError, setFolderError] = useState<{ id: string; message: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Video | null>(null);
@@ -120,9 +176,6 @@ export function LibraryPage() {
   const [projectBulkDeleteScope, setProjectBulkDeleteScope] = useState<"all" | "selected" | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [uploadingKind, setUploadingKind] = useState<"video" | "audio" | null>(null);
-  const [importProgress, setImportProgress] = useState<{ percent: number; fileIndex: number; totalFiles: number } | null>(
-    null
-  );
   const session = useAuthStore((s) => s.session);
   const cloudEnabled = !!session?.user.plan && isBilledTier(session.user.plan.tier);
 
@@ -156,8 +209,28 @@ export function LibraryPage() {
     (p) => !query.trim() || p.title.toLowerCase().includes(query.trim().toLowerCase())
   );
 
-  const sectionVideos =
-    section === "meeting" ? videos.filter((v) => v.source === "meeting") : videos.filter((v) => v.source === "record");
+  const [sortBy, setSortBy] = useState<SortId>(() => {
+    const saved = localStorage.getItem(SORT_KEY);
+    return SORT_OPTIONS.some((o) => o.id === saved) ? (saved as SortId) : "newest";
+  });
+  useEffect(() => {
+    localStorage.setItem(SORT_KEY, sortBy);
+  }, [sortBy]);
+  const [page, setPage] = useState(1);
+
+  const sectionVideos = (
+    section === "meeting" ? videos.filter((v) => v.source === "meeting") : videos.filter((v) => v.source === "record")
+  )
+    .slice()
+    .sort(SORT_FNS[sortBy]);
+  const pageCount = Math.max(1, Math.ceil(sectionVideos.length / PAGE_SIZE));
+  // Nothing in this tab at all (not just no search hits) → show the centred "get started" state.
+  const showEmpty = !isLoading && sectionVideos.length === 0 && !query.trim();
+  const showEmptyProjects = !projectsLoading && sectionProjects.length === 0 && !query.trim();
+  const currentPage = Math.min(page, pageCount);
+  const pagedVideos = sectionVideos.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  // Back to page 1 whenever the list itself changes shape.
+  useEffect(() => setPage(1), [section, query, sortBy]);
   const viewingVideo = videos.find((v) => v.id === viewingId) ?? null;
 
   // Deep link from RecordingSaveToast's "Go to Library" (?video=<id>) — scroll the
@@ -170,7 +243,13 @@ export function LibraryPage() {
   const highlightedRef = useRef(false);
   useEffect(() => {
     if (!highlightVideoId || highlightedRef.current) return;
-    if (!sectionVideos.some((v) => v.id === highlightVideoId)) return;
+    const idx = sectionVideos.findIndex((v) => v.id === highlightVideoId);
+    if (idx < 0) return;
+    const targetPage = Math.floor(idx / PAGE_SIZE) + 1;
+    if (targetPage !== currentPage) {
+      setPage(targetPage); // render that page first; this effect re-runs and then scrolls
+      return;
+    }
     highlightedRef.current = true;
     document.getElementById(`video-card-${highlightVideoId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
     const timer = setTimeout(() => {
@@ -184,7 +263,7 @@ export function LibraryPage() {
       );
     }, 2600);
     return () => clearTimeout(timer);
-  }, [highlightVideoId, sectionVideos, setSearchParams]);
+  }, [highlightVideoId, sectionVideos, currentPage, setSearchParams]);
   const canRetranscribe = !viewingVideo?.transcript || viewingVideo.transcript.engine !== "transcript-import";
 
   useEffect(() => {
@@ -200,7 +279,6 @@ export function LibraryPage() {
     setSelectedIds(new Set());
   }, [section, query]);
 
-  useEffect(() => LibraryService.onImportProgress(setImportProgress), []);
 
   const [retranscribeLanguage, setRetranscribeLanguage] = useState(DEFAULT_TRANSCRIPTION_LANGUAGE);
   const [retranscribeModel, setRetranscribeModel] = useState<WhisperModelSize | null>(null);
@@ -294,9 +372,14 @@ export function LibraryPage() {
     const filePaths = await LibraryService.pickFiles(kind);
     if (filePaths.length === 0) return;
     setUploadingKind(kind);
-    setImportProgress({ percent: 0, fileIndex: 0, totalFiles: filePaths.length });
+    // Progress + the minimise-to-tray popup live in the global upload tray (UploadTray.tsx), so an
+    // import keeps going and stays visible when you switch tabs.
+    const importId = `import-${crypto.randomUUID()}`;
+    const importName = filePaths.length === 1 ? (filePaths[0].split(/[\\/]/).pop() ?? filePaths[0]) : `${filePaths.length} files`;
+    useUploadStore.getState().start(importId, importName, "import");
     try {
       const imported = await importVideos.mutateAsync({ filePaths, kind });
+      useUploadStore.getState().finish(importId);
       toast.success(`${imported.length} file${imported.length === 1 ? "" : "s"} imported`);
       const autoTranscribeThisKind =
         autoTranscribe?.all || (kind === "video" ? autoTranscribe?.videoImport : autoTranscribe?.audioImport);
@@ -306,14 +389,15 @@ export function LibraryPage() {
         }
       }
     } catch (e) {
+      useUploadStore.getState().finish(importId, friendlyErrorMessage(e));
       toast.error(friendlyErrorMessage(e), { title: "Import failed" });
     } finally {
       setUploadingKind(null);
-      setImportProgress(null);
     }
   }
 
   async function handleTranscribeClick(v: Video) {
+    setAutoPlayPreview(false);
     setViewingId(v.id);
     if (v.transcript) return;
     if (!hasAnyModel) return;
@@ -523,13 +607,21 @@ export function LibraryPage() {
                 </div>
 
                 {shareVideoId && (
+                  // No dialog: Share from a video / meeting goes straight to uploading here (progress popup
+                  // + "Link copied" toast). Only a same-name clash asks (Replace / Keep both / Cancel).
                   <ShareToStoragePanel
+                    key={shareVideoId}
+                    headless
+                    autoShare
                     video={shareVideo ? { filePath: shareVideo.filePath, title: shareVideo.title } : undefined}
-                    onClose={() => setShareVideoId(null)}
+                    onClose={() => {
+                      setShareVideoId(null);
+                      setAutoShareNow(false);
+                    }}
                   />
                 )}
 
-                <StorageFileBrowser teamId="" showDropzone={!shareVideoId} />
+                <StorageFileBrowser teamId="" showDropzone dropzoneInHeader />
               </>
             ) : (
               <>
@@ -554,6 +646,27 @@ export function LibraryPage() {
                   ))}
                 </div>
 
+                {session && shareVideoId && (
+                  <div className="shared-share-box">
+                    <button
+                      type="button"
+                      className="icon-btn shared-share-close"
+                      title="Close"
+                      onClick={() => {
+                        setShareVideoId(null);
+                        setAutoShareNow(false);
+                      }}
+                    >
+                      <X size={16} />
+                    </button>
+                    <DoculigentTeamShare
+                      embedded
+                      autoShare={autoShareNow}
+                      video={shareVideo ? { filePath: shareVideo.filePath, title: shareVideo.title } : undefined}
+                    />
+                  </div>
+                )}
+
                 <div className="shared-empty">
                   {session ? (
                     <p className="muted">
@@ -562,9 +675,18 @@ export function LibraryPage() {
                         : "Recordings shared with you will show up here once doculigent.com sharing is live."}
                     </p>
                   ) : (
-                    <p className="muted">
-                      Sign in with doculigent.com to see shared recordings — <Link to="/account">go to Account</Link>.
-                    </p>
+                    <div className="shared-signin">
+                      <span className="shared-signin-icon">
+                        <Link2 size={20} />
+                      </span>
+                      <div className="shared-signin-text">
+                        <h2>Sign in to see shared recordings</h2>
+                        <p className="muted">Sign in with doculigent.com to see what you've shared and what's shared with you.</p>
+                      </div>
+                      <button type="button" className="shared-signin-btn" onClick={() => navigate("/account")}>
+                        Sign in
+                      </button>
+                    </div>
                   )}
                 </div>
               </>
@@ -595,43 +717,76 @@ export function LibraryPage() {
                 </button>
               </div>
 
-              <div className="library-toolbar">
-                <input
-                  type="search"
-                  placeholder="Search projects…"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
-                <button type="button" onClick={selectAll} disabled={sectionProjects.length === 0}>
-                  Select All
-                </button>
-                <button type="button" onClick={deselectAll} disabled={selectedCount === 0}>
-                  Deselect All
-                </button>
-                <span className="muted library-selection-count">
-                  {selectedCount > 0 ? `${selectedCount} selected` : ""}
-                </span>
-                <button
-                  type="button"
-                  className="danger"
-                  disabled={selectedCount === 0}
-                  onClick={() => handleBulkDelete("selected")}
-                >
-                  Delete Selected
-                </button>
-                <button
-                  type="button"
-                  className="danger library-delete-all"
-                  disabled={sectionProjects.length === 0}
-                  onClick={() => handleBulkDelete("all")}
-                >
-                  Delete All
-                </button>
-              </div>
+              {!showEmptyProjects && (
+                <div className="library-toolbar">
+                  <input
+                    type="search"
+                    placeholder="Search projects…"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                  />
+                  <button type="button" onClick={selectAll} disabled={sectionProjects.length === 0}>
+                    Select All
+                  </button>
+                  <button type="button" onClick={deselectAll} disabled={selectedCount === 0}>
+                    Deselect All
+                  </button>
+                  <span className="muted library-selection-count">
+                    {selectedCount > 0 ? `${selectedCount} selected` : ""}
+                  </span>
+                  <button
+                    type="button"
+                    className="danger"
+                    disabled={selectedCount === 0}
+                    onClick={() => handleBulkDelete("selected")}
+                  >
+                    Delete Selected
+                  </button>
+                  <button
+                    type="button"
+                    className="danger library-delete-all"
+                    disabled={sectionProjects.length === 0}
+                    onClick={() => handleBulkDelete("all")}
+                  >
+                    Delete All
+                  </button>
+                </div>
+              )}
 
               {projectsLoading && <p className="muted">Loading…</p>}
-              {!projectsLoading && sectionProjects.length === 0 && (
-                <p className="muted">No projects yet — head to the Edit tab to start one.</p>
+              {!projectsLoading && sectionProjects.length === 0 && query.trim() && (
+                <p className="muted">No projects match your search.</p>
+              )}
+
+              {showEmptyProjects && (
+                <div className="library-empty">
+                  <span className="library-empty-icon" aria-hidden="true">
+                    <FolderKanban size={28} />
+                  </span>
+                  <h2>No projects yet</h2>
+                  <p className="muted">
+                    Start a project from your recordings and meetings, or record in Advanced mode.
+                  </p>
+                  <ul className="library-empty-perks">
+                    <li>
+                      <Clapperboard size={14} /> Edit on a timeline
+                    </li>
+                    <li>
+                      <Sparkles size={14} /> Add effects
+                    </li>
+                    <li>
+                      <FolderKanban size={14} /> Saved locally
+                    </li>
+                  </ul>
+                  <div className="library-empty-actions">
+                    <button type="button" className="primary" onClick={openCreateProject}>
+                      <Plus size={15} /> New Project
+                    </button>
+                    <button type="button" onClick={() => navigate("/record?mode=advanced")}>
+                      <Clapperboard size={15} /> Record in Advanced mode
+                    </button>
+                  </div>
+                </div>
               )}
 
               <div className="library-grid">
@@ -726,55 +881,105 @@ export function LibraryPage() {
                 )}
               </div>
 
-              <div className="library-toolbar">
-                <input
-                  type="search"
-                  placeholder="Search titles & transcripts…"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
-                {canBulkDelete && (
-                  <>
-                    <button type="button" onClick={selectAll} disabled={sectionVideos.length === 0}>
-                      Select All
-                    </button>
-                    <button type="button" onClick={deselectAll} disabled={selectedCount === 0}>
-                      Deselect All
-                    </button>
-                    <span className="muted library-selection-count">
-                      {selectedCount > 0 ? `${selectedCount} selected` : ""}
-                    </span>
-                    <button
-                      type="button"
-                      className="danger"
-                      disabled={selectedCount === 0}
-                      onClick={() => handleBulkDelete("selected")}
-                    >
-                      Delete Selected
-                    </button>
-                    <button
-                      type="button"
-                      className="danger library-delete-all"
-                      disabled={sectionVideos.length === 0}
-                      onClick={() => handleBulkDelete("all")}
-                    >
-                      Delete All
-                    </button>
-                  </>
-                )}
-              </div>
+              {!showEmpty && (
+                <div className="library-toolbar">
+                  <input
+                    type="search"
+                    placeholder="Search titles & transcripts…"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                  />
+                  <label className="library-sort">
+                    <span className="muted">Sort by</span>
+                    <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortId)}>
+                      {SORT_OPTIONS.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {canBulkDelete && (
+                    <>
+                      <button type="button" onClick={selectAll} disabled={sectionVideos.length === 0}>
+                        Select All
+                      </button>
+                      <button type="button" onClick={deselectAll} disabled={selectedCount === 0}>
+                        Deselect All
+                      </button>
+                      <span className="muted library-selection-count">
+                        {selectedCount > 0 ? `${selectedCount} selected` : ""}
+                      </span>
+                      <button
+                        type="button"
+                        className="danger"
+                        disabled={selectedCount === 0}
+                        onClick={() => handleBulkDelete("selected")}
+                      >
+                        Delete Selected
+                      </button>
+                      <button
+                        type="button"
+                        className="danger library-delete-all"
+                        disabled={sectionVideos.length === 0}
+                        onClick={() => handleBulkDelete("all")}
+                      >
+                        Delete All
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
 
               {isLoading && <p className="muted">Loading…</p>}
-              {!isLoading && sectionVideos.length === 0 && (
-                <p className="muted">
-                  {section === "meeting"
-                    ? "No meetings recorded yet — head to the Meeting tab."
-                    : "No recordings yet — head to the Record tab."}
-                </p>
+              {!isLoading && sectionVideos.length === 0 && query.trim() && (
+                <p className="muted">No {section === "meeting" ? "meetings" : "recordings"} match your search.</p>
+              )}
+
+              {showEmpty && (
+                <div className="library-empty">
+                  <span className="library-empty-icon" aria-hidden="true">
+                    {section === "meeting" ? <Mic size={28} /> : <Clapperboard size={28} />}
+                  </span>
+                  <h2>{section === "meeting" ? "No meetings yet" : "No recordings yet"}</h2>
+                  <p className="muted">
+                    {section === "meeting"
+                      ? "Record a meeting or import audio, and Doculigent turns it into something you can work with."
+                      : "Record your screen or import a video, and Doculigent turns it into something you can work with."}
+                  </p>
+                  <ul className="library-empty-perks">
+                    <li>
+                      <MessageSquare size={14} /> Chat with your {section === "meeting" ? "meeting" : "video"}
+                    </li>
+                    <li>
+                      <Sparkles size={14} /> Summarize it
+                    </li>
+                    <li>
+                      <FileText size={14} /> Generate notes
+                    </li>
+                  </ul>
+                  <div className="library-empty-actions">
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={() => navigate(section === "meeting" ? "/meeting" : "/record")}
+                    >
+                      {section === "meeting" ? <Mic size={15} /> : <Clapperboard size={15} />}
+                      {section === "meeting" ? "Record a meeting" : "Record"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={uploadingKind !== null}
+                      onClick={() => handleImport(section === "meeting" ? "audio" : "video")}
+                    >
+                      {section === "meeting" ? "Import Meeting / Audio" : "Import Video"}
+                    </button>
+                  </div>
+                </div>
               )}
 
               <div className="library-grid">
-                {sectionVideos.map((v) => (
+                {pagedVideos.map((v) => (
                   <div
                     key={v.id}
                     id={`video-card-${v.id}`}
@@ -810,6 +1015,18 @@ export function LibraryPage() {
                         />
                       )}
                       {v.transcript && <span className="thumb-badge">Transcribed</span>}
+                      <button
+                        type="button"
+                        className="thumb-play"
+                        title={v.source === "meeting" ? "Listen & transcribe" : "Play & transcribe"}
+                        aria-label={v.source === "meeting" ? "Listen & transcribe" : "Play & transcribe"}
+                        onClick={() => {
+                          setAutoPlayPreview(true);
+                          setViewingId(v.id);
+                        }}
+                      >
+                        <Play size={22} fill="currentColor" />
+                      </button>
                     </div>
 
                     <div className="meta">
@@ -825,7 +1042,9 @@ export function LibraryPage() {
                         <h3>{v.title}</h3>
                       )}
                       <p className="muted sub">
-                        {formatDuration(v.durationSecs)} · {new Date(v.createdAt).toLocaleDateString()}
+                        {formatDuration(v.durationSecs)}
+                        {v.sizeBytes !== undefined && ` · ${formatBytes(v.sizeBytes)}`} ·{" "}
+                        {new Date(v.createdAt).toLocaleDateString()}
                       </p>
                     </div>
 
@@ -881,12 +1100,11 @@ export function LibraryPage() {
                             title="Share"
                             className="icon-btn icon-btn-share"
                             onClick={() => {
-                              if (storagePreference?.provider === "s3" || storagePreference?.provider === "google_drive") {
-                                setSection("shared");
-                                setShareVideoId(v.id);
-                              } else {
-                                navigate(`/library/${v.id}/share`);
-                              }
+                              // Share happens inside Library > Shared (keeps the nav), for every storage type.
+                              // Sharing happens on Library > Shared (popup opens there), not on this page.
+                              setSection("shared");
+                              setAutoShareNow(false);
+                              setShareVideoId(v.id);
                             }}
                           >
                             <Link2 size={20} />
@@ -919,6 +1137,8 @@ export function LibraryPage() {
                   </div>
                 ))}
               </div>
+
+              <Pager total={sectionVideos.length} page={currentPage} pageCount={pageCount} onPage={setPage} />
             </>
           )}
         </section>
@@ -1118,27 +1338,6 @@ export function LibraryPage() {
         </div>
       )}
 
-      {/* No onClick-to-dismiss on the backdrop (unlike the modals above) — closing it
-          wouldn't stop the import running in the main process, so letting it be dismissed
-          would just make the page lie about whether anything's still happening. */}
-      {importProgress && (
-        <div className="modal-backdrop">
-          <div className="modal import-progress-modal">
-            <h2>Importing…</h2>
-            {importProgress.totalFiles > 1 && (
-              <p className="muted">
-                File {Math.min(importProgress.fileIndex + 1, importProgress.totalFiles)} of{" "}
-                {importProgress.totalFiles}
-              </p>
-            )}
-            <div className="progress-bar-track">
-              <div className="progress-bar-fill" style={{ width: `${importProgress.percent}%` }} />
-            </div>
-            <p className="muted progress-bar-label">{importProgress.percent}%</p>
-          </div>
-        </div>
-      )}
-
       {viewingVideo && (
         <div className="transcript-drawer-backdrop" onClick={() => setViewingId(null)}>
           <aside className="transcript-drawer" onClick={(e) => e.stopPropagation()}>
@@ -1148,6 +1347,28 @@ export function LibraryPage() {
                 <X size={20} />
               </button>
             </div>
+
+            {/* Preview on top (video) / listen (meeting audio); transcribe options sit below it. */}
+            {viewingVideo.source === "meeting" ? (
+              <audio
+                key={viewingVideo.id}
+                ref={playerRef}
+                className="drawer-player drawer-player-audio"
+                src={mediaUrl(viewingVideo.filePath)}
+                controls
+                autoPlay={autoPlayPreview}
+              />
+            ) : (
+              <video
+                key={viewingVideo.id}
+                ref={playerRef}
+                className="drawer-player"
+                src={mediaUrl(viewingVideo.filePath)}
+                controls
+                autoPlay={autoPlayPreview}
+                playsInline
+              />
+            )}
 
             {canRetranscribe && (
               <>
@@ -1173,7 +1394,7 @@ export function LibraryPage() {
                           value={usingCloud ? "doculigent" : usingByok ? `byok:${retranscribeByokId}` : (effectiveRetranscribeModel ?? "")}
                           onChange={(e) => handleRetranscribeModelSelectChange(e.target.value)}
                         >
-                          {cloudEnabled && <option value="doculigent">Doculigent (cloud)</option>}
+                          {cloudEnabled && <option value="doculigent">Doculigent Cloud</option>}
                           {downloadedModels.map((m) => (
                             <option key={m.size} value={m.size}>
                               {m.label}
@@ -1248,7 +1469,19 @@ export function LibraryPage() {
                 <div className="segments">
                   {editingSegments.map((seg, i) => (
                     <div key={i} className="segment">
-                      <span className="ts">{formatDuration(seg.start)}</span>
+                      <button
+                        type="button"
+                        className="ts ts-seek"
+                        title="Jump to this moment"
+                        onClick={() => {
+                          const el = playerRef.current;
+                          if (!el) return;
+                          el.currentTime = seg.start;
+                          void el.play();
+                        }}
+                      >
+                        {formatDuration(seg.start)}
+                      </button>
                       <span className="spk">{seg.speaker}</span>
                       <textarea
                         className="txt segment-edit"

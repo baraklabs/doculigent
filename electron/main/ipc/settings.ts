@@ -43,7 +43,8 @@ import {
 } from "../native/settingsStore";
 import { setLlmApiKey, deleteLlmApiKey } from "../native/keyring";
 import { preloadWhisperModel } from "../transcription/whisper";
-import { deleteWhisperModelCache, getWhisperModelStatuses, whisperCacheDir } from "../transcription/modelCache";
+import { releaseTranscriptionWorker } from "../transcription/whisperWorkerClient";
+import { deleteWhisperModelCache,getWhisperModelStatuses, whisperCacheDir } from "../transcription/modelCache";
 
 export function registerSettingsIpc(): void {
   ipcMain.handle(Channels.settings.getRecordingsDir, async (): Promise<string> => getRecordingsDir());
@@ -202,7 +203,8 @@ export function registerSettingsIpc(): void {
   });
 
   ipcMain.handle(Channels.settings.deleteWhisperModel, async (_event, size: WhisperModelSize): Promise<void> => {
-    deleteWhisperModelCache(size);
+    await releaseTranscriptionWorker();
+    await deleteWhisperModelCache(size);
     if (getWhisperModel() === size) setWhisperModel(null);
   });
 

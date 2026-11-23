@@ -408,6 +408,7 @@ export interface DoculigentApi {
     deleteTeam(teamId: string): Promise<void>;
     listFiles(teamId: string): Promise<StorageFile[]>;
     uploadFile(uploadId: string, teamId: string, filePath: string, displayName?: string): Promise<StorageFile>;
+    cancelUpload(uploadId: string): Promise<void>;
     onUploadProgress(callback: (progress: { uploadId: string; percent: number }) => void): () => void;
     downloadToLibrary(fileId: string): Promise<Video>;
     deleteFile(fileId: string): Promise<void>;

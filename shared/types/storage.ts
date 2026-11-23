@@ -15,7 +15,8 @@ export interface StorageTeam {
 
 export interface ShareLink {
   url: string;
-  expiresAt: string;
+  /** ISO timestamp, or null when the link never expires (Google Drive "anyone with the link"). */
+  expiresAt: string | null;
 }
 
 export interface S3Config {

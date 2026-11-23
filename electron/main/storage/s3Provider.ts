@@ -122,7 +122,8 @@ export async function createS3Provider(config: S3Config, teamId?: string): Promi
     async uploadFile(
       filePath: string,
       displayName: string,
-      onProgress?: (percent: number) => void
+      onProgress?: (percent: number) => void,
+      signal?: AbortSignal
     ): Promise<StorageFile> {
       const mimeType = guessMimeType(displayName);
       const { size } = await fs.promises.stat(filePath);
@@ -142,7 +143,15 @@ export async function createS3Provider(config: S3Config, teamId?: string): Promi
           if (progress.loaded && size) onProgress(Math.min(99, Math.round((progress.loaded / size) * 100)));
         });
       }
-      await upload.done();
+      if (signal?.aborted) throw new Error("Upload cancelled");
+      // Aborting also cleans up the multipart upload on S3, so no orphaned parts are left billing.
+      signal?.addEventListener("abort", () => void upload.abort(), { once: true });
+      try {
+        await upload.done();
+      } catch (err) {
+        if (signal?.aborted) throw new Error("Upload cancelled");
+        throw err;
+      }
       onProgress?.(100);
 
       return { id: key, name: displayName, sizeBytes: size, mimeType, createdAt: new Date().toISOString() };

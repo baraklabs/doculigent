@@ -1,3 +1,8 @@
 .share-panel { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; background: var(--bg); }
 .share-panel-head { display: flex; align-items: center; justify-content: space-between; font-weight: 600; }
 .share-panel-head .icon-btn { padding: 2px; }
+
+/* Inside the popup the panel drops its own box (the modal already has one). */
+.share-modal { width: min(460px, 92vw); }
+.share-panel.in-modal { border: none; padding: 0; margin: 0; background: transparent; }
+.share-panel.in-modal .share-panel-head { font-size: 15px; margin-bottom: 6px; }

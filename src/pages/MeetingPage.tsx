@@ -192,8 +192,15 @@ export function MeetingPage() {
   useEffect(() => {
     if (!modelChecked || profilesLoading || recording) return;
     if (usingCloud || usingByok || whisperModel !== null) return;
-    if (byokProfiles.length === 0) return;
     if (autoPickedRef.current) return; // at most once per visit to the tab
+    if (byokProfiles.length === 0) {
+      // No model added at all, but signed in on a paid plan → default to the Doculigent cloud model.
+      if (cloudEnabled && downloadedModels.length === 0) {
+        autoPickedRef.current = true;
+        handleModelSelectChange("doculigent").catch(() => {});
+      }
+      return;
+    }
     autoPickedRef.current = true;
     const id = byokProfiles[0].id;
     handleModelSelectChange(`byok:${id}`)
@@ -204,7 +211,7 @@ export function MeetingPage() {
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelChecked, profilesLoading, usingCloud, usingByok, whisperModel, byokProfiles.length, recording]);
+  }, [modelChecked, profilesLoading, usingCloud, usingByok, whisperModel, byokProfiles.length, recording, cloudEnabled, downloadedModels.length]);
 
   async function handleModelSelectChange(value: string) {
     if (value === "doculigent") {
@@ -569,7 +576,7 @@ export function MeetingPage() {
   // button instead of only inside the modal — so you can see at a glance whether e.g. a
   // transcription model is actually configured without having to open anything.
   const modelSummary = usingCloud
-    ? "Doculigent Model"
+    ? "Doculigent Cloud"
     : usingByok
       ? byokProfiles.find((p) => p.id === byokProfileId)?.name || "BYOK"
       : whisperModel
@@ -598,17 +605,13 @@ export function MeetingPage() {
               justify-content: flex-end + overflow-y: auto combination that was flickering
               the scrollbar and making the content unreliably scrollable. */}
           <div className="meeting-transcript-content">
-            {!modelReady && modelChecked && !profilesLoading && messages.length === 0 && (
+            {!modelReady && !usingCloud && modelChecked && !profilesLoading && messages.length === 0 && (
               <div className="meeting-model-setup">
                 <span className="meeting-model-setup-icon" aria-hidden="true">
                   <Captions size={26} />
                 </span>
                 <h3>Set up a model to see live transcript</h3>
-                <p className="muted">
-                  {usingCloud
-                    ? "The Doculigent Model isn't available yet. Pick a local or your own model to get a live transcript while you record."
-                    : "Choose a transcription model and your words will appear here in real time as you speak."}
-                </p>
+                <p className="muted">Choose a transcription model and your words will appear here in real time as you speak.</p>
                 {!recording && (
                   <button
                     type="button"
@@ -620,14 +623,12 @@ export function MeetingPage() {
                 )}
               </div>
             )}
-            {!modelReady && recording && (
+            {!modelReady && !usingCloud && recording && (
               <p className="muted">
-                {usingCloud
-                  ? "The Doculigent Model isn't available yet — only audio is being recorded for now."
-                  : "Only audio is being recorded — live transcription will be available once you set up a transcription model in Settings."}
+                Only audio is being recorded — live transcription will be available once you set up a transcription model in Settings.
               </p>
             )}
-            {messages.length === 0 && recording && modelReady && <p className="muted meeting-listening">Listening…</p>}
+            {messages.length === 0 && recording && (modelReady || usingCloud) && <p className="muted meeting-listening">Listening…</p>}
             {messages.map((seg, i) => (
               <div key={i} className="meeting-bubble" style={{ borderLeftColor: colorForSpeaker(seg.speaker) }}>
                 <span className="meeting-bubble-time">{formatTimeWindow(seg.start, seg.end)}</span>
@@ -883,7 +884,7 @@ export function MeetingPage() {
                       onChange={(e) => handleModelSelectChange(e.target.value)}
                       disabled={recording || busy}
                     >
-                      {cloudEnabled && <option value="doculigent">Doculigent (cloud)</option>}
+                      {cloudEnabled && <option value="doculigent">Doculigent Cloud</option>}
                       {downloadedModels.map((m) => (
                         <option key={m.size} value={m.size}>
                           {m.label}

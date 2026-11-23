@@ -20,7 +20,14 @@ function broadcastUploadProgress(uploadId: string, percent: number): void {
   }
 }
 
+/** In-flight uploads, so the renderer can cancel one by its uploadId. */
+const uploadControllers = new Map<string, AbortController>();
+
 export function registerStorageIpc(): void {
+  ipcMain.handle(Channels.storage.cancelUpload, async (_event, uploadId: string): Promise<void> => {
+    uploadControllers.get(uploadId)?.abort();
+  });
+
   ipcMain.handle(Channels.storage.getPreference, async (): Promise<StoragePreference> => getStoragePreference());
 
   ipcMain.handle(
@@ -119,9 +126,18 @@ export function registerStorageIpc(): void {
     Channels.storage.uploadFile,
     async (_event, uploadId: string, teamId: string, filePath: string, displayName?: string): Promise<StorageFile> => {
       const provider = await getActiveProvider(teamId);
-      return provider.uploadFile(filePath, displayName ?? path.basename(filePath), (percent) =>
-        broadcastUploadProgress(uploadId, percent)
-      );
+      const controller = new AbortController();
+      uploadControllers.set(uploadId, controller);
+      try {
+        return await provider.uploadFile(
+          filePath,
+          displayName ?? path.basename(filePath),
+          (percent) => broadcastUploadProgress(uploadId, percent),
+          controller.signal
+        );
+      } finally {
+        uploadControllers.delete(uploadId);
+      }
     }
   );
 

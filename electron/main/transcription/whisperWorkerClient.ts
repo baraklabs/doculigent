@@ -95,6 +95,19 @@ export async function transcribePcmInWorker(
   return transcript as Transcript;
 }
 
+/** Stops the worker and waits for it to exit, releasing every file handle it holds — the
+ *  loaded ONNX session keeps the model's weights file open, and Windows refuses to delete
+ *  an open file (EPERM), so Settings' "Delete" calls this first. The worker is re-forked
+ *  lazily on the next transcription/download. */
+export function releaseTranscriptionWorker(): Promise<void> {
+  const proc = child;
+  if (!proc) return Promise.resolve();
+  return new Promise((resolve) => {
+    proc.once("exit", () => resolve());
+    proc.kill();
+  });
+}
+
 /** Called on app quit (see electron/main/index.ts's before-quit) — an orphaned utility
  *  process holding a loaded ONNX model in memory has no reason to outlive the app. */
 export function terminateTranscriptionWorker(): void {

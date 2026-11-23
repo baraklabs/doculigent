@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { StoragePreference } from "@shared/types/storage";
 import { StorageService } from "../services/storage/StorageService";
+import { registerUploadCancel, useUploadStore } from "../store/uploadStore";
+import { isUploadCancelled } from "../lib/uploadCancel";
 
 export function useStoragePreference() {
   return useQuery({
@@ -70,30 +72,70 @@ export function useUploadStorageFile(teamId = "") {
   const queryClient = useQueryClient();
   const [uploadPercent, setUploadPercent] = useState<number | null>(null);
   const activeUploadId = useRef<string | null>(null);
+  // Set for a file that's part of a batch: the batch owns the popup/tray card, so this file
+  // doesn't get its own, and reports its progress through onProgress instead.
+  const silentRef = useRef(false);
+  const onProgressRef = useRef<((percent: number) => void) | undefined>(undefined);
 
   useEffect(
     () =>
       StorageService.onUploadProgress(({ uploadId, percent }) => {
-        if (uploadId === activeUploadId.current) setUploadPercent(percent);
+        if (uploadId !== activeUploadId.current) return;
+        setUploadPercent(percent);
+        onProgressRef.current?.(percent);
       }),
     []
   );
 
   const mutation = useMutation({
-    mutationFn: ({ filePath, displayName }: { filePath: string; displayName?: string }) => {
+    mutationFn: ({
+      filePath,
+      displayName,
+      silent,
+      onProgress,
+    }: {
+      filePath: string;
+      displayName?: string;
+      /** Part of a batch — skip this file's own popup/tray card (the batch has one). */
+      silent?: boolean;
+      onProgress?: (percent: number) => void;
+    }) => {
       const uploadId = crypto.randomUUID();
       activeUploadId.current = uploadId;
+      silentRef.current = !!silent;
+      onProgressRef.current = onProgress;
       setUploadPercent(0);
+      // Tracked app-wide so the popup / bottom-right tray survive switching tabs.
+      if (!silent) {
+        useUploadStore.getState().start(uploadId, displayName ?? filePath.split(/[\\/]/).pop() ?? filePath);
+        registerUploadCancel(uploadId, () => void StorageService.cancelUpload(uploadId));
+      }
       return StorageService.uploadFile(uploadId, teamId, filePath, displayName);
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["storageFiles", teamId] }),
+    onSuccess: () => {
+      if (activeUploadId.current && !silentRef.current) useUploadStore.getState().finish(activeUploadId.current);
+      return queryClient.invalidateQueries({ queryKey: ["storageFiles", teamId] });
+    },
+    onError: (err) => {
+      if (activeUploadId.current && !silentRef.current && isUploadCancelled(err)) {
+        useUploadStore.getState().dismiss(activeUploadId.current); // a cancel isn't a failure
+      } else if (activeUploadId.current && !silentRef.current) {
+        useUploadStore.getState().finish(activeUploadId.current, err instanceof Error ? err.message : String(err));
+      }
+    },
     onSettled: () => {
       activeUploadId.current = null;
+      onProgressRef.current = undefined;
       setUploadPercent(null);
     },
   });
 
-  return { ...mutation, uploadPercent };
+  /** Cancels whichever upload this hook is running right now (used by batch uploads). */
+  function cancelActive() {
+    if (activeUploadId.current) void StorageService.cancelUpload(activeUploadId.current);
+  }
+
+  return { ...mutation, uploadPercent, cancelActive };
 }
 
 export function useDownloadStorageFileToLibrary() {

@@ -68,7 +68,8 @@ export function RecordingSaveToast() {
     if (storageNotSetUp) {
       showStorageSetupToast(toast, navigate);
     } else {
-      navigate(`/library/${result.video.id}/share?autoShare=1`);
+      // Part of Library > Shared (keeps the nav): opens there and starts the upload straight away.
+      navigate(`/library?section=shared&share=${result.video.id}&autoShare=1`);
     }
   }, [status, id, result, storageNotSetUp, toast, navigate]);
 
