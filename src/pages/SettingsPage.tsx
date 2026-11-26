@@ -10,6 +10,7 @@ import type {
 import type { WhisperModelSize, WhisperModelStatus } from "@shared/constants/whisperModels";
 import { WHISPER_MODELS } from "@shared/constants/whisperModels";
 import { isBilledTier } from "@shared/constants/plans";
+import { defaultLlmConfig, PROVIDER_SUGGESTIONS } from "@shared/constants/llmDefaults";
 import { AI_PROVIDERS, LOCAL_LLM_PROVIDERS } from "../providers/ai";
 import { CACHE_KEYS, peekCache } from "../lib/settingsCache";
 import { SettingsService } from "../services/settings/SettingsService";
@@ -17,6 +18,8 @@ import { useAuthStore } from "../store/authStore";
 import { useDeleteLlmProfile, useLlmProfiles, useSaveLlmProfile, useTestLlmConnection } from "../hooks/useLlmProfiles";
 import { useAutoTranscribeSettings, useSetAutoTranscribeSettings } from "../hooks/useAutoTranscribeSettings";
 import { StorageSection } from "./settings/StorageSection";
+import { ProviderIcon } from "../components/ProviderIcon";
+import logo from "../assets/logo.png";
 import { COLOR_MODES, THEMES, useThemeStore, type ColorMode } from "../theme/theme";
 import "./SettingsPage.css";
 
@@ -32,15 +35,28 @@ interface ModelFormProps {
 }
 
 function ModelForm({ initial, isNew, onCancel, onSaved }: ModelFormProps) {
-  const [profile, setProfile] = useState<LlmModelProfile>(initial);
+  const [profile, setProfile] = useState<LlmModelProfile>(() => ({
+    ...initial,
+    capabilities: initial.capabilities?.length ? initial.capabilities : ["chat"],
+  }));
   const [apiKey, setApiKey] = useState("");
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const saveProfile = useSaveLlmProfile();
   const testConnection = useTestLlmConnection();
 
+  const suggestions = PROVIDER_SUGGESTIONS[profile.kind];
+  const unsupportedChecked = suggestions
+    ? [
+        profile.capabilities.includes("chat") && !suggestions.chat ? "AI summary" : null,
+        profile.capabilities.includes("transcribe") && !suggestions.transcribe ? "transcription" : null,
+      ].filter((x): x is string => !!x)
+    : [];
+
   async function pickKind(kind: LlmProviderKind) {
-    const template = await SettingsService.defaultProfileTemplate(kind);
-    setProfile({ ...template, id: profile.id, name: providerLabel(kind) });
+    // Fill from the shared defaults first, so the form is always complete even if the main
+    // process (which doesn't hot-reload in dev) is still running an older provider list.
+    const template = await SettingsService.defaultProfileTemplate(kind).catch(() => null);
+    setProfile({ ...defaultLlmConfig(kind), ...template, kind, id: profile.id, name: providerLabel(kind) });
     setTestResult(null);
   }
 
@@ -69,24 +85,27 @@ function ModelForm({ initial, isNew, onCancel, onSaved }: ModelFormProps) {
       {isNew ? (
         <label className="field">
           <span>Provider</span>
-          <select value={profile.kind} onChange={(e) => pickKind(e.target.value as LlmProviderKind)}>
-            {AI_PROVIDERS.map((p) => (
-              <option key={p.kind} value={p.kind}>
-                {p.label}
-              </option>
-            ))}
-          </select>
+          <span className="provider-label">
+            <ProviderIcon kind={profile.kind} size={22} />
+            <select value={profile.kind} onChange={(e) => pickKind(e.target.value as LlmProviderKind)}>
+              {AI_PROVIDERS.map((p) => (
+                <option key={p.kind} value={p.kind}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </span>
         </label>
       ) : (
-        <p className="muted">{providerLabel(profile.kind)}</p>
+        <p className="muted provider-label">
+          <ProviderIcon kind={profile.kind} size={22} />
+          {providerLabel(profile.kind)}
+        </p>
       )}
 
       <label className="field">
         <span>Title</span>
         <input value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} />
-        <small className="field-hint">
-          A name you'll recognize — handy since different providers can use the same model identifier.
-        </small>
       </label>
 
       <label className="field">
@@ -103,11 +122,56 @@ function ModelForm({ initial, isNew, onCancel, onSaved }: ModelFormProps) {
         />
       </label>
 
+      {suggestions && (
+        <div className="model-suggest">
+          {suggestions.both && (
+            <button
+              type="button"
+              title={`AI summary + Transcription: ${suggestions.both}`}
+              className={
+                profile.model === suggestions.both && profile.capabilities.length === 2
+                  ? "model-pill active"
+                  : "model-pill"
+              }
+              onClick={() => setProfile({ ...profile, model: suggestions.both!, capabilities: ["chat", "transcribe"] })}
+            >
+              {suggestions.both}
+              <span className="model-pill-tag">Text + STT</span>
+            </button>
+          )}
+          {(
+            [
+              { cap: "chat", tag: "Text", label: "AI summary", model: suggestions.chat },
+              { cap: "transcribe", tag: "STT", label: "Transcription", model: suggestions.transcribe },
+            ] as const
+          ).map(({ cap, tag, label, model }) =>
+            model ? (
+              <button
+                key={cap}
+                type="button"
+                title={`${label}: ${model}`}
+                className={
+                  profile.model === model && profile.capabilities.length === 1 && profile.capabilities[0] === cap
+                    ? "model-pill active"
+                    : "model-pill"
+                }
+                onClick={() => setProfile({ ...profile, model, capabilities: [cap] })}
+              >
+                {model}
+                <span className="model-pill-tag">{tag}</span>
+              </button>
+            ) : (
+              <span key={cap} className="model-pill unsupported" title="Not supported">
+                <span className="model-pill-tag">{tag}</span>
+              </span>
+            )
+          )}
+        </div>
+      )}
+
       {profile.needsKey && (
         <label className="field">
-          <span>
-            API key <span className="field-hint-inline">— stored in your OS keychain</span>
-          </span>
+          <span>API key</span>
           <input
             type="password"
             value={apiKey}
@@ -126,7 +190,7 @@ function ModelForm({ initial, isNew, onCancel, onSaved }: ModelFormProps) {
               checked={profile.capabilities.includes("chat")}
               onChange={() => toggleCapability("chat")}
             />
-            AI summary
+            AI summary (Text)
           </label>
           <label>
             <input
@@ -134,13 +198,15 @@ function ModelForm({ initial, isNew, onCancel, onSaved }: ModelFormProps) {
               checked={profile.capabilities.includes("transcribe")}
               onChange={() => toggleCapability("transcribe")}
             />
-            Transcription
+            Transcription (STT)
           </label>
         </div>
-        <small className="field-hint">
-          What this model is used for — AI summary powers chat/summaries/AI Assistant, Transcription powers the
-          Meeting tab and Library. Check both for Multimodel if the endpoint supports it.
-        </small>
+        {unsupportedChecked.length > 0 && (
+          <small className="field-error">
+            {providerLabel(profile.kind)} has no {unsupportedChecked.join(" or ")} endpoint — pick a different
+            provider for that.
+          </small>
+        )}
       </div>
 
       <div className="actions">
@@ -454,6 +520,17 @@ export function SettingsPage() {
   const { data: autoTranscribe } = useAutoTranscribeSettings();
   const setAutoTranscribe = useSetAutoTranscribeSettings();
 
+  const [shareUsage, setShareUsage] = useState<boolean | null>(null);
+  useEffect(() => {
+    SettingsService.getTelemetryState()
+      .then((s) => setShareUsage(s.enabled))
+      .catch(() => setShareUsage(true));
+  }, []);
+  function toggleShareUsage(on: boolean) {
+    setShareUsage(on);
+    SettingsService.setTelemetryEnabled(on).catch(() => setShareUsage(!on));
+  }
+
   function toggleAutoTranscribeAll(on: boolean) {
     const next: AutoTranscribeSettings = {
       all: on,
@@ -540,6 +617,18 @@ export function SettingsPage() {
               />
             </div>
           </div>
+
+          <div className="field">
+            <span>Privacy</span>
+            <div className="pref-toggle-list">
+              <PrefToggle
+                label="Share anonymous usage data"
+                hint="No recordings, documents or personal details are shared."
+                checked={!!shareUsage}
+                onChange={toggleShareUsage}
+              />
+            </div>
+          </div>
         </section>
       ) : (
       <section className="panel settings-content">
@@ -591,6 +680,7 @@ export function SettingsPage() {
                   <div key={p.id} className="model-row">
                     <div className="model-row-info">
                       <h3>
+                        <ProviderIcon kind={p.kind} />
                         {p.name}
                         <span className={`badge locality-badge ${local ? "local" : "cloud"}`}>{local ? "Local" : "Cloud"}</span>
                         <span className={`badge cap-badge ${capabilityBadgeClass(p.capabilities)}`}>
@@ -622,6 +712,7 @@ export function SettingsPage() {
                 <div key={m.size} className="model-row">
                   <div className="model-row-info">
                     <h3>
+                      <ProviderIcon kind="openAi" />
                       {m.label}
                       <span className="badge locality-badge local">Local</span>
                       <span className="badge cap-badge cap-transcribe">Transcription</span>
@@ -647,6 +738,7 @@ export function SettingsPage() {
                   <div key="doculigent" className="model-row doculigent-row">
                     <div className="model-row-info">
                       <h3>
+                        <img className="provider-icon" src={logo} width={18} height={18} alt="" />
                         Doculigent Cloud
                         <span className="badge locality-badge cloud">Cloud</span>
                         <span className="badge cap-badge cap-both">Multimodel</span>

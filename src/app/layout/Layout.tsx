@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { SettingsService } from "../../services/settings/SettingsService";
+import { useToast } from "../../hooks/useToast";
 import logo from "../../assets/logo.png";
 import { planLabel } from "@shared/constants/plans";
 import { useAuthStore } from "../../store/authStore";
@@ -95,6 +97,7 @@ const SOCIAL_LINKS: { label: string; href: string; path: string; badge?: string 
 
 // Module-level so it fires once per launch, not every time the layout remounts.
 let signInPulseShown = false;
+let telemetryNoticeShown = false;
 
 function isNewerVersion(latest: string, current: string) {
   const toParts = (v: string) => v.split(".").map((n) => parseInt(n, 10) || 0);
@@ -127,6 +130,8 @@ export function Layout() {
     return () => clearTimeout(t);
   }, [authReady, session]);
   const location = useLocation();
+  const navigate = useNavigate();
+  const toast = useToast();
 
   useEffect(() => {
     initAuth();
@@ -150,15 +155,41 @@ export function Layout() {
     watchRecordingSaves();
   }, []);
 
+  // First-launch notice about anonymous usage sharing (on by default; opt out in Settings).
+  useEffect(() => {
+    if (telemetryNoticeShown) return;
+    telemetryNoticeShown = true;
+    SettingsService.getTelemetryState()
+      .then((state) => {
+        if (state.noticeSeen) return;
+        toast.info("Doculigent shares anonymous usage data to improve the app. You can turn this off in Settings.", {
+          title: "Anonymous usage data",
+          duration: 15000,
+          action: {
+            label: "Go to Settings > Preferences",
+            onClick: () => navigate("/settings?section=preferences"),
+          },
+        });
+        return SettingsService.markTelemetryNoticeSeen();
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
-    fetch(VERSION_ENDPOINT, {
-      headers: {
-        "x-app-version": __APP_VERSION__,
-        "x-platform": window.api.system.platform,
-        "x-arch": window.api.system.arch,
-      },
-    })
+    SettingsService.getTelemetryState()
+      .catch(() => ({ enabled: false, noticeSeen: true, installId: null }))
+      .then((state) =>
+        fetch(VERSION_ENDPOINT, {
+          headers: {
+            "x-app-version": __APP_VERSION__,
+            "x-platform": window.api.system.platform,
+            "x-arch": window.api.system.arch,
+            ...(state.enabled && state.installId ? { "x-install-id": state.installId } : {}),
+          },
+        })
+      )
       .then((res) => res.json())
       .then((data: { version?: string }) => {
         if (!cancelled && data.version) setLatestVersion(data.version);

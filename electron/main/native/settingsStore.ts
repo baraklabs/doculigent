@@ -1,5 +1,6 @@
 
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type {
   AreaRect,
@@ -54,6 +55,9 @@ interface StoredSettings {
   cameraBubbleBounds?: CameraBubbleBounds;
   recordingDockConfig?: RecordingDockConfig;
   recordingDockBounds?: RecordingDockBounds;
+  telemetryEnabled?: boolean;
+  telemetryNoticeSeen?: boolean;
+  installId?: string;
 }
 
 const DEFAULT_STORAGE_PREFERENCE: StoragePreference = { provider: "doculigent" };
@@ -305,7 +309,31 @@ export function setStoragePreference(preference: StoragePreference): void {
   writeStored({ ...readStored(), storagePreference: preference });
 }
 
-export function getGoogleDriveAccount(): GoogleDriveAccount | null {
+/** Anonymous usage sharing is on by default (the first-launch notice tells the user, and
+ *  Settings > Preferences turns it off). The install ID is a random UUID created lazily
+ *  and only while sharing is on; it's removed when the user opts out and is untouched by
+ *  app updates, since it lives in settings.json under userData. */
+export function getTelemetryState(): { enabled: boolean; noticeSeen: boolean; installId: string | null } {
+  const stored = readStored();
+  const enabled = stored.telemetryEnabled !== false;
+  let installId = stored.installId ?? null;
+  if (enabled && !installId) {
+    installId = randomUUID();
+    writeStored({ ...stored, installId });
+  }
+  return { enabled, noticeSeen: !!stored.telemetryNoticeSeen, installId: enabled ? installId : null };
+}
+
+export function setTelemetryEnabled(enabled: boolean): void {
+  const { installId: _installId, ...rest } = readStored();
+  writeStored({ ...rest, telemetryEnabled: enabled, telemetryNoticeSeen: true });
+}
+
+export function markTelemetryNoticeSeen(): void {
+  writeStored({ ...readStored(), telemetryNoticeSeen: true });
+}
+
+export function getGoogleDriveAccount():GoogleDriveAccount | null {
   return readStored().googleDriveAccount ?? null;
 }
 

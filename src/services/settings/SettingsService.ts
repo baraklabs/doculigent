@@ -162,4 +162,13 @@ export const SettingsService = {
   setAutoTranscribeSettings(settings: AutoTranscribeSettings): Promise<void> {
     return window.api.settings.setAutoTranscribeSettings(settings);
   },
+  getTelemetryState(): Promise<{ enabled: boolean; noticeSeen: boolean; installId: string | null }> {
+    return window.api.settings.getTelemetryState();
+  },
+  setTelemetryEnabled(enabled: boolean): Promise<void> {
+    return window.api.settings.setTelemetryEnabled(enabled);
+  },
+  markTelemetryNoticeSeen(): Promise<void> {
+    return window.api.settings.markTelemetryNoticeSeen();
+  },
 };

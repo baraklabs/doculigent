@@ -169,6 +169,9 @@ export const Channels = {
     setTranscriptionByokProfileId: "settings:setTranscriptionByokProfileId",
     getAutoTranscribeSettings: "settings:getAutoTranscribeSettings",
     setAutoTranscribeSettings: "settings:setAutoTranscribeSettings",
+    getTelemetryState: "settings:getTelemetryState",
+    setTelemetryEnabled: "settings:setTelemetryEnabled",
+    markTelemetryNoticeSeen: "settings:markTelemetryNoticeSeen",
   },
   ai: {
     summarize: "ai:summarize",

@@ -300,6 +300,9 @@ const api: DoculigentApi = {
     setTranscriptionByokProfileId: (id) => ipcRenderer.invoke(Channels.settings.setTranscriptionByokProfileId, id),
     getAutoTranscribeSettings: () => ipcRenderer.invoke(Channels.settings.getAutoTranscribeSettings),
     setAutoTranscribeSettings: (settings) => ipcRenderer.invoke(Channels.settings.setAutoTranscribeSettings, settings),
+    getTelemetryState: () => ipcRenderer.invoke(Channels.settings.getTelemetryState),
+    setTelemetryEnabled: (enabled) => ipcRenderer.invoke(Channels.settings.setTelemetryEnabled, enabled),
+    markTelemetryNoticeSeen: () => ipcRenderer.invoke(Channels.settings.markTelemetryNoticeSeen),
   },
   ai: {
     summarize: (transcript, profileId) => ipcRenderer.invoke(Channels.ai.summarize, transcript, profileId),

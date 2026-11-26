@@ -1,0 +1,12 @@
+.route-error { max-width: 640px; margin: 40px auto; padding: 24px; }
+.route-error h2 { margin: 0 0 8px; font-size: 18px; }
+.route-error-message {
+  margin: 12px 0; padding: 8px 10px; border-radius: 8px; font-size: 12px; word-break: break-word;
+  color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+.route-error .actions { margin: 12px 0; }
+.route-error-details {
+  max-height: 260px; overflow: auto; margin: 8px 0 0; padding: 10px; border-radius: 8px;
+  font-size: 11px; line-height: 1.4; white-space: pre-wrap; word-break: break-word;
+  background: var(--bg); border: 1px solid var(--border);
+}

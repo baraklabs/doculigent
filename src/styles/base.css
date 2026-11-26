@@ -198,3 +198,20 @@ button.danger { background: var(--danger); border-color: var(--danger); color: #
   0% { margin-left: -40%; }
   100% { margin-left: 100%; }
 }
+
+/* Shared popup shell (Library dialogs, Meeting settings, Settings > Add/Edit model).
+   Lives here, not in a page stylesheet: pages are lazy-loaded, so a rule defined in
+   LibraryPage.css is missing until that page has been opened, and the popup renders inline.
+   Fixed to the viewport so it stays visible after scrolling. */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(10, 10, 20, .28); z-index: 80;
+  display: flex; align-items: center; justify-content: center;
+}
+.modal {
+  width: min(540px, 92vw); background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: 0 12px 32px rgba(20, 20, 40, .18); padding: 20px;
+  box-sizing: border-box;
+}
+.modal h2 { margin: 0 0 8px; font-size: 15px; }
+.modal-actions { justify-content: flex-end; margin-top: 16px; flex-wrap: nowrap; overflow-x: auto; }
+.modal-actions button { white-space: nowrap; }

@@ -17,5 +17,11 @@ export const AI_PROVIDERS: { kind: LlmProviderKind; label: string }[] = [
   { kind: "openAi", label: "OpenAI" },
   { kind: "openRouter", label: "OpenRouter" },
   { kind: "anthropic", label: "Anthropic (Claude)" },
+  { kind: "xai", label: "xAI (Grok)" },
+  { kind: "gemini", label: "Google Gemini" },
+  { kind: "groq", label: "Groq" },
+  { kind: "deepSeek", label: "DeepSeek" },
+  { kind: "mistral", label: "Mistral AI" },
+  { kind: "together", label: "Together AI" },
   { kind: "custom", label: "Custom (OpenAI-compatible)" },
 ];

@@ -40,6 +40,9 @@ import {
   setTranscriptionByokProfileId,
   getAutoTranscribeSettings,
   setAutoTranscribeSettings,
+  getTelemetryState,
+  setTelemetryEnabled,
+  markTelemetryNoticeSeen,
 } from "../native/settingsStore";
 import { setLlmApiKey, deleteLlmApiKey } from "../native/keyring";
 import { preloadWhisperModel } from "../transcription/whisper";
@@ -242,4 +245,14 @@ export function registerSettingsIpc(): void {
       setAutoTranscribeSettings(settings);
     }
   );
+
+  ipcMain.handle(Channels.settings.getTelemetryState, async () => getTelemetryState());
+
+  ipcMain.handle(Channels.settings.setTelemetryEnabled, async (_event, enabled: boolean): Promise<void> => {
+    setTelemetryEnabled(enabled);
+  });
+
+  ipcMain.handle(Channels.settings.markTelemetryNoticeSeen, async (): Promise<void> => {
+    markTelemetryNoticeSeen();
+  });
 }

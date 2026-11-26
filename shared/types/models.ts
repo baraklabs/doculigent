@@ -1009,7 +1009,10 @@ export interface ChatMessage {
   timestamp?: string;
 }
 
-export type LlmProviderKind = "ollama" | "lmStudio" | "openAi" | "openRouter" | "anthropic" | "custom";
+export type LlmProviderKind =
+  | "ollama" | "lmStudio" | "openAi" | "openRouter" | "anthropic"
+  | "xai" | "gemini" | "groq" | "deepSeek" | "mistral" | "together"
+  | "custom";
 
 export const LOCAL_LLM_PROVIDERS: LlmProviderKind[] = ["ollama", "lmStudio"];
 

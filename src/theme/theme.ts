@@ -3,7 +3,8 @@ import { create } from "zustand";
 export type ColorMode = "light" | "dark" | "auto";
 export type ThemeId =
   | "indigo" | "violet" | "ocean" | "sky" | "teal" | "emerald" | "lime"
-  | "amber" | "coral" | "rose" | "crimson" | "graphite" | "custom";
+  | "amber" | "coral" | "rose" | "crimson" | "graphite"
+  | "cobalt" | "mint" | "gold" | "magenta" | "plum" | "slate" | "custom";
 
 export const COLOR_MODES: ColorMode[] = ["auto", "light", "dark"];
 export const THEMES: { id: Exclude<ThemeId, "custom">; label: string; swatch: string }[] = [
@@ -19,6 +20,12 @@ export const THEMES: { id: Exclude<ThemeId, "custom">; label: string; swatch: st
   { id: "rose", label: "Rose", swatch: "#d6336c" },
   { id: "crimson", label: "Crimson", swatch: "#c42a2a" },
   { id: "graphite", label: "Graphite", swatch: "#3f4756" },
+  { id: "cobalt", label: "Cobalt", swatch: "#2f5de0" },
+  { id: "mint", label: "Mint", swatch: "#14a37f" },
+  { id: "gold", label: "Gold", swatch: "#b8860b" },
+  { id: "magenta", label: "Magenta", swatch: "#c026a8" },
+  { id: "plum", label: "Plum", swatch: "#7a2f6b" },
+  { id: "slate", label: "Slate", swatch: "#4a6178" },
 ];
 export const DEFAULT_CUSTOM_COLOR = "#e0457b";
 

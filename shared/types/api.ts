@@ -339,6 +339,9 @@ export interface DoculigentApi {
     setTranscriptionByokProfileId(id: string | null): Promise<void>;
     getAutoTranscribeSettings(): Promise<AutoTranscribeSettings>;
     setAutoTranscribeSettings(settings: AutoTranscribeSettings): Promise<void>;
+    getTelemetryState(): Promise<{ enabled: boolean; noticeSeen: boolean; installId: string | null }>;
+    setTelemetryEnabled(enabled: boolean): Promise<void>;
+    markTelemetryNoticeSeen(): Promise<void>;
   };
   ai: {
     summarize(transcript: Transcript, profileId?: string): Promise<Summary>;
