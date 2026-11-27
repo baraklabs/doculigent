@@ -101,7 +101,26 @@
 .footer-plan-tier { color: var(--accent); font-weight: 600; }
 .update-available { color: #b45309; font-weight: 600; text-decoration: none; }
 .update-available:hover { text-decoration: underline; }
-.footer-link { color: var(--muted); text-decoration: none; }
+.update-available { position: relative; }
+.update-available::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(2px);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #1f2937;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 100ms ease, transform 100ms ease;
+  z-index: 50;
+}
+.update-available:hover::after, .update-available:focus-visible::after { opacity: 1; transform: translateX(-50%) translateY(0); }.footer-link { color: var(--muted); text-decoration: none; }
 .footer-link:hover { color: var(--accent); text-decoration: underline; }
 .footer-social { display: flex; align-items: center; gap: 12px; margin-left: auto; margin-right: 14px; }
 .footer-social a { display: inline-flex; transition: opacity 120ms ease, transform 120ms ease; }

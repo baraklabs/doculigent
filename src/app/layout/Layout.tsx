@@ -16,8 +16,7 @@ import { useThemeStore, type ColorMode } from "../../theme/theme";
 import { warmAppCaches } from "../../lib/warmCaches";
 import "./Layout.css";
 
-const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL).replace(/\/+$/, "");
-const VERSION_ENDPOINT = `${SUPABASE_URL}/functions/v1/version`;
+const VERSION_ENDPOINT = "https://doculigent.com/version";
 const DOWNLOAD_URL = "https://doculigent.com";
 const DOCS_URL = "https://doculigent.com";
 
@@ -287,7 +286,7 @@ export function Layout() {
         <div className="footer-version">
           <span className="muted">Doculigent v{__APP_VERSION__}</span>
           {latestVersion && isNewerVersion(latestVersion, __APP_VERSION__) && (
-            <a href={DOWNLOAD_URL} target="_blank" rel="noreferrer" className="update-available">
+            <a href={DOWNLOAD_URL} target="_blank" rel="noreferrer" className="update-available" data-tooltip="Download new version" aria-label={`Download new version v${latestVersion}`}>
               New version v{latestVersion} available
             </a>
           )}

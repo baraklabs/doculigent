@@ -1,7 +1,8 @@
-export const AUTH_CONFIGURED = Boolean(import.meta.env.VITE_WEB_URL && import.meta.env.VITE_SUPABASE_URL);
+export const AUTH_CONFIGURED = Boolean(import.meta.env.VITE_WEB_URL);
 
+const API_BASE_URL = (import.meta.env.VITE_API_URL || "https://api.doculigent.com").replace(/\/+$/, "");
 const baseUrl = (import.meta.env.VITE_WEB_URL ?? "").replace(/\/+$/, "");
-const functionsBaseUrl = `${(import.meta.env.VITE_SUPABASE_URL ?? "").replace(/\/+$/, "")}/functions/v1`;
+const functionsBaseUrl = `${API_BASE_URL}/v1`;
 
 export const FUNCTIONS_BASE_URL = functionsBaseUrl;
 

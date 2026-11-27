@@ -54,7 +54,7 @@ export async function getSession(): Promise<AuthSession | null> {
 export async function login(): Promise<AuthSession> {
   if (!AUTH_CONFIGURED) {
     throw new Error(
-      "Sign-in isn't available in this build — it's missing VITE_WEB_URL/VITE_SUPABASE_URL (set in env/.env.production before building)."
+      "Sign-in isn't available in this build — it's missing VITE_WEB_URL (set in env/.env.production before building)."
     );
   }
   if (pending) throw new Error("A login is already in progress");
